@@ -1,0 +1,64 @@
+{
+  "name": "@simplesmoothsafe/pptb-solution-xray",
+  "version": "0.1.0",
+  "displayName": "SSS Solution XRay",
+  "description": "Offline Dataverse solution zip analysis: component inventory, compare/diff, upgrade risk score and multi-solution install order. No connection required.",
+  "main": "index.html",
+  "icon": "icon.svg",
+  "license": "MIT",
+  "keywords": [
+    "powerplatform",
+    "dataverse",
+    "toolbox",
+    "pptb",
+    "solution",
+    "alm"
+  ],
+  "author": "Simple Smooth Safe",
+  "contributors": [
+    {
+      "name": "Duarte Clemente",
+      "url": "https://simplesmoothsafe.com"
+    }
+  ],
+  "homepage": "https://simplesmoothsafe.com",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/sss-dclemente/sss-pptb.git",
+    "directory": "tools/solution-xray"
+  },
+  "configurations": {
+    "repository": "https://github.com/sss-dclemente/sss-pptb",
+    "website": "https://simplesmoothsafe.com",
+    "readmeUrl": "https://raw.githubusercontent.com/sss-dclemente/sss-pptb/main/tools/solution-xray/README.md"
+  },
+  "features": {
+    "multiConnection": "none",
+    "connectionRequirement": "optional",
+    "minAPI": "1.0.20"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "scripts": {
+    "build": "tsc --noEmit && vite build && node scripts/check-dist.mjs",
+    "dev-watch": "vite build --mode development --watch",
+    "typecheck": "tsc --noEmit",
+    "validate": "node node_modules/@pptb/validate/dist/cli.js",
+    "finalize-package": "npm shrinkwrap",
+    "e2e": "node scripts/e2e.mjs"
+  },
+  "dependencies": {
+    "jszip": "^3.10.1"
+  },
+  "devDependencies": {
+    "@pptb/types": "^1.2.5",
+    "@pptb/validate": "^1.0.2",
+    "typescript": "^5.6.0",
+    "vite": "^5.4.0"
+  },
+  "files": [
+    "dist",
+    "npm-shrinkwrap.json"
+  ]
+}
