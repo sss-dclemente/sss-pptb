@@ -1,6 +1,6 @@
 # ENVVAR-MATRIX-PLAN — SSS EnvVar & ConnRef Matrix
 
-Status: DRAFT, awaiting owner OK on decisions E1–E5. Build order #2 in `pptb-tool-ideas.md`; absorbs "Deployment Settings Builder".
+Status: APPROVED 2026-09-20 (E1–E5 OK), implemented in `tools/envvar-matrix`. Build order #2 in `pptb-tool-ideas.md`; absorbs "Deployment Settings Builder".
 
 One-liner: rows = environment variables and connection references, columns = environments. Shows missing values, differences, lets you copy values across environments, exports `deploymentSettings.json`.
 
