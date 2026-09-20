@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SSS Solution XRay</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <div class="shell">
+    <aside class="sidebar">
+      <div class="brand">
+        <span class="eyebrow">Simple Smooth Safe</span>
+        <h1>Solution XRay</h1>
+        <p class="caption">Offline analysis of Dataverse solution zips. Nothing leaves this machine.</p>
+      </div>
+
+      <div class="actions">
+        <button id="btn-add" class="btn btn-primary" type="button">Add solution zip</button>
+        <button id="btn-clear" class="btn btn-ghost" type="button">Clear all</button>
+      </div>
+
+      <div id="dropzone" class="dropzone" hidden>Drop .zip files here</div>
+
+      <ul id="solution-list" class="solution-list" aria-label="Loaded solutions"></ul>
+
+      <footer class="footer">
+        <a href="https://simplesmoothsafe.com" target="_blank" rel="noopener">Simple Smooth Safe</a>
+        <span class="caption" id="host-mode"></span>
+      </footer>
+    </aside>
+
+    <main class="content">
+      <nav class="tabs" role="tablist">
+        <button class="tab is-active" data-tab="inventory" role="tab" type="button">Inventory</button>
+        <button class="tab" data-tab="compare" role="tab" type="button">Compare</button>
+        <button class="tab" data-tab="risk" role="tab" type="button">Upgrade risk</button>
+        <button class="tab" data-tab="order" role="tab" type="button">Install order</button>
+      </nav>
+
+      <section id="tab-inventory" class="panel" role="tabpanel">
+        <div class="toolbar">
+          <label>Solution <select id="inv-select"></select></label>
+          <button id="inv-export" class="btn btn-ghost btn-sm" type="button">Export JSON</button>
+        </div>
+        <div id="inv-body" class="panel-body"></div>
+      </section>
+
+      <section id="tab-compare" class="panel" role="tabpanel" hidden>
+        <div class="toolbar">
+          <label>Base (A) <select id="cmp-a"></select></label>
+          <label>Target (B) <select id="cmp-b"></select></label>
+          <label class="check"><input type="checkbox" id="cmp-hide-root" checked /> Hide root-component rows</label>
+          <button id="cmp-export" class="btn btn-ghost btn-sm" type="button">Export JSON</button>
+        </div>
+        <div id="cmp-body" class="panel-body"></div>
+      </section>
+
+      <section id="tab-risk" class="panel" role="tabpanel" hidden>
+        <div class="toolbar">
+          <label>Solution <select id="risk-select"></select></label>
+          <label>Baseline (optional) <select id="risk-baseline"><option value="">none</option></select></label>
+          <button id="risk-export" class="btn btn-ghost btn-sm" type="button">Export JSON</button>
+        </div>
+        <div id="risk-body" class="panel-body"></div>
+      </section>
+
+      <section id="tab-order" class="panel" role="tabpanel" hidden>
+        <div class="toolbar">
+          <span class="caption">Uses all loaded solutions. Edges come from MissingDependencies and shared tables.</span>
+          <button id="order-export" class="btn btn-ghost btn-sm" type="button">Export JSON</button>
+        </div>
+        <div id="order-body" class="panel-body"></div>
+      </section>
+    </main>
+  </div>
+  <script type="module" src="./main.ts"></script>
+</body>
+</html>
