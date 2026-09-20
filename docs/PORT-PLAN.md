@@ -1,6 +1,6 @@
 # PORT-PLAN — solution-xray.html → PPTB tool
 
-Status: DRAFT. Section 3 (HTML changes) pending `solution-xray.html`. Everything else final unless you object.
+Status: APPROVED 2026-09-20 (D1–D7 OK). `solution-xray.html` could not be located in any repo, artifact, session, mailbox or SharePoint search; owner decided to **rewrite from scratch** against the v3 feature list. Section 3 records what that means.
 
 Facts referenced: `docs/PPTB-NOTES.md` (§ numbers below).
 
@@ -101,26 +101,20 @@ Notes:
 
 ---
 
-## 3. What changes in the HTML — PENDING `solution-xray.html`
+## 3. Rewrite instead of port
 
-Will fill after reading file. Expected categories (to be confirmed against actual code):
+Original file unavailable (see docs/PPTB-NOTES.md investigation). Rewritten in TypeScript from the feature list in `pptb-tool-ideas.md`: inventory, compare/diff, upgrade risk score, multi-solution install order (Kahn + cycle detection). Same scope, no new features.
 
-| Change | Why | Reversible? |
-|---|---|---|
-| Remove `<script src="https://cdnjs…/jszip…">` → `import JSZip from "jszip"` | CSP blocks CDN (§4) | n/a |
-| Move inline `<script>` body → `src/xray/*.ts` + `src/main.ts` | bundling; inline would be allowed but untestable | logic unchanged |
-| Move inline `<style>` → `src/styles.css` | Vite extracts; keeps HTML clean | unchanged |
-| `<input type=file>` handler → `host.pickZip()` | D3 | fallback keeps original path |
-| Any `<a download href="data:…">` / `URL.createObjectURL` export → `host.saveText()` via `fileSystem.saveFile` | UNVERIFIED under CSP (§4) | fallback keeps original |
-| Google Fonts `<link>` if present → remove, system font stack | CSP `font-src` (§4) | — |
-| `eval`/`new Function` if present → rewrite | CSP (§4) | must check |
-| Add footer "Simple Smooth Safe" → https://simplesmoothsafe.com | brief | — |
-| Colours → CSS custom properties, `[data-theme="dark"]` override | theme (§3) | — |
-| Any `fetch()`/XHR to remote → must not exist (offline) | CSP | must check |
+Consequences vs the port plan:
 
-TypeScript: `allowJs`-style minimal typing. Original JS moved into `.ts` files with `// @ts-nocheck`? **No** — use loose types (`any` where needed), `strict: false` for `src/xray/*` to avoid rewriting. Keep `strict: true` for new files (`host.ts`, `main.ts`).
+| Planned | Done |
+|---|---|
+| Move inline JS into `src/xray/*.ts` verbatim | Written new: `parse.ts` (JSZip + DOMParser over solution.xml / customizations.xml / Workflows/*.json), `inventory.ts`, `diff.ts`, `risk.ts`, `order.ts` |
+| Keep original CSS | New CSS on SSS two-layer tokens with `[data-theme="dark"]` |
+| `strict: false` for moved code | Whole tree `strict: true` |
+| Risk score formula from original | Defined in `risk.ts`: capped additive factors, bands Low <25, Medium <50, High <75, Critical. Weights are a first cut; tune with real zips |
 
----
+Everything else in this plan (structure, manifest, CSP, file input, build, validate) applies unchanged.
 
 ## 4. CSP-driven changes (summary)
 
