@@ -1,6 +1,6 @@
 {
   "name": "@simplesmoothsafe/pptb-envvar-matrix",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "displayName": "SSS EnvVar & ConnRef Matrix",
   "description": "Environment variables and connection references as a matrix across environments: missing values, differences, copy values between environments, deploymentSettings.json export.",
   "main": "index.html",
@@ -33,8 +33,7 @@
     "dev-watch": "vite build --mode development --watch",
     "typecheck": "tsc --noEmit",
     "validate": "node node_modules/@pptb/validate/dist/cli.js",
-    "e2e": "node scripts/e2e.mjs",
-    "finalize-package": "npm shrinkwrap"
+    "e2e": "node scripts/e2e.mjs"
   },
   "devDependencies": {
     "@pptb/types": "^1.2.5",
@@ -42,5 +41,5 @@
     "typescript": "^5.6.0",
     "vite": "^5.4.0"
   },
-  "files": ["dist", "npm-shrinkwrap.json"]
+  "files": ["dist"]
 }
