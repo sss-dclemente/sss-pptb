@@ -1,6 +1,6 @@
 {
   "name": "@simplesmoothsafe/pptb-solution-xray",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "displayName": "SSS Solution XRay",
   "description": "Offline Dataverse solution zip analysis: component inventory, compare/diff, upgrade risk score and multi-solution install order. No connection required.",
   "main": "index.html",
@@ -45,20 +45,16 @@
     "dev-watch": "vite build --mode development --watch",
     "typecheck": "tsc --noEmit",
     "validate": "node node_modules/@pptb/validate/dist/cli.js",
-    "finalize-package": "npm shrinkwrap",
     "e2e": "node scripts/e2e.mjs"
-  },
-  "dependencies": {
-    "jszip": "^3.10.1"
   },
   "devDependencies": {
     "@pptb/types": "^1.2.5",
     "@pptb/validate": "^1.0.2",
+    "jszip": "^3.10.1",
     "typescript": "^5.6.0",
     "vite": "^5.4.0"
   },
   "files": [
-    "dist",
-    "npm-shrinkwrap.json"
+    "dist"
   ]
 }

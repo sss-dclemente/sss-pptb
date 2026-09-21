@@ -96,8 +96,9 @@ Notes:
 - No `cspExceptions` → zero consent dialog, Verified-safe.
 - `minAPI: 1.0.20` = `fileSystem.*` floor. Bump to `1.2.0` only if `getActiveConnection` used (v1.1).
 - `@pptb/validate` explicit devDep → 1.0.2 rules, not the 0.0.2 nested under `@pptb/types` (§6).
-- `jszip` in `dependencies` — Vite bundles it; intake runs `npm install --production` anyway (§7).
-- Version `0.1.0` until Verified request (needs ≥1.0.0).
+- `jszip` moved to `devDependencies` in 0.1.1 — Vite bundles it into the IIFE, so nothing at runtime resolves it; only `scripts/e2e.mjs` needs it. Keeping it in `dependencies` made every consumer download it a second time. Bundle hash is unchanged by the move.
+- `npm-shrinkwrap.json` dropped from `files` in 0.1.1, and the `finalize-package` script removed. The PPTB samples and publishing docs prescribe both (PPTB-NOTES §§1, 9), but npm honours a published shrinkwrap as the full tree including its `dev: true` entries, so `npm install` of a ~25 kB tool pulled ~50 MB of vite/esbuild/typescript/rollup. `npm shrinkwrap --omit=dev` does not help. The `dist/` bundles are self-contained with no runtime dependencies left to lock, so the file bought nothing. `@pptb/validate` does not check for it.
+- Version `0.1.1`; still <1.0.0 until Verified request (needs ≥1.0.0).
 
 ---
 
