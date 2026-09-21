@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SSS Audit Config Matrix</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <div class="content" style="height:100%">
+    <header class="topbar">
+      <div class="brand">
+        <span class="eyebrow">Simple Smooth Safe</span>
+        <h1>Audit Config Matrix</h1>
+      </div>
+      <div id="columns" class="columns" aria-label="Environments"></div>
+      <span class="spacer"></span>
+      <label class="cmp">Compare with <select id="compare" aria-label="Comparison environment"><option value="">none</option></select></label>
+      <button id="btn-refresh" class="btn btn-sm" type="button">Refresh</button>
+      <button id="btn-load-snap" class="btn btn-sm" type="button">Load snapshot…</button>
+    </header>
+
+    <nav class="tabs" role="tablist">
+      <button class="tab is-active" data-tab="matrix" role="tab" type="button">Matrix</button>
+      <button class="tab" data-tab="org" role="tab" type="button">Org settings</button>
+      <button class="tab" data-tab="apply" role="tab" type="button">Apply <span id="plan-count" class="badge badge-neutral" hidden>0</span></button>
+    </nav>
+
+    <div id="status" class="status" hidden></div>
+
+    <section id="tab-matrix" class="panel">
+      <div class="toolbar">
+        <input id="filter-text" type="search" placeholder="Filter tables…" aria-label="Filter tables" />
+        <label>Audit <select id="filter-audit"><option value="all">all</option><option value="on">on</option><option value="off">off</option></select></label>
+        <label class="check"><input type="checkbox" id="filter-diff" /> Only differences</label>
+        <label>Layer <select id="filter-managed"><option value="all">all</option><option value="custom">custom</option><option value="managed">managed</option></select></label>
+        <label class="check"><input type="checkbox" id="filter-cols" /> Has audited / secured columns</label>
+        <div class="right">
+          <button id="btn-plan-match" class="btn btn-sm" type="button" disabled>Plan: match other env</button>
+          <button id="btn-export-csv" class="btn btn-ghost btn-sm" type="button">Matrix CSV</button>
+          <button id="btn-export-snap" class="btn btn-ghost btn-sm" type="button">Snapshot</button>
+        </div>
+      </div>
+      <div id="counts" class="counts" aria-live="polite"></div>
+      <div id="org-banner" class="org-banner" role="status" hidden></div>
+      <div class="matrix-wrap">
+        <div id="matrix-body"></div>
+      </div>
+      <div id="bulkbar" class="bulkbar" hidden>
+        <span class="count"><span id="sel-count">0</span> selected</span>
+        <button id="btn-plan-on" class="btn btn-sm" type="button">Plan: audit on</button>
+        <button id="btn-plan-off" class="btn btn-sm" type="button">Plan: audit off</button>
+        <button id="btn-clear-sel" class="btn btn-ghost btn-sm" type="button">Clear selection</button>
+      </div>
+    </section>
+
+    <section id="tab-org" class="panel" hidden>
+      <div class="panel-body" id="org-body"></div>
+    </section>
+
+    <section id="tab-apply" class="panel" hidden>
+      <div class="toolbar">
+        <span class="caption" id="apply-target"></span>
+        <div class="right">
+          <button id="btn-apply" class="btn btn-primary btn-sm" type="button" style="flex:none" disabled>Preview &amp; apply…</button>
+          <button id="btn-export-plan-csv" class="btn btn-ghost btn-sm" type="button" disabled>Plan CSV</button>
+          <button id="btn-export-plan-ps" class="btn btn-ghost btn-sm" type="button" disabled>Plan script</button>
+          <button id="btn-clear-plan" class="btn btn-ghost btn-sm" type="button" disabled>Clear plan</button>
+        </div>
+      </div>
+      <div class="panel-body" id="apply-body"></div>
+    </section>
+
+    <footer class="footer" style="padding: var(--s-2) var(--s-5); margin-top: 0; flex-direction: row; justify-content: space-between; align-items: center;">
+      <a href="https://simplesmoothsafe.com" target="_blank" rel="noopener">Simple Smooth Safe</a>
+      <span class="caption" id="host-mode"></span>
+    </footer>
+  </div>
+
+  <dialog id="dlg">
+    <div class="dlg-head"><h3 id="dlg-title">Preview</h3><span class="spacer" style="flex:1"></span><span id="dlg-target" class="target"></span></div>
+    <div class="dlg-body" id="dlg-body"></div>
+    <div class="dlg-foot">
+      <button id="dlg-cancel" class="btn btn-ghost" type="button">Cancel</button>
+      <button id="dlg-ok" class="btn btn-primary" type="button" style="flex:none">Confirm</button>
+    </div>
+  </dialog>
+
+  <script type="module" src="./main.ts"></script>
+</body>
+</html>

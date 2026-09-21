@@ -2,7 +2,7 @@
 
 What to put in each screenshot is spelled out per shot in [SCREENSHOTS.md](SCREENSHOTS.md).
 
-Everything below runs on the owner's machine: needs ToolBox desktop, a Dataverse connection and an npm login. Order per tool: real-env test → real screenshots → publish → submit. Repo state: `main` builds, e2e green, `pptb-validate` passes for all three.
+Everything below runs on the owner's machine: needs ToolBox desktop, a Dataverse connection and an npm login. Order per tool: real-env test → real screenshots → publish → submit. Repo state: `main` builds and e2e green for all five; `pptb-validate` passes for the three published tools and runs for the other two once their READMEs are on `main`. The two new tools have been loaded against a real environment read-only; their write paths are untested.
 
 Common prep (once):
 
@@ -78,6 +78,50 @@ Publish:
 cd tools/access-checker && npm run build && npm run validate && npm publish --access public
 ```
 Submit: `@simplesmoothsafe/pptb-access-checker`, categories **Users & Security, Troubleshooting**.
+
+## 4. SSS Offboarding Wizard — `tools/offboarding-wizard`
+
+Real-env test (one connection, a sandbox user who owns a bit of everything, plus a second user as successor). **Do the first run against a sandbox**: this tool writes ownership and membership.
+
+> **Status, 2026-09-21.** Loaded in ToolBox against a real environment and exercised read-only: it connects, reads and renders. No plan was applied, so every write path below is still untested and none of the boxes are ticked on the strength of that session.
+- [ ] Leaver typeahead finds by name / domain / email; BU, manager, state, access mode and direct-report count are right. If access mode shows `—`, the attribute name is wrong: fix it in `src/offboard/fetch.ts`.
+- [ ] Record scan: the request count in the confirmation is plausible, the progress bar moves, Cancel stops it, and any table listed as *not scanned* is one that genuinely rejects the owner filter. Counts for two or three tables match an advanced find on the same owner.
+- [ ] Every other category is correct against the maker portal / admin centre: flows (an active modern flow is flagged), personal views and charts, queues owned, queue memberships, teams (owner vs Entra group), security roles, field security profiles, connection references, direct reports. Any category that errors → note the entity set or relationship name in `docs/OFFBOARDING-PLAN.md` §UNVERIFIED and fix `src/offboard/fetch.ts`.
+- [ ] Preview writes nothing: open it, read the verbatim calls, cancel, then confirm in the platform that nothing moved.
+- [ ] Apply a small plan (one table, a few records, one role, one team): each operation gets its own row, the records moved, the role and membership changed. Then a plan that includes something the connection user lacks the privilege for: it fails as one red row and the rest of the run continues.
+- [ ] Confirm the tool never touched the leaver's user record: still enabled, same access mode, same licence.
+- [ ] Exports: inventory JSON + CSV, apply report JSON + CSV, and the manual-steps list.
+
+Screenshots: `inventory.png`, `plan.png`, `report-dark.png`. Remove the synthetic-data line from `README.md`.
+
+Publish:
+```bash
+cd tools/offboarding-wizard && npm run build && npm run validate && npm publish --access public
+```
+Submit: `@simplesmoothsafe/pptb-offboarding-wizard`, categories **Users & Security, Data Management**.
+
+## 5. SSS Audit Config Matrix — `tools/audit-matrix`
+
+Real-env test (two connections to sandboxes whose audit configuration differs, or one connection plus a snapshot). **Metadata writes are real and need a publish**: sandbox first.
+
+> **Status, 2026-09-21.** Loaded in ToolBox against a real environment and exercised read-only: it connects, reads and renders. No plan was applied, so every write path below is still untested and none of the boxes are ticked on the strength of that session.
+- [ ] Matrix loads; table count and the audited count match Settings → Auditing → Entity and Field Audit Settings.
+- [ ] A table from a managed solution that forbids the change shows as `locked` and cannot be ticked.
+- [ ] Secondary connection populates the comparison column; `≠` appears exactly where the two environments really differ. Then export a snapshot from one, load it into the other, and check the same diff appears.
+- [ ] Expand a table: its auditable columns load, the column counts name their scope, and a column you know is audited reads `on`.
+- [ ] Org tab: the four switches match the admin centre for both environments. Any field showing `unknown` names an attribute to fix in `src/audit/fetch.ts` — `isreadauditenabled` and `auditretentionperiodv2` are the two unverified ones.
+- [ ] **Plan: match other env** builds a plan that never contains a locked row. Preview, cancel, and confirm nothing changed.
+- [ ] Apply a small plan (one table flag, one column flag): rows report ok, then accept the scoped publish, then reload the matrix and see the new values. Check the table in the maker portal.
+- [ ] A write that the environment rejects stays in the plan as a failed row and does not stop the batch.
+- [ ] Exports: matrix CSV, JSON snapshot, plan CSV and plan PowerShell script (run the script against a sandbox once to confirm it is actually runnable).
+
+Screenshots: `matrix.png`, `columns.png`, `differences.png`, `preview.png`, `org-dark.png`. Remove the synthetic-data line from `README.md`.
+
+Publish:
+```bash
+cd tools/audit-matrix && npm run build && npm run validate && npm publish --access public
+```
+Submit: `@simplesmoothsafe/pptb-audit-matrix`, categories **Users & Security, Comparisons, Solutions**.
 
 ## After publish
 
