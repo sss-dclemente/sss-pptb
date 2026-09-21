@@ -55,6 +55,15 @@ const MOCK = `
   window.__calls = [];
   const queryData = async (q) => {
     window.__calls.push(q);
+    // RetrieveRolePrivilegesRole goes through queryData, not execute: it is an unbound
+    // function whose RoleId is an Edm.Guid, and execute quotes every string parameter.
+    // Require the unquoted guid here so neither wrong shape can pass again.
+    const fn = /^RetrieveRolePrivilegesRole\\((.*)\\)$/.exec(q);
+    if (fn) {
+      const m = /^RoleId=([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/.exec(fn[1]);
+      if (!m) throw new Error('mock: RetrieveRolePrivilegesRole needs RoleId=<unquoted guid>, got ' + fn[1]);
+      return { RolePrivileges: (rolePrivs[m[1]] ?? []).map(([n, d]) => ({ PrivilegeId: P(n), Depth: d, BusinessUnitId: BU_SALES })) };
+    }
     const [set, rest = ''] = q.split('?');
     const src = sets[set];
     if (!src) throw new Error('mock: unknown set ' + set);
@@ -75,17 +84,12 @@ const MOCK = `
     return { value: rows.map((r) => ({ ...r })) };
   };
   const execute = async (req) => {
-    window.__calls.push(req.operationName + ':' + (req.entityId ?? req.parameters?.RoleId ?? ''));
+    window.__calls.push(req.operationName + ':' + (req.entityId ?? ''));
     switch (req.operationName) {
-      case 'RetrieveRolePrivilegesRole': {
-        // Unbound function taking RoleId. Reject the bound shape outright: sending
-        // entityName/entityId is what Dataverse answers with "Resource not found
-        // for the segment", and a lenient mock hid that until a real environment.
-        if (req.entityName || req.entityId) throw new Error('mock: RetrieveRolePrivilegesRole is unbound, got a bound request');
-        const roleId = req.parameters?.RoleId;
-        if (typeof roleId !== 'string' || !roleId) throw new Error('mock: RetrieveRolePrivilegesRole needs a RoleId parameter');
-        return { RolePrivileges: (rolePrivs[roleId] ?? []).map(([n, d]) => ({ PrivilegeId: P(n), Depth: d, BusinessUnitId: BU_SALES })) };
-      }
+      case 'RetrieveRolePrivilegesRole':
+        // Whatever shape it takes, execute() cannot send an unquoted Edm.Guid. Both
+        // attempts failed against a real environment; the call belongs in queryData.
+        throw new Error('mock: RetrieveRolePrivilegesRole must go through queryData, not execute');
       case 'RetrieveUserPrivileges':
         return { RolePrivileges: [...rolePrivs[R_SALES], ...rolePrivs[R_SHARER]].map(([n, d]) => ({ PrivilegeId: P(n), Depth: { Basic: 0, Local: 1, Deep: 2, Global: 3 }[d] })) };
       case 'RetrievePrincipalAccess': {
@@ -221,7 +225,7 @@ assert((await chip("Assign")).includes("n/a") && (await chip("Share")).includes(
 await page.evaluate(() => window.__emit({ event: "settings:updated", data: { theme: "dark" } }));
 assert((await page.getAttribute("html", "data-theme")) === "dark", "dark theme applied from settings:updated");
 const calls = await page.evaluate(() => window.__calls);
-assert(calls.filter((c) => c === "RetrieveRolePrivilegesRole:" + "c0000000-0000-0000-0000-000000000001").length === 1, "role privileges cached across checks");
+assert(calls.filter((c) => c === "RetrieveRolePrivilegesRole(RoleId=" + "c0000000-0000-0000-0000-000000000001" + ")").length === 1, "role privileges cached across checks");
 assert(calls.filter((c) => c.startsWith("privileges?")).length === 1, "privilege list fetched once");
 
 await finish();

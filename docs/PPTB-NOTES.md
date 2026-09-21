@@ -276,3 +276,33 @@ What this settles:
 - `main` resolves **inside `dist/`**. The handler joins `<toolBaseDir>/dist/<main>`, so `main: "index.html"` + `dist/index.html` is correct, and the §9 conflict is closed. No package-root `index.html` is needed; 0.1.2 shipped one on a wrong theory and 0.1.3 removed it.
 - The other two branches of the same function are fine: `localPath` (Load Local Tool) and `tool.id` (marketplace install). **Marketplace distribution is unaffected by this bug** — submission is not blocked by it.
 - `[ToolManager] Found pnpm globally installed` — the host installs tools with pnpm, whose `minimumReleaseAge` policy can hold a just-published version back for a while (observed: resolved 0.1.1 with "0.1.2 is available").
+
+## 12. execute() cannot send an Edm.Guid function parameter (VERIFIED, 1.2.5)
+
+`dataverseAPI.execute` builds a function call as `Name(Param=@p0)?@p0=<value>` and formats each value with `formatFunctionParameter` (`src/main/managers/dataverseManager.ts`). That function has branches for null, EntityReference, boolean, number, Date, the `Microsoft.Dynamics.CRM.Enum'…'` form, an `@odata.id` string, and objects. **There is no branch for a Guid**, so a plain guid string falls through to:
+
+```js
+const escapedValue = value.replace(/'/g, "''");
+return encodeURIComponent(`'${escapedValue}'`);
+```
+
+which sends `RoleId='<guid>'` and Dataverse answers:
+
+```
+0x80060888: Expression of type 'Edm.String' cannot be converted to type 'Edm.Guid'.
+```
+
+So an unbound function taking an `Edm.Guid` cannot be called through `execute` at all. Route it through `queryData`, which appends the path verbatim with no quoting:
+
+```ts
+api.queryData(`RetrieveRolePrivilegesRole(RoleId=${roleId})`)
+```
+
+Validate the guid before interpolating — `queryData` does no escaping either, which is exactly why it works here.
+
+`queryData` is typed `Promise<{ value: Row[] }>`, but it returns `response.data` unchanged, so a function returning a complex type comes back as that type and needs a cast at the call site.
+
+Bound operations are unaffected: the id goes into the path (`systemusers(<guid>)/Microsoft.Dynamics.CRM.RetrieveUserPrivileges`), never through the formatter. That is why `RetrieveUserPrivileges` worked while `RetrieveRolePrivilegesRole` did not.
+
+Cost us two releases: 0.1.4 fixed the binding (bound → unbound) but still went through `execute`, so it traded "Resource not found for the segment" for this error. 0.1.5 moved it to `queryData`. The access-checker e2e now rejects both wrong shapes.
+
