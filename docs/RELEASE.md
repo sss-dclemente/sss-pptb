@@ -1,5 +1,7 @@
 # RELEASE — owner-side steps per tool
 
+What to put in each screenshot is spelled out per shot in [SCREENSHOTS.md](SCREENSHOTS.md).
+
 Everything below runs on the owner's machine: needs ToolBox desktop, a Dataverse connection and an npm login. Order per tool: real-env test → real screenshots → publish → submit. Repo state: `main` builds, e2e green, `pptb-validate` passes for all three.
 
 Common prep (once):
