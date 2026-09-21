@@ -10,13 +10,18 @@
  *    workflows, userqueries, userqueryvisualizations, queues, queuemembership_association,
  *    connectionreferences, and the "@odata.count" annotation surviving the host bridge.
  */
-import type { CategoryKey, CategoryResult, InventoryItem, LeaverInfo, ScanSummary, TableInfo, TableScanRow, TeamRef, UserInfo } from "./types";
+import type { CategoryKey, CategoryResult, InventoryItem, LeaverInfo, PrincipalHeld, RoleRef, ScanSummary, TableInfo, TableScanRow, TeamRef, UserInfo } from "./types";
 import { WORKFLOW_CATEGORY_LABEL, WORKFLOW_STATE_LABEL } from "./types";
 
 type Row = Record<string, unknown>;
 const s = (v: unknown): string | null => (v == null || v === "" ? null : String(v));
 const id = (v: unknown): string => String(v ?? "").toLowerCase();
-const esc = (v: string): string => v.replace(/'/g, "''");
+/**
+ * A search term is interpolated into a URL query string, so doubling the OData quote is not enough:
+ * an unencoded &, #, + or % in what the user typed truncates or corrupts the request. Double the
+ * quote first (OData string escaping), then percent-encode the result (URL escaping).
+ */
+const esc = (v: string): string => encodeURIComponent(v.replace(/'/g, "''"));
 const num = (v: unknown): number | null => (v == null || v === "" || Number.isNaN(Number(v)) ? null : Number(v));
 
 export interface DataverseLike {
@@ -210,6 +215,56 @@ export async function fetchOwnedRecordIds(api: DataverseLike, t: TableInfo, leav
   return r.value.map((row) => ({ id: id(row[t.primaryId]), name: (t.primaryName ? s(row[t.primaryName]) : null) ?? id(row[t.primaryId]) }));
 }
 
+// ---------- successor state ----------
+/**
+ * What the successor already holds. An `associate` for something they have already fails with a
+ * duplicate-key error, so the plan skips those instead of collecting guaranteed red rows.
+ * Never throws: an unreadable category yields an empty set, and the plan is simply less clever.
+ */
+export async function fetchPrincipalHeld(api: DataverseLike, userId: string): Promise<PrincipalHeld> {
+  const one = async (expand: string, key: string, idField: string): Promise<Set<string>> => {
+    try {
+      const r = await api.queryData(`systemusers?$select=systemuserid&$filter=systemuserid eq ${userId}&$expand=${expand}($select=${idField})`);
+      return new Set(((r.value[0]?.[key] as Row[] | undefined) ?? []).map((x) => id(x[idField])));
+    } catch {
+      return new Set<string>();
+    }
+  };
+  const [roleIds, profileIds, teamIds] = await Promise.all([
+    one("systemuserroles_association", "systemuserroles_association", "roleid"),
+    one("systemuserprofiles_association", "systemuserprofiles_association", "fieldsecurityprofileid"),
+    one("teammembership_association", "teammembership_association", "teamid"),
+  ]);
+  return { roleIds, profileIds, teamIds };
+}
+
+/**
+ * Map each of the leaver's roles onto the equivalent role in the successor's business unit.
+ *
+ * Security roles are business-unit scoped: assigning a role that belongs to another BU is rejected
+ * by the platform. Dataverse keeps one copy of a role per BU, all sharing `parentrootroleid`, so the
+ * equivalent role is the one in the target BU with the same root. A role with no equivalent there
+ * maps to null and the plan skips it with a reason rather than failing at apply time.
+ */
+export async function resolveRolesInBusinessUnit(api: DataverseLike, roots: string[], businessUnitId: string): Promise<Map<string, RoleRef>> {
+  const out = new Map<string, RoleRef>();
+  const unique = [...new Set(roots)];
+  for (let i = 0; i < unique.length; i += 20) {
+    const chunk = unique.slice(i, i + 20);
+    const filter = chunk.map((x) => `_parentrootroleid_value eq ${x}`).join(" or ");
+    try {
+      const r = await api.queryData(`roles?$select=roleid,name,_parentrootroleid_value&$filter=_businessunitid_value eq ${businessUnitId} and (${filter})`);
+      for (const row of r.value) {
+        const root = row._parentrootroleid_value ? id(row._parentrootroleid_value) : id(row.roleid);
+        out.set(root, { id: id(row.roleid), name: s(row.name) ?? id(row.roleid) });
+      }
+    } catch {
+      // A failed chunk leaves those roots unresolved; the plan reports them as skipped.
+    }
+  }
+  return out;
+}
+
 // ---------- categories ----------
 async function workflows(api: DataverseLike, leaverId: string): Promise<InventoryItem[]> {
   const r = await api.queryData(`workflows?$select=workflowid,name,category,statecode,type&$filter=_ownerid_value eq ${leaverId}&$orderby=name`);
@@ -289,13 +344,18 @@ async function teamMemberships(api: DataverseLike, leaverId: string): Promise<In
 }
 
 async function securityRoles(api: DataverseLike, leaverId: string): Promise<InventoryItem[]> {
-  const r = await api.queryData(`systemusers?$select=systemuserid&$filter=systemuserid eq ${leaverId}&$expand=systemuserroles_association($select=roleid,name,_businessunitid_value)`);
+  const r = await api.queryData(
+    `systemusers?$select=systemuserid&$filter=systemuserid eq ${leaverId}&$expand=systemuserroles_association($select=roleid,name,_businessunitid_value,_parentrootroleid_value)`,
+  );
   return ((r.value[0]?.systemuserroles_association as Row[] | undefined) ?? []).map((x) => ({
     entity: "role",
     id: id(x.roleid),
     label: s(x.name) ?? id(x.roleid),
     meta: "direct role",
     flag: null,
+    // A role is scoped to a business unit: the same role exists once per BU, sharing a root role.
+    // The plan needs both to hand the successor the right copy. See resolveRolesInBusinessUnit.
+    data: { businessUnitId: x._businessunitid_value ? id(x._businessunitid_value) : null, rootRoleId: x._parentrootroleid_value ? id(x._parentrootroleid_value) : id(x.roleid) },
   }));
 }
 

@@ -8,8 +8,21 @@ export interface UserInfo {
   businessUnitId: string | null;
   managerId: string | null;
   isDisabled: boolean;
-  /** systemuser.accessmode: 0 Read-Write, 1 Administrative, 3 Non-interactive, 4 Delegated, 5 Support. */
+  /** systemuser.accessmode, values per the table's own choice metadata (see ACCESS_MODE_LABEL). */
   accessMode: number | null;
+}
+
+/** A role as it exists in one business unit. */
+export interface RoleRef {
+  id: string;
+  name: string;
+}
+
+/** What a principal already holds, used to skip associates that would fail as duplicates. */
+export interface PrincipalHeld {
+  roleIds: Set<string>;
+  profileIds: Set<string>;
+  teamIds: Set<string>;
 }
 
 export interface TeamRef {
@@ -27,13 +40,15 @@ export const TEAM_TYPE_LABEL: Record<number, string> = {
   3: "Entra office group team",
 };
 
+/** systemuser.accessmode. Labels read off the choice metadata of a live environment, not guessed:
+ *  3 is Support User and 4 is Non-interactive, which is the pair most often written the other way round. */
 export const ACCESS_MODE_LABEL: Record<number, string> = {
   0: "Read-Write",
   1: "Administrative",
   2: "Read",
-  3: "Non-interactive",
-  4: "Delegated",
-  5: "Support",
+  3: "Support User",
+  4: "Non-interactive",
+  5: "Delegated Admin",
 };
 
 /** 0 workflow, 1 dialog, 2 business rule, 3 action, 4 business process flow, 5 modern flow. */

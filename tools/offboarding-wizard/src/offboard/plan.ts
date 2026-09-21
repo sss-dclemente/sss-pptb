@@ -11,7 +11,7 @@
  *    are NOT used: their collection-of-EntityReference parameter shape is unverified over the bridge.
  *  - direct reports use `update("systemuser", id, { "parentsystemuserid@odata.bind": … })`.
  */
-import type { CategoryKey, CategoryResult, InventoryItem, Inventory, Plan, PlannedOp, TableInfo, UserInfo } from "./types";
+import type { CategoryKey, CategoryResult, InventoryItem, Inventory, Plan, PlannedOp, PrincipalHeld, RoleRef, TableInfo, UserInfo } from "./types";
 
 /** Records per table fetched for the plan; more than this and the table is truncated with a warning. */
 export const DEFAULT_RECORD_CAP = 500;
@@ -37,6 +37,14 @@ export interface PlanOptions {
   teamRemove: boolean;
   teamAdd: boolean;
   recordCap: number;
+  /** What the successor already holds. Absent = the checks are skipped and nothing is filtered out. */
+  successorHeld?: PrincipalHeld;
+  /**
+   * The leaver's roles mapped onto the successor's business unit, keyed by the leaver's role id.
+   * A key present with `null` means the role has no equivalent there. Absent map = no remapping,
+   * which is correct when both users are in the same business unit.
+   */
+  roleRemap?: Map<string, RoleRef | null>;
 }
 
 const ownerBind = (t: OwnerTarget): Record<string, unknown> => ({
@@ -80,7 +88,9 @@ function teamOps(cat: CategoryResult, leaverId: string, successor: UserInfo, o: 
       skipped.push(`Team "${it.label}": membership is managed in Entra ID and cannot be changed through Dataverse.`);
       continue;
     }
-    if (o.teamAdd)
+    if (o.teamAdd && o.successorHeld?.teamIds.has(it.id)) {
+      skipped.push(`Team "${it.label}": ${successor.fullName} is already a member.`);
+    } else if (o.teamAdd)
       ops.push({
         key: `teams:add:${it.id}`,
         category: "teams",
@@ -104,38 +114,52 @@ function teamOps(cat: CategoryResult, leaverId: string, successor: UserInfo, o: 
   return ops;
 }
 
-function principalOps(
-  cat: CategoryResult,
-  leaverId: string,
-  successor: UserInfo,
-  relationship: string,
-  relatedEntity: string,
-  copy: boolean,
-  remove: boolean,
-  kindCopy: PlannedOp["kind"],
-  kindRemove: PlannedOp["kind"],
-): PlannedOp[] {
+interface PrincipalOpts {
+  relationship: string;
+  relatedEntity: string;
+  copy: boolean;
+  remove: boolean;
+  kindCopy: PlannedOp["kind"];
+  kindRemove: PlannedOp["kind"];
+  /** Ids the successor already holds; a copy of one of these is skipped, not planned. */
+  held?: Set<string>;
+  /** Roles only: leaver role id → the equivalent role in the successor's BU, or null if there is none. */
+  remap?: Map<string, RoleRef | null>;
+  skipped: string[];
+}
+
+function principalOps(cat: CategoryResult, leaverId: string, successor: UserInfo, p: PrincipalOpts): PlannedOp[] {
   const ops: PlannedOp[] = [];
   for (const it of cat.items) {
-    if (copy)
-      ops.push({
-        key: `${cat.key}:copy:${it.id}`,
-        category: cat.key,
-        kind: kindCopy,
-        label: it.label,
-        detail: `grant to ${successor.fullName}`,
-        danger: true,
-        call: { op: "associate", entity: "systemuser", id: successor.id, relationship, relatedEntity, relatedId: it.id },
-      });
-    if (remove)
+    if (p.copy) {
+      // Roles live per business unit: grant the successor the copy that belongs to theirs.
+      const target: RoleRef | null = p.remap ? (p.remap.get(it.id) ?? null) : { id: it.id, name: it.label };
+      if (p.remap && !target) {
+        p.skipped.push(`Role "${it.label}": no equivalent role exists in ${successor.fullName}'s business unit, so it cannot be granted from here.`);
+      } else if (target && p.held?.has(target.id)) {
+        p.skipped.push(`${cat.label} "${it.label}": ${successor.fullName} already has it.`);
+      } else if (target) {
+        const remapped = target.id !== it.id;
+        ops.push({
+          key: `${cat.key}:copy:${it.id}`,
+          category: cat.key,
+          kind: p.kindCopy,
+          label: it.label,
+          detail: remapped ? `grant to ${successor.fullName} (their business unit's copy of this role)` : `grant to ${successor.fullName}`,
+          danger: true,
+          call: { op: "associate", entity: "systemuser", id: successor.id, relationship: p.relationship, relatedEntity: p.relatedEntity, relatedId: target.id },
+        });
+      }
+    }
+    if (p.remove)
       ops.push({
         key: `${cat.key}:remove:${it.id}`,
         category: cat.key,
-        kind: kindRemove,
+        kind: p.kindRemove,
         label: it.label,
         detail: "remove from the leaver",
         danger: true,
-        call: { op: "disassociate", entity: "systemuser", id: leaverId, relationship, relatedId: it.id },
+        call: { op: "disassociate", entity: "systemuser", id: leaverId, relationship: p.relationship, relatedId: it.id },
       });
   }
   return ops;
@@ -181,14 +205,35 @@ export function buildPlan(inv: Inventory, recordIds: Map<string, { id: string; n
   const roles = byKey.get("roles");
   if (roles && o.categories.has("roles")) {
     if (!o.roleCopy && !o.roleRemove) skipped.push("Security roles: neither copy nor remove was chosen.");
-    ops = ops.concat(principalOps(roles, leaverId, o.successor, "systemuserroles_association", "role", o.roleCopy, o.roleRemove, "role-copy", "role-remove"));
+    ops = ops.concat(
+      principalOps(roles, leaverId, o.successor, {
+        relationship: "systemuserroles_association",
+        relatedEntity: "role",
+        copy: o.roleCopy,
+        remove: o.roleRemove,
+        kindCopy: "role-copy",
+        kindRemove: "role-remove",
+        held: o.successorHeld?.roleIds,
+        remap: o.roleRemap,
+        skipped,
+      }),
+    );
   }
 
   const profiles = byKey.get("fieldprofiles");
   if (profiles && o.categories.has("fieldprofiles")) {
     if (!o.profileCopy && !o.profileRemove) skipped.push("Field security profiles: neither copy nor remove was chosen.");
     ops = ops.concat(
-      principalOps(profiles, leaverId, o.successor, "systemuserprofiles_association", "fieldsecurityprofile", o.profileCopy, o.profileRemove, "profile-copy", "profile-remove"),
+      principalOps(profiles, leaverId, o.successor, {
+        relationship: "systemuserprofiles_association",
+        relatedEntity: "fieldsecurityprofile",
+        copy: o.profileCopy,
+        remove: o.profileRemove,
+        kindCopy: "profile-copy",
+        kindRemove: "profile-remove",
+        held: o.successorHeld?.profileIds,
+        skipped,
+      }),
     );
   }
 
@@ -241,6 +286,9 @@ export function estimateCounts(inv: Inventory, o: Pick<PlanOptions, "categories"
   }
   for (const c of inv.categories) {
     if (!o.categories.has(c.key) || !c.writable) continue;
+    // Entra group teams are always skipped when the plan is built, so they must not be counted here
+    // either: an estimate that disagrees with the preview is worse than no estimate.
+    const items = c.key === "teams" ? c.items.filter((it) => Number((it.data?.teamtype as number | undefined) ?? 0) < 2).length : c.items.length;
     const mult =
       c.key === "roles"
         ? (o.roleCopy ? 1 : 0) + (o.roleRemove ? 1 : 0)
@@ -249,7 +297,7 @@ export function estimateCounts(inv: Inventory, o: Pick<PlanOptions, "categories"
           : c.key === "teams"
             ? (o.teamAdd ? 1 : 0) + (o.teamRemove ? 1 : 0)
             : 1;
-    if (c.items.length * mult) out.push({ label: CATEGORY_LABEL[c.key], count: c.items.length * mult });
+    if (items * mult) out.push({ label: CATEGORY_LABEL[c.key], count: items * mult });
   }
   return out;
 }

@@ -2,9 +2,34 @@ import { $, badge, card, emptyState, h, showDialog, table, wireTabs } from "../.
 import { dataverse, getConnections, initTheme, inToolbox, notify, onConnectionChange, saveText } from "../../_shared/host";
 import { applyPlan, DEFAULT_WRITE_CONCURRENCY } from "./offboard/apply";
 import { inventoryCsv, inventoryJson, resultsCsv, resultsJson, safeFileName } from "./offboard/export";
-import { fetchCategories, fetchLeaver, fetchOwnedRecordIds, fetchOwnedTables, scanOwnedRecords, searchTeams, searchUsers, type DataverseLike, type PoolControl } from "./offboard/fetch";
+import {
+  fetchCategories,
+  fetchLeaver,
+  fetchOwnedRecordIds,
+  fetchOwnedTables,
+  fetchPrincipalHeld,
+  resolveRolesInBusinessUnit,
+  scanOwnedRecords,
+  searchTeams,
+  searchUsers,
+  type DataverseLike,
+  type PoolControl,
+} from "./offboard/fetch";
 import { buildPlan, categoryLabel, DEFAULT_RECORD_CAP, estimateCounts, LARGE_PLAN_WARNING, type OwnerTarget } from "./offboard/plan";
-import { ACCESS_MODE_LABEL, CALL_TEXT, type CategoryKey, type CategoryResult, type Inventory, type LeaverInfo, type OpResult, type Plan, type TableInfo, type TeamRef, type UserInfo } from "./offboard/types";
+import {
+  ACCESS_MODE_LABEL,
+  CALL_TEXT,
+  type CategoryKey,
+  type CategoryResult,
+  type Inventory,
+  type LeaverInfo,
+  type OpResult,
+  type Plan,
+  type RoleRef,
+  type TableInfo,
+  type TeamRef,
+  type UserInfo,
+} from "./offboard/types";
 
 // ---------- state ----------
 let leaver: LeaverInfo | null = null;
@@ -408,6 +433,21 @@ function previewBody(plan: Plan): Node {
   );
 }
 
+
+/**
+ * Roles are business-unit scoped, so a role held by the leaver cannot be granted to a successor in
+ * another business unit: the equivalent role there is the one sharing `parentrootroleid`. Same BU
+ * (or an unknown one) needs no remapping, and returning undefined leaves the plan's ids untouched.
+ */
+async function resolveRoleRemap(a: DataverseLike, inv: Inventory, successorUser: UserInfo): Promise<Map<string, RoleRef | null> | undefined> {
+  const bu = successorUser.businessUnitId;
+  if (!bu || bu === inv.leaver.user.businessUnitId) return undefined;
+  const roles = inv.categories.find((c) => c.key === "roles")?.items ?? [];
+  if (!roles.length) return undefined;
+  const roots = roles.map((it) => String(it.data?.rootRoleId ?? it.id));
+  const byRoot = await resolveRolesInBusinessUnit(a, roots, bu);
+  return new Map(roles.map((it) => [it.id, byRoot.get(String(it.data?.rootRoleId ?? it.id)) ?? null]));
+}
 async function previewAndApply(): Promise<void> {
   const a = api();
   const inv = inventory;
@@ -415,7 +455,20 @@ async function previewAndApply(): Promise<void> {
   if (!a || !inv || !successor || !target) return;
   const successorUser = successor;
   setStatus("Building the plan…");
-  const plan = buildPlan(inv, await collectRecordIds(a, inv), { successor: successorUser, recordTarget: target, categories: selectedCats, tables: selectedTables, ...opts });
+  const [recordIds, successorHeld, roleRemap] = await Promise.all([
+    collectRecordIds(a, inv),
+    fetchPrincipalHeld(a, successorUser.id),
+    resolveRoleRemap(a, inv, successorUser),
+  ]);
+  const plan = buildPlan(inv, recordIds, {
+    successor: successorUser,
+    recordTarget: target,
+    categories: selectedCats,
+    tables: selectedTables,
+    ...opts,
+    successorHeld,
+    roleRemap,
+  });
   lastPlan = plan;
   setStatus(null);
   if (!plan.ops.length) {
