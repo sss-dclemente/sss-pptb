@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SSS EnvVar &amp; ConnRef Matrix</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <div class="content" style="height:100%">
+    <header class="topbar">
+      <div class="brand">
+        <span class="eyebrow">Simple Smooth Safe</span>
+        <h1>EnvVar &amp; ConnRef Matrix</h1>
+      </div>
+      <div id="columns" class="columns" aria-label="Environment columns"></div>
+      <span class="spacer"></span>
+      <button id="btn-refresh" class="btn btn-sm" type="button">Refresh</button>
+      <button id="btn-load-snap" class="btn btn-sm" type="button">Load snapshot…</button>
+    </header>
+
+    <nav class="tabs" role="tablist">
+      <button class="tab is-active" data-tab="envvars" role="tab" type="button">Environment variables</button>
+      <button class="tab" data-tab="connrefs" role="tab" type="button">Connection references</button>
+    </nav>
+
+    <div class="toolbar">
+      <input id="filter-text" type="search" placeholder="Filter by name…" aria-label="Filter" />
+      <label class="check"><input type="checkbox" id="filter-diff" /> Only differences</label>
+      <label class="check"><input type="checkbox" id="filter-missing" /> Only missing / unbound</label>
+      <label>Solution <select id="filter-solution"><option value="">all</option></select></label>
+      <div class="right">
+        <label>Export <select id="export-col"></select></label>
+        <button id="btn-export-settings" class="btn btn-ghost btn-sm" type="button">deploymentSettings.json</button>
+        <button id="btn-export-snap" class="btn btn-ghost btn-sm" type="button">Snapshot</button>
+        <button id="btn-export-csv" class="btn btn-ghost btn-sm" type="button">Matrix CSV</button>
+      </div>
+    </div>
+
+    <div id="status" class="status" hidden></div>
+
+    <div class="matrix-wrap">
+      <div id="matrix-body"></div>
+    </div>
+
+    <div id="bulkbar" class="bulkbar" hidden>
+      <span class="count"><span id="sel-count">0</span> selected</span>
+      <label>Copy from <select id="copy-from"></select></label>
+      <label>to <select id="copy-to"></select></label>
+      <button id="btn-copy" class="btn btn-primary btn-sm" type="button" style="flex:none">Preview copy…</button>
+      <button id="btn-clear-sel" class="btn btn-ghost btn-sm" type="button">Clear selection</button>
+    </div>
+
+    <footer class="footer" style="padding: var(--s-2) var(--s-5); margin-top: 0; flex-direction: row; justify-content: space-between; align-items: center;">
+      <a href="https://simplesmoothsafe.com" target="_blank" rel="noopener">Simple Smooth Safe</a>
+      <span class="caption" id="host-mode"></span>
+    </footer>
+  </div>
+
+  <dialog id="dlg">
+    <div class="dlg-head"><h3 id="dlg-title">Preview</h3><span class="spacer" style="flex:1"></span><span id="dlg-target" class="target"></span></div>
+    <div class="dlg-body" id="dlg-body"></div>
+    <div class="dlg-foot">
+      <button id="dlg-cancel" class="btn btn-ghost" type="button">Cancel</button>
+      <button id="dlg-ok" class="btn btn-primary" type="button" style="flex:none">Confirm</button>
+    </div>
+  </dialog>
+
+  <script type="module" src="./main.ts"></script>
+</body>
+</html>
