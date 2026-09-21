@@ -1,3 +1,4 @@
+import { $, badge, emptyState, h, showDialog, wireTabs } from "../../_shared/dom";
 import { dataverse, getConnections, initTheme, inToolbox, notify, onConnectionChange, openText, saveText } from "./host";
 import { deploymentSettings, matrixCsv, safeFileName, snapshot } from "./matrix/export";
 import { fetchColumn, fetchSolutionScope, fetchSolutions, type SolutionInfo } from "./matrix/fetch";
@@ -17,30 +18,6 @@ let scope: Set<string> | null = null;
 
 const columns = (): ColumnData[] => [...live, ...snaps];
 const liveCols = (): ColumnMeta[] => live.map((c) => c.meta);
-
-// ---------- DOM helpers ----------
-const $ = <T extends HTMLElement = HTMLElement>(sel: string): T => {
-  const el = document.querySelector<T>(sel);
-  if (!el) throw new Error(`missing ${sel}`);
-  return el;
-};
-function h<K extends keyof HTMLElementTagNameMap>(
-  tag: K,
-  attrs: Record<string, string | boolean | undefined> = {},
-  ...children: (Node | string | null | undefined | false)[]
-): HTMLElementTagNameMap[K] {
-  const el = document.createElement(tag);
-  for (const [k, v] of Object.entries(attrs)) {
-    if (v === undefined || v === false) continue;
-    if (k === "class") el.className = String(v);
-    else if (v === true) el.setAttribute(k, "");
-    else el.setAttribute(k, v);
-  }
-  for (const c of children) if (c != null && c !== false) el.append(typeof c === "string" ? document.createTextNode(c) : c);
-  return el;
-}
-const badge = (text: string, kind: "" | "ok" | "warn" | "bad" | "neutral" = ""): HTMLElement => h("span", { class: `badge${kind ? ` badge-${kind}` : ""}` }, text);
-const emptyState = (title: string, hint: string): HTMLElement => h("div", { class: "empty-state" }, h("strong", {}, title), hint);
 
 function colChip(meta: ColumnMeta, removable: boolean): HTMLElement {
   const dot = h("span", { class: "dot" });
@@ -264,7 +241,7 @@ async function applySolutionFilter(): Promise<void> {
 }
 
 async function loadSnapshot(): Promise<void> {
-  const f = await openText();
+  const f = await openText({ title: "Open matrix snapshot", extensions: ["json"] });
   if (!f) return;
   try {
     snaps.push(parseSnapshot(f.text, f.name));
@@ -275,39 +252,7 @@ async function loadSnapshot(): Promise<void> {
 }
 
 // ---------- dialogs ----------
-function showDialog(title: string, target: ColumnMeta | null, body: Node, okLabel: string, danger: boolean): Promise<boolean> {
-  const dlg = $<HTMLDialogElement>("#dlg");
-  $("#dlg-title").textContent = title;
-  const t = $("#dlg-target");
-  t.replaceChildren();
-  if (target) t.append("Target:", colChip(target, false));
-  $("#dlg-body").replaceChildren(body);
-  const ok = $<HTMLButtonElement>("#dlg-ok");
-  ok.textContent = okLabel;
-  ok.className = `btn ${danger ? "btn-danger" : "btn-primary"}`;
-  ok.style.flex = "none";
-  ok.hidden = !okLabel;
-  return new Promise((resolve) => {
-    let settled = false;
-    const done = (v: boolean) => {
-      if (settled) return;
-      settled = true;
-      ok.onclick = null;
-      $("#dlg-cancel").onclick = null;
-      dlg.onclose = null;
-      // The close event fires asynchronously; resolve only after it so a dialog opened
-      // by the caller right away is not closed by this one's stale close event.
-      if (dlg.open) {
-        dlg.addEventListener("close", () => resolve(v), { once: true });
-        dlg.close();
-      } else resolve(v);
-    };
-    ok.onclick = () => done(true);
-    $("#dlg-cancel").onclick = () => done(false);
-    dlg.onclose = () => done(false);
-    dlg.showModal();
-  });
-}
+const targetChip = (m: ColumnMeta): Node => h("span", {}, "Target:", colChip(m, false));
 
 function planTable(items: WritePlan["items"]): HTMLElement {
   return h(
@@ -342,7 +287,7 @@ async function runPlan(plan: WritePlan): Promise<void> {
     isProd && writes.length ? h("div", { class: "warnings" }, "Target is a Production environment.") : null,
     planTable(plan.items),
   );
-  const ok = await showDialog("Preview changes", plan.target, body, writes.length ? `Apply ${writes.length}` : "", isProd);
+  const ok = await showDialog({ title: "Preview changes", target: targetChip(plan.target), body, okLabel: writes.length ? `Apply ${writes.length}` : "", danger: isProd });
   if (!ok || !writes.length) return;
   const api = dataverse();
   if (!api) return;
@@ -366,7 +311,7 @@ async function showResults(results: WriteResult[], target: ColumnMeta): Promise<
     ),
   );
   await notify(failed.length ? "Some writes failed" : "Values written", `${results.length - failed.length - results.filter((r) => r.action === "skip").length} ok, ${failed.length} failed`, failed.length ? "warning" : "success");
-  await showDialog("Results", target, body, "", false);
+  await showDialog({ title: "Results", target: targetChip(target), body });
 }
 
 async function openSetDialog(row: EnvVarRow, target: ColumnMeta): Promise<void> {
@@ -374,7 +319,7 @@ async function openSetDialog(row: EnvVarRow, target: ColumnMeta): Promise<void> 
   const input = h("textarea", { rows: "4", "aria-label": "New value" }) as HTMLTextAreaElement;
   input.value = current.effective ?? "";
   const body = h("div", {}, h("p", {}, h("span", { class: "mono" }, row.schemaName), " ", badge(row.type, "neutral"), " ", h("span", { class: "caption" }, `current: ${current.source}`)), input);
-  const ok = await showDialog("Set value", target, body, "Preview", false);
+  const ok = await showDialog({ title: "Set value", target: targetChip(target), body, okLabel: "Preview" });
   if (!ok) return;
   await runPlan(planSet(row, target, input.value));
 }
@@ -403,13 +348,10 @@ async function exportFile(name: string, content: string, mime = "application/jso
 
 // ---------- wiring ----------
 function wire(): void {
-  document.querySelectorAll<HTMLButtonElement>(".tab").forEach((btn) =>
-    btn.addEventListener("click", () => {
-      activeTab = btn.dataset.tab as typeof activeTab;
-      document.querySelectorAll(".tab").forEach((t) => t.classList.toggle("is-active", t === btn));
-      renderTable();
-    }),
-  );
+  wireTabs((name) => {
+    activeTab = name as typeof activeTab;
+    renderTable();
+  });
   for (const id of ["#filter-text", "#filter-diff", "#filter-missing"]) $(id).addEventListener("input", renderTable);
   $("#filter-solution").addEventListener("change", async () => {
     setStatus("Loading solution scope…");
