@@ -2,22 +2,14 @@
 // Two fake environments (Dev = primary, Test = secondary). Covers matrix merge, filters, solution scope,
 // copy with preview/confirm, single-cell set, exports, snapshot round-trip, connection references.
 // Run: npm run build && node scripts/e2e.mjs   (needs playwright + chromium available)
-import { createRequire } from "node:module";
 import { mkdirSync } from "node:fs";
 import { resolve } from "node:path";
+import { launchPage } from "../../_shared/e2e-loader.mjs";
 
 const TOOL = new URL("..", import.meta.url).pathname.replace(/\/$/, "");
 const OUT = resolve(TOOL, "scripts/.e2e-out");
 mkdirSync(OUT, { recursive: true });
-const require = createRequire(TOOL + "/package.json");
 
-function loadPlaywright() {
-  for (const c of [process.env.PLAYWRIGHT_PATH, "playwright", "/opt/node22/lib/node_modules/playwright", "/usr/lib/node_modules/playwright", "/usr/local/lib/node_modules/playwright"].filter(Boolean)) {
-    try { return require(c); } catch { /* next */ }
-  }
-  throw new Error("playwright not found: npm i -g playwright, or set PLAYWRIGHT_PATH");
-}
-const { chromium } = loadPlaywright();
 
 // ---- mock host, serialized into the page before load ----
 const MOCK = `
@@ -82,16 +74,9 @@ const MOCK = `
 })();
 `;
 
-const browser = await chromium.launch(process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH } : {});
-const page = await browser.newPage({ viewport: { width: 1400, height: 900 } });
-const errors = [];
-page.on("pageerror", (e) => errors.push("pageerror: " + e.message));
-page.on("console", (m) => { if (m.type() === "error") errors.push("console: " + m.text()); });
-await page.addInitScript(MOCK);
+const { page, assert, finish } = await launchPage(import.meta.url, { initScript: MOCK });
 await page.goto("file://" + TOOL + "/dist/index.html");
 
-let failed = 0;
-const assert = (c, msg) => { if (!c) { failed++; console.error("FAIL:", msg); } else console.log("ok:", msg); };
 const rowNames = () => page.$$eval("table.matrix tbody td.name .mono", (els) => els.map((e) => e.textContent));
 
 await page.waitForFunction(() => document.querySelectorAll("#columns .colchip").length === 2);
@@ -195,6 +180,4 @@ await page.click('#columns .colchip button[aria-label^="Remove"]');
 await page.waitForFunction(() => document.querySelectorAll("#columns .colchip").length === 2);
 assert(true, "snapshot removed");
 
-assert(errors.length === 0, "no page/console errors" + (errors.length ? ": " + errors.join(" | ") : ""));
-await browser.close();
-if (failed) process.exit(1);
+await finish();
