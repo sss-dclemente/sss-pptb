@@ -10,7 +10,10 @@ import { applyPlan, planMatchOther, planSet, publishTables, tablesToPublish, typ
 // ---------- state ----------
 let primary: EnvData | null = null;
 let others: EnvData[] = [];
-let matrix: Matrix = { primary: null, other: null, rows: [], counts: { tables: 0, tablesAudited: 0, tablesDiffer: 0, loadedTables: 0, columnsAudited: 0, columnsDiffer: 0 } };
+let matrix: Matrix = { primary: null, other: null, rows: [], counts: { tables: 0, tablesAudited: 0, tablesDiffer: 0, loadedTables: 0, columnsAudited: 0, columnsDiffer: 0, columnsInert: 0 },
+  orgAuditEnabled: null,
+  inertTables: 0,
+};
 const expanded = new Set<string>();
 const selected = new Set<string>();
 let plan: PlanItem[] = [];
@@ -88,11 +91,42 @@ function renderHeader(): void {
 function renderCounts(): void {
   const c = matrix.counts;
   const metric = (value: string, label: string, title?: string) => h("span", { class: "metric", title }, h("strong", {}, value), h("span", {}, label));
-  $("#counts").replaceChildren(
+  const items: HTMLElement[] = [
     metric(`${c.tablesAudited} / ${c.tables}`, "tables audited"),
     metric(String(c.tablesDiffer), matrix.other ? `table differences vs ${matrix.other.name}` : "table differences (no comparison)"),
     metric(String(c.columnsAudited), `columns audited in ${c.loadedTables} expanded table${c.loadedTables === 1 ? "" : "s"}`, "Column flags are read when a row is expanded, so this counts expanded tables only."),
     metric(String(c.columnsDiffer), "column differences"),
+  ];
+  if (c.columnsInert) items.push(metric(String(c.columnsInert), "audited columns capturing nothing", "Their table, or the organization, has auditing off."));
+  $("#counts").replaceChildren(...items);
+  renderOrgBanner();
+}
+
+/**
+ * Auditing is an AND across three levels: organization, table, column. A matrix full of green
+ * table flags in an environment whose organization switch is off records nothing at all, and that
+ * is exactly the situation someone opens this tool to discover — so it is said on the matrix
+ * itself, not left on another tab.
+ */
+function renderOrgBanner(): void {
+  const el = document.querySelector("#org-banner");
+  if (!el) return;
+  const on = matrix.orgAuditEnabled;
+  if (on !== false || !matrix.primary) {
+    el.replaceChildren();
+    (el as HTMLElement).hidden = true;
+    return;
+  }
+  (el as HTMLElement).hidden = false;
+  el.replaceChildren(
+    badge("auditing off", "bad"),
+    h(
+      "span",
+      {},
+      `Auditing is switched off for ${matrix.primary.name} at the organization level, so nothing in this matrix is being captured` +
+        (matrix.inertTables ? `, including the ${matrix.inertTables} table${matrix.inertTables === 1 ? "" : "s"} whose flag reads on` : "") +
+        ". Turn it on in the Power Platform admin centre; these flags decide what is captured only once it is.",
+    ),
   );
 }
 
@@ -124,7 +158,13 @@ function tableRow(r: MatrixTableRow, f: Filters): HTMLElement[] {
       h("td", { class: "cell" }, flagBadge(r.state, r.locked)),
       h("td", { class: "cell" }, matrix.other ? flagBadge(r.otherState) : h("span", { class: "caption" }, "—")),
       h("td", {}, r.differs ? h("span", { class: "diffmark", title: "Differs from the comparison environment" }, "≠") : ""),
-      h("td", { class: "caption" }, r.stats ? `${r.stats.audited} / ${r.stats.total} audited${r.stats.differs ? ` · ${r.stats.differs} ≠` : ""}${r.stats.secured ? ` · ${r.stats.secured} secured` : ""}` : "expand to load"),
+      h(
+        "td",
+        { class: "caption" },
+        r.stats
+          ? `${r.stats.audited} / ${r.stats.total} audited${r.stats.inert ? ` (${r.stats.inert} capturing nothing)` : ""}${r.stats.differs ? ` · ${r.stats.differs} ≠` : ""}${r.stats.secured ? ` · ${r.stats.secured} secured` : ""}`
+          : "expand to load",
+      ),
     ),
   ];
   if (!open || !r.columns) return rows;
@@ -153,7 +193,15 @@ function tableRow(r: MatrixTableRow, f: Filters): HTMLElement[] {
               h("td", { class: "sel" }, ccb),
               h("td", { class: "name" }, h("span", { class: "mono" }, c.logicalName), h("span", { class: "display" }, c.displayName), c.isSecured ? badge("secured", "warn") : null),
               h("td", { class: "caption" }, c.attributeType),
-              h("td", { class: "cell" }, flagBadge(c.state, c.locked)),
+              h(
+                "td",
+                {
+                  class: c.inert ? "cell col-inert" : "cell",
+                  title: c.inert ? (matrix.orgAuditEnabled === false ? "On, but auditing is off for the organization: nothing is captured." : "On, but this table's audit flag is off: nothing is captured for this column.") : undefined,
+                },
+                flagBadge(c.state, c.locked),
+                c.inert ? badge("inert", "warn") : null,
+              ),
               h("td", { class: "cell" }, matrix.other ? flagBadge(c.otherState) : h("span", { class: "caption" }, "—")),
               h("td", {}, c.differs ? h("span", { class: "diffmark" }, "≠") : ""),
             );
@@ -230,7 +278,10 @@ function orgCard(env: EnvData): HTMLElement {
             row("Auditing (isauditenabled)", o.isAuditEnabled),
             row("User access auditing (isuseraccessauditenabled)", o.isUserAccessAuditEnabled),
             row("Read auditing (isreadauditenabled)", o.isReadAuditEnabled),
-            row("Retention, days (auditretentionperiodv2)", o.retentionDays === -1 ? "forever (-1)" : o.retentionDays),
+            row(
+              `Retention, days${o.retentionSource ? ` (${o.retentionSource === "v2" ? "auditretentionperiodv2" : "auditretentionperiod, legacy"})` : ""}`,
+              o.retentionDays === -1 ? "forever (-1)" : o.retentionDays,
+            ),
           ],
         ),
         o.unavailable.length ? h("p", { class: "caption", style: "margin-top:8px" }, `Not returned by this environment: ${o.unavailable.join(", ")}`) : null,
@@ -314,6 +365,15 @@ async function runPlan(): Promise<void> {
       {},
       h("p", { class: "caption" }, `${plan.length} metadata write${plan.length === 1 ? "" : "s"} to ${primary.meta.name} (${primary.meta.environment}). Each one re-reads the current definition and changes only IsAuditEnabled.`),
       isProd ? h("div", { class: "warnings" }, "Target is a Production environment.") : null,
+      // Turning a flag on is not the same as capturing anything: the organization switch gates both
+      // other levels, so a plan that switches things on there changes metadata and nothing else.
+      primary.org?.isAuditEnabled === false && plan.some((i) => i.next)
+        ? h(
+            "div",
+            { class: "warnings" },
+            `Auditing is off for ${primary.meta.name} at the organization level. These writes will set the flags, but nothing will be captured until auditing is switched on in the Power Platform admin centre.`,
+          )
+        : null,
       planTable(plan),
     ),
     okLabel: `Apply ${plan.length}`,

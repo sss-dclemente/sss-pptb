@@ -69,6 +69,8 @@ Rows are tables (the union of both environments, sorted by display name); a row 
 - A table row is "differing" if its own flag differs **or** any loaded column of it differs; the "only differences" filter keeps such a row and narrows its column sub-rows to the differing ones.
 - Counts in the header: `tables audited / total`, `table differences`, `columns audited in N expanded tables`, `column differences`. The column counts name their own scope because of AU2 — they are not an environment-wide total and do not pretend to be.
 - Filters: text (logical / schema / display name), audit on / off, only differences, layer custom / managed, "has audited or secured columns" (loaded tables only).
+- **Auditing is an AND across the three levels.** A column is captured only when the organization, its table and the column are all on, so a green column under an off table — or anything at all in an environment whose organization switch is off — is a false reassurance. Such a column is marked `inert`, counted separately ("audited columns capturing nothing"), and when the organization switch is off the Matrix tab carries a banner saying so and how many table flags read on while capturing nothing. The apply preview repeats it: the writes will set the flags, but nothing is captured until auditing is on.
+- **`OwnershipType`** arrives as the Web API's string or the client metadata API's flags integer depending on which side of the bridge answers. Only the string was read, which labelled every table "none"; both are now accepted.
 - Secured columns (`IsSecured`) are surfaced next to audit because "who saw this" and "who can see this" are asked together; column security itself belongs to the Access Checker.
 
 ---
@@ -102,8 +104,8 @@ Risks accepted, and what bounds them:
 
 ### UNVERIFIED
 
-1. `isreadauditenabled` on `organizations` — name not confirmed against a live environment; handled by the fallback chain and shown as "unknown" when absent.
-2. `auditretentionperiodv2` — believed to be the current retention field (days, `-1` = forever), with `auditretentionperiod` as the older one. Only v2 is requested; absence degrades to "unknown".
+1. ~~`isreadauditenabled`~~ — **confirmed** against a live environment. The fallback chain keeps it, for versions that do not expose it.
+2. ~~`auditretentionperiodv2`~~ — **confirmed as a column, and confirmed insufficient on its own.** A live environment returned `auditretentionperiodv2` null while the legacy `auditretentionperiod` held 30, so requesting only v2 reported "unknown" for an environment that does have a retention. Both are now requested, v2 wins when set, and the org card names the column the value came from. `-1` means keep forever.
 3. Whether `updateEntityDefinition` in `@pptb/types` 1.2.5 forwards `MSCRM.MergeLabels` for an entity PUT as it documents (the option is passed; the header is not observable from the tool).
 4. Whether a scoped `publishCustomizations(table)` is sufficient for a column-level audit change, or whether a publish-all is needed in some versions. The tool publishes scoped; a publish-all is one click away in ToolBox.
 5. Dataverse-side paging: `getAllEntitiesMetadata` and `Attributes` are assumed to return complete collections (no `@odata.nextLink` handling), as in the sibling tools.

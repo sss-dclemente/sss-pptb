@@ -2,7 +2,7 @@ import type { ColumnAudit, ColumnStats, Counts, EnvData, Filters, FlagState, Mat
 
 const state = (a: { audit: { value: boolean } } | null | undefined): FlagState => (!a ? "absent" : a.audit.value ? "on" : "off");
 
-function columnRows(table: string, mine: ColumnAudit[], theirs: ColumnAudit[] | null): MatrixColumnRow[] {
+function columnRows(table: string, mine: ColumnAudit[], theirs: ColumnAudit[] | null, capturing: boolean): MatrixColumnRow[] {
   const byName = new Map<string, ColumnAudit>();
   for (const c of theirs ?? []) byName.set(c.logicalName.toLowerCase(), c);
   return mine.map((c) => {
@@ -20,6 +20,7 @@ function columnRows(table: string, mine: ColumnAudit[], theirs: ColumnAudit[] | 
       state: state(c),
       otherState,
       differs: !!theirs && otherState !== state(c),
+      inert: state(c) === "on" && !capturing,
     };
   });
 }
@@ -27,6 +28,7 @@ function columnRows(table: string, mine: ColumnAudit[], theirs: ColumnAudit[] | 
 function stats(rows: MatrixColumnRow[]): ColumnStats {
   return {
     audited: rows.filter((r) => r.state === "on").length,
+    inert: rows.filter((r) => r.inert).length,
     total: rows.length,
     differs: rows.filter((r) => r.differs).length,
     secured: rows.filter((r) => r.isSecured).length,
@@ -44,6 +46,7 @@ export function buildMatrix(primary: EnvData | null, other: EnvData | null): Mat
   const theirs = new Map<string, TableAudit>();
   for (const t of other?.tables ?? []) theirs.set(t.logicalName.toLowerCase(), t);
 
+  const orgOn = primary?.org?.isAuditEnabled ?? null;
   const keys = [...new Set([...mine.keys(), ...theirs.keys()])];
   const rows: MatrixTableRow[] = keys
     .map((key) => {
@@ -52,7 +55,9 @@ export function buildMatrix(primary: EnvData | null, other: EnvData | null): Mat
       const head = p ?? o!;
       const myCols = primary?.columns[head.logicalName] ?? null;
       const otherCols = other ? (other.columns[head.logicalName] ?? null) : null;
-      const cols = myCols ? columnRows(head.logicalName, myCols, other ? otherCols : null) : null;
+      // A column is only captured when the organization, the table and the column are all on.
+      const capturing = orgOn !== false && state(p) === "on";
+      const cols = myCols ? columnRows(head.logicalName, myCols, other ? otherCols : null, capturing) : null;
       const otherState: FlagState = other ? state(o) : "absent";
       return {
         key,
@@ -79,8 +84,16 @@ export function buildMatrix(primary: EnvData | null, other: EnvData | null): Mat
     loadedTables: loaded.length,
     columnsAudited: loaded.reduce((n, r) => n + r.stats!.audited, 0),
     columnsDiffer: loaded.reduce((n, r) => n + r.stats!.differs, 0),
+    columnsInert: loaded.reduce((n, r) => n + r.stats!.inert, 0),
   };
-  return { primary: primary?.meta ?? null, other: other?.meta ?? null, rows, counts };
+  return {
+    primary: primary?.meta ?? null,
+    other: other?.meta ?? null,
+    rows,
+    counts,
+    orgAuditEnabled: orgOn,
+    inertTables: orgOn === false ? rows.filter((r) => r.state === "on").length : 0,
+  };
 }
 
 export function filterRows(rows: MatrixTableRow[], f: Filters): MatrixTableRow[] {

@@ -41,6 +41,12 @@ export interface OrgAudit {
   isUserAccessAuditEnabled: boolean | null;
   isReadAuditEnabled: boolean | null;
   retentionDays: number | null;
+  /**
+   * Which column the retention came from. `auditretentionperiodv2` is the current one and is null
+   * on environments that still carry the value in the legacy `auditretentionperiod`, so reading
+   * only v2 reports "unknown" for an environment that does have a retention set.
+   */
+  retentionSource: "v2" | "legacy" | null;
   /** Names of requested fields this environment did not return. */
   unavailable: string[];
 }
@@ -77,10 +83,18 @@ export interface MatrixColumnRow {
   state: FlagState;
   otherState: FlagState;
   differs: boolean;
+  /**
+   * The column's flag is on but nothing is captured for it, because auditing is off one level up:
+   * on the table, or on the organization. Dataverse audits a column only when organization, table
+   * and column are all on, so a green column under an off table is a false reassurance.
+   */
+  inert: boolean;
 }
 
 export interface ColumnStats {
   audited: number;
+  /** Audited columns that capture nothing because the table or the organization is off. */
+  inert: number;
   total: number;
   differs: number;
   secured: number;
@@ -109,6 +123,8 @@ export interface Counts {
   loadedTables: number;
   columnsAudited: number;
   columnsDiffer: number;
+  /** Audited columns that capture nothing because their table or the organization is off. */
+  columnsInert: number;
 }
 
 export interface Matrix {
@@ -116,6 +132,10 @@ export interface Matrix {
   other: EnvMeta | null;
   rows: MatrixTableRow[];
   counts: Counts;
+  /** organization.isauditenabled of the primary environment: false means nothing here is captured. */
+  orgAuditEnabled: boolean | null;
+  /** Table rows whose flag is on while the organization switch is off. */
+  inertTables: number;
 }
 
 export type AuditFilter = "all" | "on" | "off";
@@ -130,13 +150,30 @@ export interface Filters {
   withColumns: boolean;
 }
 
-export const OWNERSHIP: Record<string, string> = {
+const OWNERSHIP: Record<string, string> = {
   UserOwned: "user",
   TeamOwned: "team",
   BusinessOwned: "bu",
   OrganizationOwned: "org",
   None: "none",
 };
+
+/**
+ * OwnershipType arrives as the Web API's string ("UserOwned") or as the client metadata API's
+ * OwnershipTypes flags integer (1 user, 2 team, 4 business, 8 organization), depending on which
+ * side of the bridge answered. Reading only the string labelled every table "none".
+ */
+export function ownershipLabel(v: unknown): string {
+  const n = typeof v === "number" ? v : typeof v === "string" && v.trim() !== "" ? Number(v) : NaN;
+  if (Number.isFinite(n)) {
+    if ((n & 1) !== 0) return "user";
+    if ((n & 2) !== 0) return "team";
+    if ((n & 4) !== 0) return "bu";
+    if ((n & 8) !== 0) return "org";
+    return "none";
+  }
+  return OWNERSHIP[String(v)] ?? "none";
+}
 
 /** Attribute types that never carry an audit flag worth showing. */
 export const NON_AUDITABLE_TYPES = new Set(["Virtual", "EntityName", "CalendarRules", "PartyList", "ManagedProperty"]);

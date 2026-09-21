@@ -79,3 +79,25 @@ dialog .target { display: inline-flex; align-items: center; gap: var(--s-2); }
 .progress { display: flex; gap: var(--s-2); align-items: center; padding: var(--s-2) 0; }
 .progress .bar { flex: 1; height: 6px; border-radius: var(--radius-pill); background: var(--bg-subtle); overflow: hidden; }
 .progress .bar i { display: block; height: 100%; background: var(--accent); width: 0; }
+
+/* Organization-level auditing off: the matrix below it is inert, so the notice sits with the matrix. */
+.org-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s-2);
+  margin-top: var(--s-2);
+  padding: var(--s-2) var(--s-3);
+  border-left: 3px solid var(--status-bad-fg);
+  border-radius: var(--radius-sm);
+  background: var(--status-bad-bg);
+  color: var(--status-bad-fg);
+  font-size: var(--fs-caption);
+  line-height: 1.45;
+}
+.org-banner .badge {
+  flex: none;
+}
+/* An audited column whose table or organization is off captures nothing: shown, but not as a win. */
+.col-inert .flag {
+  opacity: 0.55;
+}

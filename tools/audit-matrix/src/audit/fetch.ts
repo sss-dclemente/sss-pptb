@@ -1,4 +1,4 @@
-import { NON_AUDITABLE_TYPES, OWNERSHIP, type ColumnAudit, type EnvData, type EnvMeta, type ManagedFlag, type OrgAudit, type TableAudit, type Target } from "./types";
+import { NON_AUDITABLE_TYPES, ownershipLabel, type ColumnAudit, type EnvData, type EnvMeta, type ManagedFlag, type OrgAudit, type TableAudit, type Target } from "./types";
 
 type Row = Record<string, unknown>;
 
@@ -63,7 +63,7 @@ export async function fetchTables(api: DataverseLike, target: Target): Promise<T
       displayName: label(e.DisplayName, String(e.LogicalName)),
       audit: toFlag(e.IsAuditEnabled),
       isManaged: !!e.IsManaged,
-      ownership: OWNERSHIP[String(e.OwnershipType)] ?? "none",
+      ownership: ownershipLabel(e.OwnershipType),
     }))
     .sort((a, b) => a.displayName.localeCompare(b.displayName) || a.logicalName.localeCompare(b.logicalName));
 }
@@ -89,12 +89,29 @@ export async function fetchColumns(api: DataverseLike, table: string, target: Ta
  * widest $select is tried first and narrower ones after; whatever is not returned is
  * reported as unavailable instead of failing the read.
  */
+/**
+ * Narrowed one uncertain field at a time, so losing one does not cost the others: first the legacy
+ * retention column, then read auditing, then the current retention, then user-access auditing.
+ */
 const ORG_SELECTS = [
+  ["organizationid", "name", "isauditenabled", "isuseraccessauditenabled", "isreadauditenabled", "auditretentionperiodv2", "auditretentionperiod"],
   ["organizationid", "name", "isauditenabled", "isuseraccessauditenabled", "isreadauditenabled", "auditretentionperiodv2"],
+  ["organizationid", "name", "isauditenabled", "isuseraccessauditenabled", "auditretentionperiodv2", "auditretentionperiod"],
   ["organizationid", "name", "isauditenabled", "isuseraccessauditenabled", "auditretentionperiodv2"],
   ["organizationid", "name", "isauditenabled", "isuseraccessauditenabled"],
   ["organizationid", "name", "isauditenabled"],
 ];
+
+/**
+ * Retention lives in `auditretentionperiodv2` on current environments, but plenty still carry it
+ * only in the legacy `auditretentionperiod` with v2 null — reading just v2 then reports "unknown"
+ * for an environment that does have a retention. v2 wins when set; -1 means keep forever.
+ */
+function retention(row: Row, got: string[]): { retentionDays: number | null; retentionSource: "v2" | "legacy" | null } {
+  if (got.includes("auditretentionperiodv2") && row.auditretentionperiodv2 != null) return { retentionDays: Number(row.auditretentionperiodv2), retentionSource: "v2" };
+  if (got.includes("auditretentionperiod") && row.auditretentionperiod != null) return { retentionDays: Number(row.auditretentionperiod), retentionSource: "legacy" };
+  return { retentionDays: null, retentionSource: null };
+}
 
 export async function fetchOrg(api: DataverseLike, target: Target): Promise<OrgAudit> {
   let row: Row | null = null;
@@ -118,8 +135,8 @@ export async function fetchOrg(api: DataverseLike, target: Target): Promise<OrgA
     isAuditEnabled: bool("isauditenabled"),
     isUserAccessAuditEnabled: bool("isuseraccessauditenabled"),
     isReadAuditEnabled: bool("isreadauditenabled"),
-    retentionDays: got.includes("auditretentionperiodv2") && row.auditretentionperiodv2 != null ? Number(row.auditretentionperiodv2) : null,
-    unavailable: want.filter((k) => !got.includes(k) || row[k] === undefined),
+    ...retention(row, got),
+    unavailable: want.filter((k) => k !== "auditretentionperiod" && (!got.includes(k) || row[k] === undefined)),
   };
 }
 
