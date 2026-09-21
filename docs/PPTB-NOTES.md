@@ -232,7 +232,7 @@ Verified badge (separate, 1-2 weeks, My Tools → Get Verified): README with scr
 |---|---|---|---|
 | `readmeUrl` | optional | validator: required | required |
 | `features.multiConnection` | examples omit it | validator: required when `features` present | always set |
-| `main` | `index.html` (manifest) vs `dist/index.html` (CSP page) | samples: `index.html` | `index.html` |
+| `main` | `index.html` (manifest) vs `dist/index.html` (CSP page) | handler joins `<toolBaseDir>/dist/<main>` | `index.html`, resolved inside `dist/` — settled, see §11 |
 | File dialogs location | README `utils.saveFile` | typings + samples: `fileSystem.*` | `fileSystem.*` |
 | `pptb-validate` flags | `--json --skip-url-checks path` | CLI ignores all args | run from package root, no args |
 | Vite `base` | — | generator html `./src`; react/vue `./` | `./` |
@@ -254,3 +254,25 @@ Verified badge (separate, 1-2 weeks, My Tools → Get Verified): README with scr
 8. Published docs hostname (not in repo).
 9. Who dispatches intake workflow.
 10. VS Code host: native file dialogs.
+
+---
+
+## 11. Install from npm is broken in the host (VERIFIED, 1.2.5 and main @ v1.2.6-dev)
+
+Debug → *Install from npm* installs correctly and then fails to launch every tool with `ERR_FILE_NOT_FOUND`. Not specific to us, not to scoped names: `@cyco77/pptb-fast-record-counter` fails identically.
+
+`src/main/managers/browserviewProtocolManager.ts`, `getToolBaseDirectory`:
+
+```js
+const packageDirName = tool.npmPackageName.replace(/@?([^@]+)(?:@[\d.]+)?$/, "");
+```
+
+The replacement is `""` and the pattern matches the whole name, so `packageDirName` is empty for every ordinary package. `path.join(toolsDir, "node_modules", "")` collapses to `node_modules`, and the handler then serves `node_modules/dist/index.html`. All four transformations documented in the comment above that line fail; only a prerelease version (`@scope/x@1.0.0-beta.1`) comes out right, because `[\d.]+` cannot match it and the match falls back to the trailing `@…`.
+
+Fix sent upstream: `replace(/@[^@/]+$/, "")` — strips a trailing `@<version>` only, keeps the scope's `@` (it is followed by `/`), handles prerelease versions. Regression test fails 6 of 10 cases on the old expression; their suite stays green at 230 tests with the fix.
+
+What this settles:
+
+- `main` resolves **inside `dist/`**. The handler joins `<toolBaseDir>/dist/<main>`, so `main: "index.html"` + `dist/index.html` is correct, and the §9 conflict is closed. No package-root `index.html` is needed; 0.1.2 shipped one on a wrong theory and 0.1.3 removed it.
+- The other two branches of the same function are fine: `localPath` (Load Local Tool) and `tool.id` (marketplace install). **Marketplace distribution is unaffected by this bug** — submission is not blocked by it.
+- `[ToolManager] Found pnpm globally installed` — the host installs tools with pnpm, whose `minimumReleaseAge` policy can hold a just-published version back for a while (observed: resolved 0.1.1 with "0.1.2 is available").
