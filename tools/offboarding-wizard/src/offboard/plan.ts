@@ -1,15 +1,18 @@
 /**
  * Inventory + choices → the exact list of Dataverse calls. Pure: no host, no DOM, no I/O.
  *
- * Write mechanism per category (see docs/OFFBOARDING-PLAN.md § UNVERIFIED):
- *  - ownership moves (records, flows, views, charts, queues, connection references) use
- *    `update(entity, id, { "ownerid@odata.bind": "/systemusers(id)" })`. The SDK `Assign`
- *    message is NOT used: it is not documented as an OData action in @pptb/types 1.2.5, while
- *    `update` and `@odata.bind` are. Setting ownerid is the Web API way to reassign a record.
+ * Write mechanism per category (see docs/OFFBOARDING-PLAN.md):
+ *  - ownership moves (records, flows, views, charts, queues, connection references, connections)
+ *    use `update(entity, id, { "ownerid@odata.bind": "/systemusers(id)" })`. This is not a
+ *    workaround: each of those tables documents its `Assign` message as "PATCH … [Update] the
+ *    ownerid property", and `AssignRequest` itself is deprecated in favour of `UpdateRequest`.
  *  - roles / field security profiles / teams use `associate` / `disassociate`, which @pptb/types
  *    documents with exactly these relationship names. `AddMembersTeam` / `RemoveMembersTeam`
  *    are NOT used: their collection-of-EntityReference parameter shape is unverified over the bridge.
- *  - direct reports use `update("systemuser", id, { "parentsystemuserid@odata.bind": … })`.
+ *  - direct reports use `update("systemuser", id, { "parentsystemuserid@odata.bind": … })`, for the
+ *    same reason: `SetParentSystemUserRequest` is one of the deprecated specialized updates.
+ *  - `ReassignObjectsSystemUser` would move everything a user owns in one call, and is deliberately
+ *    not used: it returns no per-record result and cannot be previewed, which is this tool's point.
  */
 import type { CategoryKey, CategoryResult, InventoryItem, Inventory, Plan, PlannedOp, PrincipalHeld, RoleRef, TableInfo, UserInfo } from "./types";
 
@@ -62,12 +65,17 @@ const CATEGORY_LABEL: Record<CategoryKey, string> = {
   roles: "Security roles",
   fieldprofiles: "Field security profiles",
   connectionreferences: "Connection references",
+  connections: "Connections",
   directreports: "Direct reports",
 };
 
 /** Categories whose items are simply re-owned by the successor user. */
-const ASSET_CATEGORIES: CategoryKey[] = ["workflows", "userqueries", "usercharts", "queues", "connectionreferences"];
+const ASSET_CATEGORIES: CategoryKey[] = ["workflows", "userqueries", "usercharts", "queues", "connectionreferences", "connections"];
 
+/**
+ * Assets always go to the successor user, never to a team: workflow.ownerid targets systemuser only,
+ * so a team bind would fail there even though the other asset tables accept one.
+ */
 function assetOps(cat: CategoryResult, successor: UserInfo): PlannedOp[] {
   return cat.items.map((it) => ({
     key: `${cat.key}:${it.id}`,
@@ -171,7 +179,10 @@ function recordOps(inv: Inventory, recordIds: Map<string, { id: string; name: st
     const t: TableInfo = row.table;
     if (!o.tables.has(t.logicalName)) continue;
     const ids = recordIds.get(t.logicalName) ?? [];
-    if ((row.count ?? 0) > ids.length) warnings.push(`${t.displayName}: ${row.count} records owned, only the first ${ids.length} are in this plan (cap ${o.recordCap}).`);
+    if ((row.count ?? 0) > ids.length)
+      warnings.push(
+        `${t.displayName}: ${row.count}${row.approximate ? " or more" : ""} records owned, only the first ${ids.length} are in this plan (cap ${o.recordCap}).`,
+      );
     for (const r of ids)
       ops.push({
         key: `records:${t.logicalName}:${r.id}`,
@@ -257,6 +268,19 @@ export function buildPlan(inv: Inventory, recordIds: Map<string, { id: string; n
       })),
     );
 
+  const movesRecords = ops.some((op) => op.category === "records");
+  // The setting that can defeat the whole exercise: with it on, every record handed to the successor
+  // is shared straight back to the leaver with full rights. Only warned about when it is really on.
+  if (movesRecords && inv.orgAssign?.shareToPreviousOwnerOnAssign === true)
+    warnings.push(
+      "This environment has \"share to previous owner on assign\" enabled: every reassigned record is shared back to the leaver with full rights. Turn it off, or revoke those shares afterwards, or the leaver keeps access to everything in this plan.",
+    );
+  if (movesRecords)
+    warnings.push("Reassigning a record deactivates any workflow or business rule currently active on it; the new owner has to reactivate them.");
+  if (ops.some((op) => op.category === "workflows"))
+    warnings.push(
+      "Flow ownership: only solution-aware cloud flows can change owner this way, the leaver remains a co-owner, and the change can take up to 7 days to affect licensing and run limits.",
+    );
   if (o.categories.has("queuemembership")) skipped.push("Queue memberships are inventory only in v1: remove the leaver from the queue in the maker portal.");
   if (byKey.get("connectionreferences")?.items.length && o.categories.has("connectionreferences"))
     warnings.push("Connection references change owner, but the connection behind them still belongs to the leaver: the successor must re-authenticate it.");

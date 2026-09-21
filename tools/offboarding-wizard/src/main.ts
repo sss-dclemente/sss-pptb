@@ -7,6 +7,7 @@ import {
   fetchLeaver,
   fetchOwnedRecordIds,
   fetchOwnedTables,
+  fetchOrgAssignSettings,
   fetchPrincipalHeld,
   resolveRolesInBusinessUnit,
   scanOwnedRecords,
@@ -160,8 +161,8 @@ async function pickLeaver(u: UserInfo): Promise<void> {
   setStatus("Reading the leaver's holdings…");
   try {
     leaver = await fetchLeaver(a, u);
-    const categories = await fetchCategories(a, leaver.user.id);
-    inventory = { leaver, categories, scan: null, takenAt: new Date().toISOString() };
+    const [categories, orgAssign] = await Promise.all([fetchCategories(a, leaver.user.id), fetchOrgAssignSettings(a)]);
+    inventory = { leaver, categories, scan: null, takenAt: new Date().toISOString(), orgAssign };
     for (const c of categories) if (c.items.length && c.writable) selectedCats.add(c.key);
   } catch (e) {
     await notify("Load failed", msg(e), "error");

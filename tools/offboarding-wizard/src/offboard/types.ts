@@ -90,6 +90,7 @@ export type CategoryKey =
   | "roles"
   | "fieldprofiles"
   | "connectionreferences"
+  | "connections"
   | "directreports";
 
 /** One holding of the leaver inside a category. `entity`/`id` identify the record the write targets. */
@@ -138,6 +139,17 @@ export interface Inventory {
   categories: CategoryResult[];
   scan: ScanSummary | null;
   takenAt: string;
+  /** Organization settings that change what a reassignment means. Null when they could not be read. */
+  orgAssign: OrgAssignSettings | null;
+}
+
+export interface OrgAssignSettings {
+  /**
+   * organization.sharetopreviousowneronassign. When true, assigning a record shares it back to the
+   * previous owner with full rights — so reassigning a leaver's records leaves them able to read and
+   * write every one of them. It is the single setting that can defeat an offboarding.
+   */
+  shareToPreviousOwnerOnAssign: boolean | null;
 }
 
 /** The exact Dataverse call an operation performs. Rendered verbatim in the preview dialog. */

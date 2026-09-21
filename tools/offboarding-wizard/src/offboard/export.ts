@@ -21,6 +21,9 @@ export function inventoryJson(inv: Inventory, environment: string | null): strin
       environment,
       leaver: { ...userOut(inv.leaver.user), businessUnit: inv.leaver.businessUnitName, manager: userOut(inv.leaver.manager) },
       takenAt: inv.takenAt,
+      // Audit-relevant: whether this environment was re-sharing every reassigned record back to the
+      // previous owner at the moment the offboarding ran. Null when the setting could not be read.
+      environmentSettings: { shareToPreviousOwnerOnAssign: inv.orgAssign?.shareToPreviousOwnerOnAssign ?? null },
       recordScan: inv.scan
         ? {
             tablesRequested: inv.scan.requested,
@@ -42,6 +45,10 @@ export function inventoryJson(inv: Inventory, environment: string | null): strin
         "Release or reassign the Microsoft 365 / Power Platform licence.",
         "Re-authenticate the connections behind any reassigned connection reference.",
         "Remove the leaver from queues they were a member of.",
+        "Remove the leaver as co-owner of any cloud flow that was reassigned: changing the owner adds the new owner, it does not remove the old one.",
+        ...(inv.orgAssign?.shareToPreviousOwnerOnAssign === true
+          ? ["Revoke the shares this environment created back to the leaver: with \"share to previous owner on assign\" enabled, every reassigned record was shared to them with full rights."]
+          : []),
       ],
     },
     null,

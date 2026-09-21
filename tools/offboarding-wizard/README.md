@@ -1,6 +1,6 @@
 # SSS Offboarding Wizard
 
-A user is leaving. Inside [Power Platform ToolBox](https://www.powerplatformtoolbox.com), pick them and get a complete inventory of what they hold — records per table, flows and classic processes, personal views and charts, queues, teams, security roles, field security profiles, connection references, direct reports — then pick a successor, review a preview of the exact operations, apply them with progress and per-item results, and export a report you can hand to an auditor.
+A user is leaving. Inside [Power Platform ToolBox](https://www.powerplatformtoolbox.com), pick them and get a complete inventory of what they hold — records per table, flows and classic processes, personal views and charts, queues, teams, security roles, field security profiles, connection references, connections, direct reports — then pick a successor, review a preview of the exact operations, apply them with progress and per-item results, and export a report you can hand to an auditor.
 
 Built by [Simple Smooth Safe](https://simplesmoothsafe.com).
 
@@ -10,7 +10,9 @@ Built by [Simple Smooth Safe](https://simplesmoothsafe.com).
 - **Inventory** — one card per category with a count and a detail table:
   - **Records owned per table.** Dataverse has no cross-table "what does this user own", so the tool reads the metadata for every user- and team-owned table and asks each one for a count. That is hundreds of requests: the tool says how many before it starts, runs them six at a time with a progress bar and a cancel button, and lists any table that rejects the owner filter as *not scanned* instead of failing the run. Narrow the scan with a name filter, or hide the tables with no records.
   - **Flows and classic processes** — labelled by category (classic workflow, dialog, business rule, action, business process flow, modern flow). An **active modern flow** is flagged: that is the one that breaks silently when its owner is disabled.
-  - **Personal views** and **personal charts**, **queues owned** and **queue memberships**, **team memberships** (owner teams and Entra group teams called out), **security roles**, **field security profiles**, **connection references**, **direct reports**.
+  - **Personal views** and **personal charts**, **queues owned** and **queue memberships**, **team memberships** (owner teams and Entra group teams called out), **security roles**, **field security profiles**, **connection references**, **connections**, **direct reports**.
+- **What a reassignment really does** — the tool states the things that decide whether an offboarding actually worked, rather than leaving them to be discovered afterwards: if the environment has *share to previous owner on assign* enabled, every reassigned record is shared straight back to the leaver with full rights, and the plan says so; reassigning a record deactivates any workflow or business rule active on it; a cloud flow's owner can only be changed for solution-aware flows, the leaver stays a co-owner, and licensing takes up to seven days to follow.
+- **Security roles across business units** — roles are business-unit scoped, so the leaver's role cannot simply be handed to a successor in another business unit. The tool resolves the equivalent role in the successor's own business unit and grants that one; a role with no equivalent there is skipped with that reason instead of failing at apply time. Anything the successor already holds — a role, a profile, a team — is skipped rather than planned as an operation that can only fail.
 - **Plan & apply** — pick the successor, choose whether reassigned records go to them or to a team, and tick what to do per category: copy roles to the successor and/or remove them from the leaver, the same for field security profiles, remove the leaver from their teams and optionally add the successor. Then **Preview plan**: operation counts per category, the warnings and the skips, and the first 25 calls verbatim (`update account(…) {"ownerid@odata.bind":"/systemusers(…)"}`). Nothing is written until you confirm.
 - **Apply** — four writes at a time, with progress and a cancel button. Every operation gets its own row: ok, or the platform's error message. A failure never stops the run and is never silently retried.
 - **Report** — inventory as JSON or CSV, apply results as JSON or CSV (both carry the exact call made), plus the list of steps the tool deliberately leaves to a human.
@@ -58,9 +60,9 @@ Notes:
 - Ownership is moved by setting `ownerid` (`update` with `ownerid@odata.bind`), one record at a time, so every record gets its own ok/fail. Roles, field security profiles and team membership use `associate` / `disassociate`.
 - **Owner teams**: removing the leaver from an owner team does not move the records that team owns — they stay with the team. The tool flags this instead of pretending otherwise.
 - **Entra security and office group teams** are skipped: that membership is managed in Entra ID, not in Dataverse.
-- **Connection references** change owner, but the connection behind them still belongs to the leaver; the successor has to re-authenticate it.
+- **Connection references** change owner, but the connection behind them still belongs to the leaver; the successor has to re-authenticate it. The Power Apps portal cannot transfer a connection reference at all, so this is the only supported route. If the leaver's account is disabled, the connection becomes invalid for everyone sharing it — which is why the connections themselves are inventoried too.
 - **Queue memberships** are inventory only in this version.
-- Records per table are capped (default 500, configurable up to 5 000); a truncated table is named in the plan warnings.
+- Records per table are capped (default 500, configurable up to 5 000); a truncated table is named in the plan warnings. Dataverse counts saturate at 5 000 without saying so, so a table at that figure is reported as "5000 or more" rather than as an exact number.
 
 ## Privacy
 

@@ -3,14 +3,19 @@
  * queryData with a $filter so the response is the { value } array the host guarantees.
  *
  * Verification status of the OData sets / relationships used here (see docs/OFFBOARDING-PLAN.md):
- *  - VERIFIED against @pptb/types 1.2.5 docs or the sibling Access Checker:
+ *  - VERIFIED against @pptb/types 1.2.5 or the sibling Access Checker:
  *    systemusers, teams, businessunits, systemuserroles_association, teammembership_association,
  *    systemuserprofiles_association, getAllEntitiesMetadata.
- *  - UNVERIFIED (no source in @pptb/types or docs/PPTB-NOTES.md; degrade to an error row, never throw):
- *    workflows, userqueries, userqueryvisualizations, queues, queuemembership_association,
- *    connectionreferences, and the "@odata.count" annotation surviving the host bridge.
+ *  - VERIFIED against the Microsoft Learn table reference (EntitySetName) and a live environment's
+ *    metadata: workflows, userqueries, userqueryvisualizations, queues, connectionreferences,
+ *    connections, roles, queuemembership_association, and systemuser.accessmode. All six of those
+ *    tables are UserOwned and expose _ownerid_value, so the owner filter below is valid on each.
+ *  - UNVERIFIED, and the reason each one degrades instead of throwing:
+ *    whether the ToolBox bridge forwards the "@odata.count" annotation (queryData is typed
+ *    Promise<{ value }>), and whether getAllEntitiesMetadata yields OwnershipType as the Web API's
+ *    string or as the client metadata API's integer — both are handled defensively.
  */
-import type { CategoryKey, CategoryResult, InventoryItem, LeaverInfo, PrincipalHeld, RoleRef, ScanSummary, TableInfo, TableScanRow, TeamRef, UserInfo } from "./types";
+import type { CategoryKey, CategoryResult, InventoryItem, LeaverInfo, OrgAssignSettings, PrincipalHeld, RoleRef, ScanSummary, TableInfo, TableScanRow, TeamRef, UserInfo } from "./types";
 import { WORKFLOW_CATEGORY_LABEL, WORKFLOW_STATE_LABEL } from "./types";
 
 type Row = Record<string, unknown>;
@@ -33,6 +38,13 @@ export interface DataverseLike {
 }
 
 const err = (e: unknown): string => (e instanceof Error ? e.message : String(e));
+
+/**
+ * Dataverse returns at most 5 000 standard-table rows per request and does not support $skip;
+ * beyond that it pages through @odata.nextLink, which queryData's { value } shape cannot expose.
+ * Every collection read here therefore asks for at most this many rows and says so when it is hit.
+ */
+export const PAGE_LIMIT = 5000;
 
 // ---------- users & teams ----------
 const USER_SELECT = "systemuserid,fullname,domainname,internalemailaddress,_businessunitid_value,_parentsystemuserid_value,isdisabled,accessmode";
@@ -100,6 +112,18 @@ const label = (v: unknown, fallback: string): string => {
   return l.UserLocalizedLabel?.Label ?? l.LocalizedLabels?.[0]?.Label ?? fallback;
 };
 
+const isOwned = (v: unknown): boolean => {
+  const n = typeof v === "number" ? v : Number(v);
+  if (Number.isFinite(n)) return (n & 1) !== 0 || (n & 2) !== 0; // UserOwned | TeamOwned
+  const t = String(v ?? "");
+  return t === "UserOwned" || t === "TeamOwned";
+};
+
+const isTeamOwned = (v: unknown): boolean => {
+  const n = typeof v === "number" ? v : Number(v);
+  return Number.isFinite(n) ? (n & 2) !== 0 : String(v ?? "") === "TeamOwned";
+};
+
 /** User- and team-owned tables only: those are the ones an owner filter applies to. */
 export async function fetchOwnedTables(api: DataverseLike): Promise<TableInfo[]> {
   const r = await api.getAllEntitiesMetadata([
@@ -116,8 +140,10 @@ export async function fetchOwnedTables(api: DataverseLike): Promise<TableInfo[]>
   ]);
   return r.value
     .filter((e) => {
-      const own = String(e.OwnershipType ?? "");
-      return !e.IsIntersect && !e.IsPrivate && !e.IsLogicalEntity && e.EntitySetName && e.PrimaryIdAttribute && (own === "UserOwned" || own === "TeamOwned");
+      // The Web API returns OwnershipType as a string ("UserOwned"), the client metadata API as the
+      // OwnershipTypes flags integer (UserOwned 1, TeamOwned 2). Which one reaches us through the
+      // ToolBox bridge is untested, and getting it wrong would silently scan zero tables.
+      return !e.IsIntersect && !e.IsPrivate && !e.IsLogicalEntity && e.EntitySetName && e.PrimaryIdAttribute && isOwned(e.OwnershipType);
     })
     .map((e) => ({
       logicalName: String(e.LogicalName),
@@ -125,7 +151,7 @@ export async function fetchOwnedTables(api: DataverseLike): Promise<TableInfo[]>
       entitySetName: String(e.EntitySetName),
       primaryId: String(e.PrimaryIdAttribute),
       primaryName: s(e.PrimaryNameAttribute),
-      ownership: String(e.OwnershipType) === "TeamOwned" ? ("team" as const) : ("user" as const),
+      ownership: isTeamOwned(e.OwnershipType) ? ("team" as const) : ("user" as const),
     }))
     .sort((a, b) => a.displayName.localeCompare(b.displayName));
 }
@@ -162,18 +188,23 @@ export async function pool<T, R>(
 // ---------- record scan ----------
 /**
  * Count records owned by the leaver in one table.
- * `$count=true&$top=0` and read `@odata.count`; if the host bridge drops the annotation
+ *
+ * `$count=true` returns the count "regardless of the page size requested", so a single row is asked
+ * for rather than the undocumented `$top=0`. The annotation saturates at PAGE_LIMIT without saying
+ * so — distinguishing 5 000 from 5 000+ needs a Prefer header that queryData cannot send — so a
+ * count at the limit is reported as approximate. If the bridge drops the annotation entirely
  * (UNVERIFIED), fall back to a capped page of ids so the scan still produces a number.
  */
 export async function countOwned(api: DataverseLike, t: TableInfo, leaverId: string, cap: number): Promise<{ count: number | null; approximate: boolean }> {
-  const res = (await api.queryData(`${t.entitySetName}?$filter=_ownerid_value eq ${leaverId}&$count=true&$top=0`)) as unknown as {
+  const res = (await api.queryData(`${t.entitySetName}?$select=${t.primaryId}&$filter=_ownerid_value eq ${leaverId}&$count=true&$top=1`)) as unknown as {
     value?: Row[];
     "@odata.count"?: number | string;
   };
   const c = num(res["@odata.count"]);
-  if (c != null) return { count: c, approximate: false };
-  const page = await api.queryData(`${t.entitySetName}?$select=${t.primaryId}&$filter=_ownerid_value eq ${leaverId}&$top=${cap + 1}`);
-  return { count: Math.min(page.value.length, cap), approximate: page.value.length > cap };
+  if (c != null) return { count: c, approximate: c >= PAGE_LIMIT };
+  const top = Math.min(cap + 1, PAGE_LIMIT);
+  const page = await api.queryData(`${t.entitySetName}?$select=${t.primaryId}&$filter=_ownerid_value eq ${leaverId}&$top=${top}`);
+  return { count: Math.min(page.value.length, cap), approximate: page.value.length > cap || page.value.length >= PAGE_LIMIT };
 }
 
 export interface ScanOptions {
@@ -211,7 +242,7 @@ export async function scanOwnedRecords(api: DataverseLike, tables: TableInfo[], 
 /** Ids of the leaver's records in one table, capped. Used when the plan is built, not during the scan. */
 export async function fetchOwnedRecordIds(api: DataverseLike, t: TableInfo, leaverId: string, cap: number): Promise<{ id: string; name: string }[]> {
   const sel = [t.primaryId, ...(t.primaryName ? [t.primaryName] : [])].join(",");
-  const r = await api.queryData(`${t.entitySetName}?$select=${sel}&$filter=_ownerid_value eq ${leaverId}&$top=${cap}`);
+  const r = await api.queryData(`${t.entitySetName}?$select=${sel}&$filter=_ownerid_value eq ${leaverId}&$top=${Math.min(cap, PAGE_LIMIT)}`);
   return r.value.map((row) => ({ id: id(row[t.primaryId]), name: (t.primaryName ? s(row[t.primaryName]) : null) ?? id(row[t.primaryId]) }));
 }
 
@@ -266,32 +297,44 @@ export async function resolveRolesInBusinessUnit(api: DataverseLike, roots: stri
 }
 
 // ---------- categories ----------
+/**
+ * type 1 = Definition, 2 = Activation (a copy Dataverse makes of every activated process),
+ * 3 = Template. Only definitions are worth showing or reassigning, and on a real environment the
+ * activation copies outnumber them, so the filter belongs in OData rather than in the client.
+ */
 async function workflows(api: DataverseLike, leaverId: string): Promise<InventoryItem[]> {
-  const r = await api.queryData(`workflows?$select=workflowid,name,category,statecode,type&$filter=_ownerid_value eq ${leaverId}&$orderby=name`);
-  return r.value
-    .filter((w) => num(w.type) !== 2) // type 2 = activation copy of a definition; the definition row is the one that matters
-    .map((w) => {
-      const cat = num(w.category) ?? 0;
-      const state = num(w.statecode) ?? 0;
-      const hot = cat === 5 && state === 1;
-      return {
-        entity: "workflow",
-        id: id(w.workflowid),
-        label: s(w.name) ?? id(w.workflowid),
-        meta: `${WORKFLOW_CATEGORY_LABEL[cat] ?? `category ${cat}`} · ${WORKFLOW_STATE_LABEL[state] ?? `state ${state}`}`,
-        flag: hot ? "active modern flow — breaks when the owner is disabled" : null,
-        data: { category: cat, statecode: state },
-      };
-    });
+  const r = await api.queryData(
+    `workflows?$select=workflowid,name,category,statecode,type&$filter=_ownerid_value eq ${leaverId} and type eq 1&$orderby=name&$top=${PAGE_LIMIT}`,
+  );
+  return r.value.map((w) => {
+    const cat = num(w.category) ?? 0;
+    const state = num(w.statecode) ?? 0;
+    const active = state === 1;
+    return {
+      entity: "workflow",
+      id: id(w.workflowid),
+      label: s(w.name) ?? id(w.workflowid),
+      meta: `${WORKFLOW_CATEGORY_LABEL[cat] ?? `category ${cat}`} · ${WORKFLOW_STATE_LABEL[state] ?? `state ${state}`}`,
+      flag:
+        cat === 5 && active
+          ? "active modern flow — breaks when the owner is disabled. Only solution-aware flows can change owner this way, and the leaver stays a co-owner"
+          : cat === 5
+            ? "only solution-aware flows can change owner this way, and the leaver stays a co-owner"
+            : active && (cat === 2 || cat === 4)
+              ? "active: reassigning it does not stop it, but only its owner can deactivate or edit it"
+              : null,
+      data: { category: cat, statecode: state },
+    };
+  });
 }
 
 async function userQueries(api: DataverseLike, leaverId: string): Promise<InventoryItem[]> {
-  const r = await api.queryData(`userqueries?$select=userqueryid,name,returnedtypecode&$filter=_ownerid_value eq ${leaverId}&$orderby=name`);
+  const r = await api.queryData(`userqueries?$select=userqueryid,name,returnedtypecode&$filter=_ownerid_value eq ${leaverId}&$orderby=name&$top=${PAGE_LIMIT}`);
   return r.value.map((q) => ({ entity: "userquery", id: id(q.userqueryid), label: s(q.name) ?? id(q.userqueryid), meta: s(q.returnedtypecode) ?? "", flag: null }));
 }
 
 async function userCharts(api: DataverseLike, leaverId: string): Promise<InventoryItem[]> {
-  const r = await api.queryData(`userqueryvisualizations?$select=userqueryvisualizationid,name,primaryentitytypecode&$filter=_ownerid_value eq ${leaverId}&$orderby=name`);
+  const r = await api.queryData(`userqueryvisualizations?$select=userqueryvisualizationid,name,primaryentitytypecode&$filter=_ownerid_value eq ${leaverId}&$orderby=name&$top=${PAGE_LIMIT}`);
   return r.value.map((c) => ({
     entity: "userqueryvisualization",
     id: id(c.userqueryvisualizationid),
@@ -302,7 +345,7 @@ async function userCharts(api: DataverseLike, leaverId: string): Promise<Invento
 }
 
 async function ownedQueues(api: DataverseLike, leaverId: string): Promise<InventoryItem[]> {
-  const r = await api.queryData(`queues?$select=queueid,name,queuetypecode&$filter=_ownerid_value eq ${leaverId}&$orderby=name`);
+  const r = await api.queryData(`queues?$select=queueid,name,queuetypecode&$filter=_ownerid_value eq ${leaverId}&$orderby=name&$top=${PAGE_LIMIT}`);
   return r.value.map((q) => ({
     entity: "queue",
     id: id(q.queueid),
@@ -372,19 +415,35 @@ async function fieldProfiles(api: DataverseLike, leaverId: string): Promise<Inve
 
 async function connectionReferences(api: DataverseLike, leaverId: string): Promise<InventoryItem[]> {
   const r = await api.queryData(
-    `connectionreferences?$select=connectionreferenceid,connectionreferencedisplayname,connectionreferencelogicalname,connectorid&$filter=_ownerid_value eq ${leaverId}&$orderby=connectionreferencedisplayname`,
+    `connectionreferences?$select=connectionreferenceid,connectionreferencedisplayname,connectionreferencelogicalname,connectorid&$filter=_ownerid_value eq ${leaverId}&$orderby=connectionreferencedisplayname&$top=${PAGE_LIMIT}`,
   );
   return r.value.map((c) => ({
     entity: "connectionreference",
     id: id(c.connectionreferenceid),
     label: s(c.connectionreferencedisplayname) ?? s(c.connectionreferencelogicalname) ?? id(c.connectionreferenceid),
     meta: s(c.connectorid) ?? "",
-    flag: "the underlying connection stays with the leaver and must be re-authenticated by the successor",
+    flag: "the underlying connection stays with the leaver and must be re-authenticated by the successor. The Power Apps portal cannot transfer a connection reference at all, so this is the only supported route",
+  }));
+}
+
+/**
+ * The connections behind the connection references. When the leaver's account is disabled the
+ * connection becomes invalid for everyone sharing it, which is what actually breaks a flow, so
+ * listing them is not optional. Assign maps to PATCH ownerid here as it does for the rest.
+ */
+async function connections(api: DataverseLike, leaverId: string): Promise<InventoryItem[]> {
+  const r = await api.queryData(`connections?$select=connectionid,name,statuscode&$filter=_ownerid_value eq ${leaverId}&$orderby=name&$top=${PAGE_LIMIT}`);
+  return r.value.map((c) => ({
+    entity: "connection",
+    id: id(c.connectionid),
+    label: s(c.name) ?? id(c.connectionid),
+    meta: "connection",
+    flag: "changing the owner does not re-authenticate it: the successor still has to sign in before any flow using it will run",
   }));
 }
 
 async function directReports(api: DataverseLike, leaverId: string): Promise<InventoryItem[]> {
-  const r = await api.queryData(`systemusers?$select=systemuserid,fullname,domainname,isdisabled&$filter=_parentsystemuserid_value eq ${leaverId}&$orderby=fullname`);
+  const r = await api.queryData(`systemusers?$select=systemuserid,fullname,domainname,isdisabled&$filter=_parentsystemuserid_value eq ${leaverId}&$orderby=fullname&$top=${PAGE_LIMIT}`);
   return r.value.map((u) => ({
     entity: "systemuser",
     id: id(u.systemuserid),
@@ -392,6 +451,21 @@ async function directReports(api: DataverseLike, leaverId: string): Promise<Inve
     meta: s(u.domainname) ?? "",
     flag: null,
   }));
+}
+
+/**
+ * Organization settings that change what a reassignment means. Read once per inventory; a failure
+ * leaves the fields null and the plan simply omits the corresponding warning.
+ */
+export async function fetchOrgAssignSettings(api: DataverseLike): Promise<OrgAssignSettings | null> {
+  try {
+    const r = await api.queryData("organizations?$select=organizationid,sharetopreviousowneronassign&$top=1");
+    const row = r.value[0];
+    if (!row) return null;
+    return { shareToPreviousOwnerOnAssign: row.sharetopreviousowneronassign == null ? null : !!row.sharetopreviousowneronassign };
+  } catch {
+    return null;
+  }
 }
 
 interface CategorySpec {
@@ -412,6 +486,7 @@ const SPECS: CategorySpec[] = [
   { key: "roles", label: "Security roles", hint: "systemuserroles_association", writable: true, load: securityRoles },
   { key: "fieldprofiles", label: "Field security profiles", hint: "systemuserprofiles_association", writable: true, load: fieldProfiles },
   { key: "connectionreferences", label: "Connection references", hint: "connectionreferences owned by the leaver", writable: true, load: connectionReferences },
+  { key: "connections", label: "Connections", hint: "connections owned by the leaver", writable: true, load: connections },
   { key: "directreports", label: "Direct reports", hint: "users whose manager is the leaver", writable: true, load: directReports },
 ];
 

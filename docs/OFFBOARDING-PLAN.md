@@ -27,21 +27,22 @@ Facts: `docs/PPTB-NOTES.md`. `@pptb/types` 1.2.5 gives `queryData`, `update`, `a
 
 | Need | Call | Verified? |
 |---|---|---|
-| Leaver / successor search | `queryData("systemusers?$select=systemuserid,fullname,domainname,internalemailaddress,_businessunitid_value,_parentsystemuserid_value,isdisabled,accessmode&$filter=(contains(fullname,'x') or contains(domainname,'x') or contains(internalemailaddress,'x')) and applicationid eq null&$orderby=fullname&$top=20")` | set + filter shipped in Access Checker; **`accessmode` UNVERIFIED** (renders `—` when absent) |
+| Leaver / successor search | `queryData("systemusers?$select=systemuserid,fullname,domainname,internalemailaddress,_businessunitid_value,_parentsystemuserid_value,isdisabled,accessmode&$filter=(contains(fullname,'x') or contains(domainname,'x') or contains(internalemailaddress,'x')) and applicationid eq null&$orderby=fullname&$top=20")` | yes; `accessmode` confirmed, labels corrected (§5) |
 | Business unit name | `queryData("businessunits?$select=businessunitid,name&$filter=businessunitid eq <id>")` | yes (Access Checker) |
 | Manager | same `systemusers` read on `_parentsystemuserid_value` | yes |
 | Owned tables | `getAllEntitiesMetadata(["LogicalName","SchemaName","DisplayName","EntitySetName","PrimaryNameAttribute","PrimaryIdAttribute","OwnershipType","IsIntersect","IsPrivate","IsLogicalEntity"])`, kept where `OwnershipType` is `UserOwned`/`TeamOwned` | yes (Access Checker) |
-| Records owned, per table | `queryData("<entityset>?$filter=_ownerid_value eq <id>&$count=true&$top=0")` → `@odata.count`; on a missing annotation, `"<entityset>?$select=<primaryid>&$filter=_ownerid_value eq <id>&$top=<cap+1>"` and count the page | **`@odata.count` UNVERIFIED** over the host bridge (`queryData` is typed `{ value }` only) — hence the fallback |
+| Records owned, per table | `queryData("<entityset>?$filter=_ownerid_value eq <id>&$count=true&$top=0")` → `@odata.count`; on a missing annotation, `"<entityset>?$select=<primaryid>&$filter=_ownerid_value eq <id>&$top=<cap+1>"` and count the page | annotation confirmed, saturates at 5 000 (§5); the bridge is the open part, hence the fallback |
 | Record ids to reassign | `queryData("<entityset>?$select=<primaryid>,<primaryname>&$filter=_ownerid_value eq <id>&$top=<cap>")` | same set/filter as above |
-| Flows & classic processes | `queryData("workflows?$select=workflowid,name,category,statecode,type&$filter=_ownerid_value eq <id>&$orderby=name")`, `type eq 2` rows (activation copies) dropped, `category` labelled 0 workflow / 1 dialog / 2 business rule / 3 action / 4 BPF / 5 modern flow, `category 5 + statecode 1` flagged high-risk | **UNVERIFIED** (no source in `docs/PPTB-NOTES.md`) |
-| Personal views | `queryData("userqueries?$select=userqueryid,name,returnedtypecode&$filter=_ownerid_value eq <id>")` | **UNVERIFIED** |
-| Personal charts | `queryData("userqueryvisualizations?$select=userqueryvisualizationid,name,primaryentitytypecode&$filter=_ownerid_value eq <id>")` | **UNVERIFIED** |
-| Queues owned | `queryData("queues?$select=queueid,name,queuetypecode&$filter=_ownerid_value eq <id>")` | **UNVERIFIED** |
-| Queue memberships | `queryData("systemusers?$select=systemuserid&$filter=systemuserid eq <id>&$expand=queuemembership_association($select=queueid,name)")` | **UNVERIFIED** |
+| Flows & classic processes | `queryData("workflows?$select=workflowid,name,category,statecode,type&$filter=_ownerid_value eq <id>&$orderby=name")`, `type eq 2` rows (activation copies) dropped, `category` labelled 0 workflow / 1 dialog / 2 business rule / 3 action / 4 BPF / 5 modern flow, `category 5 + statecode 1` flagged high-risk | confirmed; `type eq 1` filter corrected (§5) |
+| Personal views | `queryData("userqueries?$select=userqueryid,name,returnedtypecode&$filter=_ownerid_value eq <id>")` | confirmed (§5) |
+| Personal charts | `queryData("userqueryvisualizations?$select=userqueryvisualizationid,name,primaryentitytypecode&$filter=_ownerid_value eq <id>")` | confirmed (§5) |
+| Queues owned | `queryData("queues?$select=queueid,name,queuetypecode&$filter=_ownerid_value eq <id>")` | confirmed (§5) |
+| Queue memberships | `queryData("systemusers?$select=systemuserid&$filter=systemuserid eq <id>&$expand=queuemembership_association($select=queueid,name)")` | confirmed (§5) |
 | Team memberships | `queryData("systemusers?…&$expand=teammembership_association($select=teamid,name,teamtype,_businessunitid_value)")` | yes (Access Checker + `@pptb/types` example) |
 | Security roles | `queryData("systemusers?…&$expand=systemuserroles_association($select=roleid,name,_businessunitid_value)")` | yes |
 | Field security profiles | `queryData("systemusers?…&$expand=systemuserprofiles_association($select=fieldsecurityprofileid,name)")` | yes for the read |
-| Connection references | `queryData("connectionreferences?$select=connectionreferenceid,connectionreferencedisplayname,connectionreferencelogicalname,connectorid&$filter=_ownerid_value eq <id>")` | **UNVERIFIED** |
+| Connection references | `queryData("connectionreferences?$select=connectionreferenceid,connectionreferencedisplayname,connectionreferencelogicalname,connectorid&$filter=_ownerid_value eq <id>")` | confirmed (§5) |
+| Connections | `queryData("connections?$select=connectionid,name,statuscode&$filter=_ownerid_value eq <id>&$orderby=name&$top=5000")` | confirmed (§5) |
 | Direct reports | `queryData("systemusers?$select=systemuserid,fullname,domainname,isdisabled&$filter=_parentsystemuserid_value eq <id>")` | yes |
 
 Every category is read independently and its failure is captured: the card shows `Could not read this category: <message>` and the run continues. A table that rejects the owner filter is listed under "not scanned" with the platform's message.
@@ -50,12 +51,12 @@ Every category is read independently and its failure is captured: the card shows
 
 | Category | Call | Verified? |
 |---|---|---|
-| Records | `update("<logicalname>", id, { "ownerid@odata.bind": "/systemusers(<successor>)" })` — or `"/teams(<team>)"` when a team target is chosen | `update` yes; **`ownerid@odata.bind` payload UNVERIFIED** through the bridge (standard Web API) |
-| Flows, personal views, personal charts, queues, connection references | same `update` on `workflow` / `userquery` / `userqueryvisualization` / `queue` / `connectionreference` | same |
+| Records | `update("<logicalname>", id, { "ownerid@odata.bind": "/systemusers(<successor>)" })` — or `"/teams(<team>)"` when a team target is chosen | confirmed as the documented path, not a workaround (§5); only the bridge wrapper is untested |
+| Flows, personal views, personal charts, queues, connection references, connections | same `update` on `workflow` / `userquery` / `userqueryvisualization` / `queue` / `connectionreference` / `connection`. `workflow.ownerid` targets `systemuser` only, so assets never take a team bind | same |
 | Security roles | `associate("systemuser", <successor>, "systemuserroles_association", "role", <roleid>)` / `disassociate("systemuser", <leaver>, "systemuserroles_association", <roleid>)` | **yes** — the literal example in `@pptb/types` |
-| Field security profiles | same shape with `systemuserprofiles_association` / `fieldsecurityprofile` | relationship name verified for the read; **the associate use is UNVERIFIED** |
+| Field security profiles | same shape with `systemuserprofiles_association` / `fieldsecurityprofile` | confirmed: `systemuserprofiles` is the intersect, so the associate is valid (§5) |
 | Team membership | `associate("team", <teamid>, "teammembership_association", "systemuser", <successor>)` / `disassociate("team", <teamid>, "teammembership_association", <leaver>)` | **yes** — the literal example in `@pptb/types` |
-| Direct reports | `update("systemuser", <reportid>, { "parentsystemuserid@odata.bind": "/systemusers(<successor>)" })` | `update` yes; **bind payload UNVERIFIED** |
+| Direct reports | `update("systemuser", <reportid>, { "parentsystemuserid@odata.bind": "/systemusers(<successor>)" })` | confirmed; `SetParentSystemUserRequest` is the deprecated path (§5) |
 | Queue memberships | *none in v1* — inventory only, reported as a manual step | — |
 | Leaver's own user row | *never written* — no disable, no access-mode change, no licence | by design (O1) |
 
@@ -114,20 +115,48 @@ E2E fixture: leaver Ana Silva (Sales BU, manager Zoe) with 3 accounts, 2 contact
 
 ---
 
-## 5. UNVERIFIED
+## 5. Verified, and what is still open
 
-1. `@odata.count` surviving the host bridge — `queryData` is typed `Promise<{ value }>`. Mitigated by the capped id-page fallback.
-2. Entity sets `workflows`, `userqueries`, `userqueryvisualizations`, `queues`, `connectionreferences` and the relationship `queuemembership_association`: standard Dataverse names, but nothing in `@pptb/types` or `docs/PPTB-NOTES.md` proves them. Each is its own category, so a wrong name costs one error row.
-3. `systemuser.accessmode` — shown as `—` when absent.
-4. `ownerid@odata.bind` / `parentsystemuserid@odata.bind` accepted by the host's `update`.
-5. `systemuserprofiles_association` as an associable N:N (the read is proven, the write is not).
-6. `Assign`, `AddMembersTeam`, `RemoveMembersTeam` via `execute` — deliberately **not used**; see O2 and O4.
-7. Whether the ToolBox bridge surfaces the Dataverse error body on a failed `update`: the result row shows whatever `Error.message` carries.
+Verified after v0.1.0 against the Microsoft Learn table reference and a live environment's metadata (`describe` / `read_query`). What changed in the code as a result is in §7.
 
-## 6. Deferred to v1.1
+| Claim | Verdict |
+|---|---|
+| Entity sets `workflows`, `userqueries`, `userqueryvisualizations`, `queues`, `connectionreferences`, `connections`, `roles` | **Confirmed**, each against its table reference's `EntitySetName` and the live collection name |
+| All of those tables are `UserOwned` and expose `_ownerid_value` | **Confirmed**. `connectionreference` in particular is a standard owned table, not organization-owned |
+| `queuemembership_association`, `systemuserprofiles_association`, `systemuserroles_association`, `teammembership_association` | **Confirmed** as N:N schema and navigation property names; `systemuserprofiles` is the intersect, so the associate write is valid |
+| `systemuser.accessmode` | **Confirmed**, and the labels were wrong: 3 is Support User, 4 Non-interactive, 5 Delegated Admin |
+| `ownerid@odata.bind` on an update instead of `Assign` | **Confirmed as the correct path, not a workaround.** Each of the five tables documents its `Assign` message as "PATCH … [Update] the `ownerid` property", and `AssignRequest` is deprecated in favour of `UpdateRequest` |
+| `parentsystemuserid@odata.bind` on `systemuser` | **Confirmed**. `SetParentSystemUserRequest` is likewise a deprecated specialized update |
+| `@odata.count` for `$count=true` | **Confirmed** as a top-level sibling of `value` — but it saturates at 5 000 without saying so, and the `Prefer` header that would reveal the overflow cannot be sent through `queryData` |
+| `workflow.type` | **Corrected**: 1 Definition, 2 Activation, 3 Template. The old client-side `type !== 2` kept Templates, and on a real environment the activation copies outnumber the definitions, so the filter moved into OData as `type eq 1` |
+| `ReassignObjectsSystemUser` | **Considered and rejected.** It reassigns everything a user owns in one bound call, but returns no per-record result and cannot be previewed — which is this tool's entire value |
+
+Still open, each degrading instead of throwing:
+
+1. Whether the ToolBox bridge forwards the `@odata.count` annotation (`queryData` is typed `Promise<{ value }>`). Mitigated by the capped id-page fallback.
+2. Whether `getAllEntitiesMetadata` yields `OwnershipType` as the Web API's string or the client metadata API's flags integer. Both are accepted; getting it wrong would have scanned zero tables in silence.
+3. Whether `ownerid@odata.bind` and `parentsystemuserid@odata.bind` survive the host's `update` wrapper unchanged (the Web API contract is confirmed; the bridge is not).
+4. Whether the bridge surfaces the Dataverse error body on a failed write: the result row shows whatever `Error.message` carries.
+5. Paging. No collection read follows `@odata.nextLink`; every one asks for at most 5 000 rows, which is the per-request ceiling, and `$skip` is not supported by Dataverse.
+
+## 6. Environment behaviour the tool now has to state
+
+Found during verification. None of it is a bug in the tool, all of it changes what an offboarding actually achieves, so each is surfaced in the UI rather than left for the operator to discover:
+
+| Finding | Where it shows |
+|---|---|
+| `Organization.ShareToPreviousOwnerOnAssign`: when on, every reassigned record is shared back to the previous owner **with full rights**, so the leaver keeps access to everything the plan moved | Read from `organizations`; a plan warning, raised only when the setting is really on |
+| Assigning a record deactivates any workflow or business rule currently active on it; the new owner must reactivate them | Standing warning on any plan that moves records |
+| Cloud flows: only **solution-aware** flows can change owner this way, the previous owner remains a **co-owner**, and the change can take up to 7 days to affect licensing and run limits | Flag on each modern flow, plus a plan warning |
+| A connection reference cannot be transferred from the Power Apps portal at all — the API path this tool uses is the only supported one. The connection behind it does not move, and if the leaver's account is disabled the connection becomes invalid **for everyone sharing it** | Flag on each connection reference |
+| The connections themselves are owned records too | New **Connections** category, so the thing the tool used to only warn about is now listed and reassignable |
+| `owner_workflows` cascades `Delete: Restrict` | Noted for the deferred "delete the leaver" step: it will fail while they own any process row |
+| `TeamOwned` is documented "for internal use only" | The scan still accepts it; `TableInfo.ownership` is effectively always `user` |
+
+## 7. Deferred to v1.1
 
 - Disable the leaver and report the licence state (needs an explicit second confirmation and, for licences, the Power Platform admin API).
-- Queue membership writes, once `queuemembership_association` is verified.
+- Queue membership writes. The relationship name is confirmed; what is missing is the decision on whether removing a leaver from a queue should also reassign the queue items they hold.
 - Share (POA) cleanup: revoke the leaver's shares / re-share to the successor — pairs with the Access Checker's Shares tab.
 - Solution-aware reassignment: group flows and connection references by solution.
 - "Who else is affected": flows whose connection references the leaver owns, and views other people use.
