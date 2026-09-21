@@ -42,3 +42,17 @@ Merge with XRay: highlight importjob failures against the zip's inventory (same 
 - Persist last-used tab and diff options via `toolboxAPI.settings`.
 - Real screenshots for README; request Verified badge after v1.0.0 and 10 MAU.
 - Inter-tool invocation (`pptb.config.json`): accept a zip path as prefill so other SSS tools can hand over a solution.
+
+## RetrieveUserPrivileges understates team-inherited depth (open)
+
+`fetchUserPrivileges` backs the `platform` column in **table mode**, and table mode displays `platformDepth ?? bestDepth` as the answer. Per the Web API reference for [RetrieveUserPrivileges](https://learn.microsoft.com/en-us/power-apps/developer/data-platform/webapi/reference/retrieveuserprivileges):
+
+> For privileges that the user inherits through their team membership, this function only returns the **Basic** (user-level) depth, regardless of the actual depth granted by the team's security roles.
+
+So for a user whose access comes through a team role, table mode can report Basic where the effective depth is Local, Deep or Global — and the `platform says otherwise` badge can fire against a tool verdict that is the more accurate of the two. That is exactly the "user with a mix of direct role + team role" case `docs/RELEASE.md` asks to test.
+
+Record mode is unaffected: it uses `RetrievePrincipalAccess`, which is computed per record and has no such caveat.
+
+The reference names the remedy: `RetrieveUserPrivilegeByPrivilegeId` or `RetrieveUserPrivilegeByPrivilegeName` return the full effective depth including team-inherited privileges. Both are per-privilege, so this trades one call for N and needs a decision on which privileges to resolve — plausibly only those already relevant to the selected table rather than all of them.
+
+Not fixed in 0.1.4, which only corrects the unbound-call crash. Decide before the real-environment pass signs off on table mode.

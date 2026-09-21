@@ -6,7 +6,7 @@ Power Platform ToolBox tools by [Simple Smooth Safe](https://simplesmoothsafe.co
 |---|---|---|
 | [SSS Solution XRay](tools/solution-xray/README.md) — offline Dataverse solution zip analysis | `@simplesmoothsafe/pptb-solution-xray` | v0.1.3 |
 | [SSS EnvVar & ConnRef Matrix](tools/envvar-matrix/README.md) — env vars and connection references across environments, copy values, deploymentSettings.json | `@simplesmoothsafe/pptb-envvar-matrix` | v0.1.3 |
-| [SSS Access Checker](tools/access-checker/README.md) — why can / can't a user do X on a record: roles, teams, BU, ownership, shares, hierarchy, column security | `@simplesmoothsafe/pptb-access-checker` | v0.1.3 |
+| [SSS Access Checker](tools/access-checker/README.md) — why can / can't a user do X on a record: roles, teams, BU, ownership, shares, hierarchy, column security | `@simplesmoothsafe/pptb-access-checker` | v0.1.5 |
 | [SSS Offboarding Wizard](tools/offboarding-wizard/README.md) — user leaves: inventory of what they own and hold, then one reviewed run of reassignments | `@simplesmoothsafe/pptb-offboarding-wizard` | v0.1.0 |
 | [SSS Audit Config Matrix](tools/audit-matrix/README.md) — org / table / column audit flags, cross-environment diff, bulk set | `@simplesmoothsafe/pptb-audit-matrix` | v0.1.0 |
 

@@ -26,6 +26,8 @@ import type {
 type Row = Record<string, unknown>;
 const s = (v: unknown): string | null => (v == null || v === "" ? null : String(v));
 const id = (v: unknown): string => String(v ?? "").toLowerCase();
+/** Guard before a guid is interpolated into an OData path. */
+const GUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const esc = (v: string): string => v.replace(/'/g, "''");
 
 export interface DataverseLike {
@@ -131,7 +133,16 @@ export async function fetchRolePrivileges(api: DataverseLike, cache: Cache, role
   const todo = [...new Map(roles.map((r) => [r.id, r])).values()].filter((r) => !cache.rolePrivileges[r.id]);
   await Promise.all(
     todo.map(async (role) => {
-      const res = await api.execute({ entityName: "role", entityId: role.id, operationName: "RetrieveRolePrivilegesRole", operationType: "function" });
+      // RetrieveRolePrivilegesRole is an UNBOUND function whose RoleId is an Edm.Guid.
+      // It cannot go through execute(): binding it to the role entity gives "Resource not
+      // found for the segment", and passing RoleId as a parameter gives "Expression of type
+      // 'Edm.String' cannot be converted to type 'Edm.Guid'", because the host quotes every
+      // string parameter and has no branch for a Guid. queryData appends the path verbatim,
+      // which is the only way to send the unquoted Guid the function expects.
+      // RetrieveUserPrivileges below is bound to systemuser and its id goes into the path,
+      // so it is unaffected.
+      if (!GUID_RE.test(role.id)) throw new Error(`RetrieveRolePrivilegesRole: unexpected role id ${role.id}`);
+      const res = (await api.queryData(`RetrieveRolePrivilegesRole(RoleId=${role.id})`)) as unknown as Row;
       const map: Record<string, Depth> = {};
       for (const p of (res.RolePrivileges as Row[] | undefined) ?? []) {
         const name = nameById.get(id(p.PrivilegeId));
