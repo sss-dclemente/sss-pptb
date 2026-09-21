@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SSS Access Checker</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <div class="content" style="height:100%">
+    <header class="topbar">
+      <div class="brand">
+        <span class="eyebrow">Simple Smooth Safe</span>
+        <h1>Access Checker</h1>
+      </div>
+      <span id="conn" class="connchip" aria-label="Connection"></span>
+      <span class="spacer"></span>
+      <button id="btn-export-json" class="btn btn-ghost btn-sm" type="button" disabled>Export JSON</button>
+    </header>
+
+    <form class="inputs" id="inputs" autocomplete="off">
+      <div class="field">
+        <label for="user-q">User</label>
+        <div class="suggest-wrap">
+          <input id="user-q" type="search" placeholder="Name, domain or email…" aria-label="User search" />
+          <ul id="user-results" class="suggest" hidden></ul>
+        </div>
+        <div id="user-sel" class="selected" hidden></div>
+      </div>
+      <div class="field">
+        <label for="table">Table</label>
+        <select id="table"><option value="">Loading tables…</option></select>
+      </div>
+      <div class="field">
+        <label for="record-q">Record <span class="caption">(optional: GUID or name)</span></label>
+        <div class="suggest-wrap">
+          <input id="record-q" type="search" placeholder="GUID or primary name…" aria-label="Record search" />
+          <ul id="record-results" class="suggest" hidden></ul>
+        </div>
+        <div id="record-sel" class="selected" hidden></div>
+      </div>
+      <div class="field actions">
+        <button id="btn-check" class="btn btn-primary" type="submit" disabled>Check</button>
+      </div>
+    </form>
+
+    <nav class="tabs" role="tablist">
+      <button class="tab is-active" data-tab="check" role="tab" type="button">Check</button>
+      <button class="tab" data-tab="shares" role="tab" type="button">Shares</button>
+      <button class="tab" data-tab="columns" role="tab" type="button">Column security</button>
+    </nav>
+
+    <div id="status" class="status" hidden></div>
+
+    <main class="main">
+      <section id="tab-check" class="panel"></section>
+      <section id="tab-shares" class="panel" hidden></section>
+      <section id="tab-columns" class="panel" hidden></section>
+    </main>
+
+    <footer class="footer" style="padding: var(--s-2) var(--s-5); margin-top: 0; flex-direction: row; justify-content: space-between; align-items: center;">
+      <a href="https://simplesmoothsafe.com" target="_blank" rel="noopener">Simple Smooth Safe</a>
+      <span class="caption" id="host-mode"></span>
+    </footer>
+  </div>
+
+  <script type="module" src="./main.ts"></script>
+</body>
+</html>

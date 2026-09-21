@@ -8,6 +8,11 @@ export const $ = <T extends HTMLElement = HTMLElement>(sel: string): T => {
 
 export type Child = Node | string | null | undefined | false;
 
+/** append() that skips null/undefined/false children. */
+export function append(el: HTMLElement, ...children: Child[]): void {
+  for (const c of children) if (c != null && c !== false) el.append(c);
+}
+
 export function h<K extends keyof HTMLElementTagNameMap>(
   tag: K,
   attrs: Record<string, string | boolean | undefined> = {},
