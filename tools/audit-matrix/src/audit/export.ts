@@ -8,15 +8,30 @@ function csvCell(v: string | number | boolean | null | undefined): string {
 
 const line = (cells: (string | number | boolean | null | undefined)[]): string => cells.map(csvCell).join(",");
 
-/** One row per table and per loaded column: table, column, primary flag, other flag, differs, locked. */
+/**
+ * One row per table and per loaded column. This is the file that gets handed to an auditor, so it
+ * carries the `captures` column as well as the flag: a flag reading `on` while the table or the
+ * organization is off records nothing, and a CSV that shows only the flag would say the opposite of
+ * the truth. The organization switch is stated in a header comment for the same reason.
+ */
 export function matrixCsv(m: Matrix): string {
   const primary = m.primary?.name ?? "primary";
   const other = m.other?.name ?? "";
-  const out: string[] = [line(["level", "table", "column", "type", `${primary} audit`, other ? `${other} audit` : "other audit", "differs", "locked", "managed"])];
+  const orgNote =
+    m.orgAuditEnabled === false
+      ? `# organization auditing is OFF for ${primary}: nothing below is captured, whatever the flags read`
+      : m.orgAuditEnabled === true
+        ? `# organization auditing is on for ${primary}`
+        : `# organization auditing could not be read for ${primary}`;
+  const out: string[] = [
+    orgNote,
+    line(["level", "table", "column", "type", `${primary} audit`, "captures", other ? `${other} audit` : "other audit", "differs", "locked", "managed"]),
+  ];
+  const captures = (state: string, inert: boolean): string => (state !== "on" ? "no" : inert ? "no — a level above is off" : "yes");
   for (const r of m.rows) {
-    out.push(line(["table", r.logicalName, "", r.ownership, r.state, m.other ? r.otherState : "", r.differs, r.locked, r.isManaged]));
+    out.push(line(["table", r.logicalName, "", r.ownership, r.state, captures(r.state, m.orgAuditEnabled === false), m.other ? r.otherState : "", r.differs, r.locked, r.isManaged]));
     for (const c of r.columns ?? [])
-      out.push(line(["column", r.logicalName, c.logicalName, c.attributeType, c.state, m.other ? c.otherState : "", c.differs, c.locked, c.isManaged]));
+      out.push(line(["column", r.logicalName, c.logicalName, c.attributeType, c.state, captures(c.state, c.inert), m.other ? c.otherState : "", c.differs, c.locked, c.isManaged]));
   }
   return out.join("\n") + "\n";
 }

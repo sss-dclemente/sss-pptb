@@ -5,6 +5,15 @@
 // Covers: load -> counts + diff markers -> filter to differences -> expand columns ->
 // exports -> snapshot as comparison column -> "match other environment" plan -> preview ->
 // confirm -> apply -> recorded metadata writes -> scoped publish -> failed row.
+//
+// One mock serves three fixture variants, picked with ?v= on the URL, so behaviours that need a
+// different environment can be asserted without a second mock:
+//   (none)     organization auditing ON in the primary and OFF in the comparison; retention in
+//              auditretentionperiodv2 on the primary and only in the legacy auditretentionperiod
+//              on the comparison; OwnershipType as the Web API's string.
+//   v=orgoff   organization auditing OFF in the PRIMARY: the banner, the inert columns and the
+//              preview warning are all about the primary, so the comparison cannot stand in for it.
+//   v=int      OwnershipType as the client metadata API's OwnershipTypes flags integer.
 // Screenshots go to scripts/.e2e-out/; the ones the README links are copied into docs/img/ so those
 // links can never go stale. Run: npm run build && node scripts/e2e.mjs (needs playwright + chromium).
 import { copyFileSync, mkdirSync } from "node:fs";
@@ -21,6 +30,11 @@ const PAGE = "file://" + TOOL + "/dist/index.html";
 // ---- mock host, serialized into the page before load ----
 const MOCK = `
 (() => {
+  const VARIANT = new URLSearchParams(location.search).get('v') ?? '';
+  const ORG_OFF = VARIANT === 'orgoff';
+  // OwnershipTypes is a flags enum on the client metadata API: 1 user, 2 team, 4 business, 8 organization.
+  const OWN_INT = { UserOwned: 1, TeamOwned: 2, BusinessOwned: 4, OrganizationOwned: 8, None: 0 };
+  const own = (s) => (VARIANT === 'int' ? OWN_INT[s] : s);
   const lbl = (t) => ({ LocalizedLabels: [{ Label: t, LanguageCode: 1033 }], UserLocalizedLabel: { Label: t, LanguageCode: 1033 } });
   const mp = (value, canBeChanged = true) => ({ Value: value, CanBeChanged: canBeChanged, ManagedPropertyLogicalName: 'canmodifyauditsettings' });
   const tbl = (LogicalName, display, audit, opts = {}) => ({
@@ -28,7 +42,7 @@ const MOCK = `
     LogicalName, SchemaName: LogicalName.replace(/^(.)/, (c) => c.toUpperCase()),
     DisplayName: lbl(display),
     IsAuditEnabled: mp(audit, opts.canBeChanged !== false),
-    IsManaged: !!opts.managed, IsCustomizable: mp(true), OwnershipType: opts.ownership || 'UserOwned',
+    IsManaged: !!opts.managed, IsCustomizable: mp(true), OwnershipType: own(opts.ownership || 'UserOwned'),
     IsIntersect: !!opts.intersect, IsPrivate: !!opts.private, IsLogicalEntity: !!opts.logical,
   });
   const attr = (LogicalName, display, audit, opts = {}) => ({
@@ -43,13 +57,14 @@ const MOCK = `
   const envs = {
     primary: {
       conn: { id: 'c1', name: 'SSS Dev', url: 'https://sss-dev.crm4.dynamics.com', environment: 'Dev', environmentColor: '#0f766e' },
-      org: { organizationid: 'org-dev', name: 'SSS Dev', isauditenabled: true, isuseraccessauditenabled: true, auditretentionperiodv2: 90 },
+      // v2 carries the retention and wins over the legacy column when both are set.
+      org: { organizationid: 'org-dev', name: 'SSS Dev', isauditenabled: !ORG_OFF, isuseraccessauditenabled: true, auditretentionperiodv2: 90, auditretentionperiod: 365 },
       tables: [
         tbl('account', 'Account', true, { managed: true }),
-        tbl('contact', 'Contact', true, { managed: true }),
-        tbl('sss_case', 'SSS Case', false),
+        tbl('contact', 'Contact', true, { managed: true, ownership: 'OrganizationOwned' }),
+        tbl('sss_case', 'SSS Case', false, { ownership: 'BusinessOwned' }),
         tbl('sss_locked', 'SSS Locked', false, { managed: true, canBeChanged: false }),
-        tbl('sss_fails', 'SSS Fails', false),
+        tbl('sss_fails', 'SSS Fails', false, { ownership: 'TeamOwned' }),
         tbl('accountleads', 'Account Leads', false, { intersect: true }),
         tbl('sss_private', 'SSS Private', false, { private: true }),
       ],
@@ -62,12 +77,14 @@ const MOCK = `
           attr('calculatedcol', 'Calculated', false, { type: 'Virtual' }),
           attr('hiddencol', 'Hidden', false, { validForRead: false }),
         ],
-        sss_case: [attr('sss_name', 'Name', false)],
+        // sss_case's own flag is off, so this audited column captures nothing: inert, not a win.
+        sss_case: [attr('sss_name', 'Name', false), attr('sss_note', 'Note', true)],
       },
     },
     secondary: {
       conn: { id: 'c2', name: 'SSS Test', url: 'https://sss-test.crm4.dynamics.com', environment: 'Test', environmentColor: '#92400e' },
-      org: { organizationid: 'org-test', name: 'SSS Test', isauditenabled: false, isuseraccessauditenabled: false, auditretentionperiodv2: 30 },
+      // the retention lives only in the legacy column here, as it still does on plenty of environments
+      org: { organizationid: 'org-test', name: 'SSS Test', isauditenabled: false, isuseraccessauditenabled: false, auditretentionperiodv2: null, auditretentionperiod: 30 },
       tables: [
         tbl('account', 'Account', false, { managed: true }),
         tbl('contact', 'Contact', true, { managed: true }),
@@ -82,7 +99,7 @@ const MOCK = `
           attr('creditlimit', 'Credit Limit', false, { secured: true, type: 'Money', odata: 'Money' }),
           attr('lockedcol', 'Locked Column', true, { canBeChanged: false, managed: true }),
         ],
-        sss_case: [attr('sss_name', 'Name', false)],
+        sss_case: [attr('sss_name', 'Name', false), attr('sss_note', 'Note', true)],
       },
     },
   };
@@ -163,10 +180,15 @@ const MOCK = `
 }
 
 // ---------------------------------------------------------------- with host
-const { page, assert, finish } = await launchPage(import.meta.url, { initScript: MOCK });
+const { browser, page, assert, finish } = await launchPage(import.meta.url, { initScript: MOCK });
 await page.goto(PAGE);
 
 const tableNames = () => page.$$eval("table.matrix > tbody > tr:not(.colrow) td.name .mono", (els) => els.map((e) => e.textContent));
+/** The ownership badge of every visible table row, in row order. */
+const ownershipLabels = (p) => p.$$eval("table.matrix > tbody > tr:not(.colrow) td:nth-child(3) .badge:last-child", (els) => els.map((e) => e.textContent));
+/** The rows of one org card's settings table, as [label, value] pairs. */
+const orgCardRows = (n) =>
+  page.$$eval(`#org-body .orggrid > .card:nth-child(${n}) table tbody tr`, (rs) => rs.map((r) => [...r.children].map((c) => c.textContent.trim())));
 const shot = async (file, readme) => {
   await page.screenshot({ path: resolve(OUT, file) });
   if (readme) copyFileSync(resolve(OUT, file), resolve(IMG, readme));
@@ -180,6 +202,9 @@ assert((await page.inputValue("#compare")) === "secondary", "secondary preselect
 // ---- matrix, counts, diff markers
 let names = await tableNames();
 assert(JSON.stringify(names) === JSON.stringify(["account", "contact", "sss_case", "sss_fails", "sss_locked"]), "intersect/private tables filtered out: " + names.join(","));
+const ownStrings = await ownershipLabels(page);
+assert(JSON.stringify(ownStrings) === JSON.stringify(["user", "org", "bu", "team", "user"]), "OwnershipType as the Web API string maps to an ownership label per table: " + ownStrings.join(","));
+assert(await page.$eval("#org-banner", (e) => e.hidden), "no organization banner while the primary's organization auditing is on (the comparison's is off)");
 const counts = await page.textContent("#counts");
 assert(counts.includes("2 / 5") && counts.includes("tables audited"), "counts: 2 of 5 tables audited — " + counts);
 assert(/3\s*table differences/.test(counts.replace(/\s+/g, " ")), "counts: 3 table differences — " + counts);
@@ -212,6 +237,8 @@ assert(JSON.stringify(colNames) === JSON.stringify(["name", "creditlimit", "lock
 assert((await page.textContent("tr.colrow")).includes("secured"), "secured column badge");
 const countsAfter = (await page.textContent("#counts")).replace(/\s+/g, " ");
 assert(countsAfter.includes("1columns audited in 1 expanded table") || countsAfter.includes("1 columns audited in 1 expanded table"), "column counts scoped to expanded tables — " + countsAfter);
+assert(!countsAfter.includes("capturing nothing"), "no “capturing nothing” metric while every audited column sits under an on table in an on organization — " + countsAfter);
+assert((await page.$$eval("tr.colrow td.col-inert", (e) => e.length)) === 0, "an audited column under an on table in an on organization is not marked inert");
 await shot("02-columns.png", "columns.png");
 
 // ---- exports (matrix CSV + snapshot of the primary environment)
@@ -220,10 +247,13 @@ await page.click("#btn-export-snap");
 let saved = await page.evaluate(() => window.__mock.saved);
 assert(saved.length === 2, "two exports saved");
 const csv = saved[0].content;
-assert(saved[0].name === "audit-matrix.csv" && csv.split("\n")[0].startsWith("level,table,column,type,SSS Dev audit,SSS Test audit,differs,locked"), "matrix CSV header: " + csv.split("\n")[0]);
-assert(/^table,account,,user,on,off,true,false/m.test(csv), "CSV table row for account");
-assert(/^column,account,telephone1,String,off,on,true,false/m.test(csv), "CSV column row for telephone1");
-assert(/^table,sss_locked,,user,off,on,true,true/m.test(csv), "CSV marks sss_locked locked");
+const csvLines = csv.split("\n");
+assert(csvLines[0] === "# organization auditing is on for SSS Dev", "matrix CSV states the organization switch: " + csvLines[0]);
+assert(saved[0].name === "audit-matrix.csv" && csvLines[1].startsWith("level,table,column,type,SSS Dev audit,captures,SSS Test audit,differs,locked"), "matrix CSV header: " + csvLines[1]);
+assert(/^table,account,,user,on,yes,off,true,false/m.test(csv), "CSV table row for account, capturing");
+assert(/^column,account,telephone1,String,off,no,on,true,false/m.test(csv), "CSV column row for telephone1, off so captures nothing");
+assert(/^table,sss_locked,,user,off,no,on,true,true/m.test(csv), "CSV marks sss_locked locked");
+assert(/^table,sss_case,,bu,off,no,/m.test(csv), "CSV says a table with its flag off captures nothing");
 const snapJson = saved[1].content;
 const snap = JSON.parse(snapJson);
 assert(snap.kind === "sss-audit-matrix-snapshot" && snap.version === 1, "snapshot kind + version");
@@ -241,11 +271,49 @@ await page.selectOption("#compare", "secondary");
 await page.waitForFunction(() => document.querySelectorAll("table.matrix .diffmark").length > 0);
 assert(true, "back to the live secondary comparison");
 
+// ---- auditing is an AND: an audited column under an un-audited table captures nothing
+await page.click('button[aria-label="Expand sss_case"]');
+await page.waitForSelector("td.col-inert");
+assert((await page.$$eval("td.col-inert", (e) => e.length)) === 1, "only sss_note, whose table flag is off, is marked inert — account's audited column is not");
+const inertCell = await page.$("td.col-inert");
+assert((await inertCell.textContent()).includes("inert"), "the inert column cell carries an “inert” badge next to its on flag");
+assert(
+  (await inertCell.getAttribute("title")).includes("this table's audit flag is off"),
+  "the inert tooltip names the level that is off — " + (await inertCell.getAttribute("title")),
+);
+const caseStats = await page.$$eval("table.matrix > tbody > tr:not(.colrow)", (rs) => {
+  const tr = rs.find((r) => r.textContent.includes("sss_case"));
+  return tr ? tr.lastElementChild.textContent : "";
+});
+assert(caseStats.includes("1 / 2 audited (1 capturing nothing)"), "the table row's column stats say how many audited columns capture nothing — " + caseStats);
+const countsInert = (await page.textContent("#counts")).replace(/\s+/g, " ");
+assert(/1\s*audited columns capturing nothing/.test(countsInert), "the counts bar gains the “capturing nothing” metric once there are any — " + countsInert);
+await shot("05-inert.png");
+
 // ---- org settings tab
 await page.click('.tab[data-tab="org"]');
 const org = await page.textContent("#org-body");
 assert(org.includes("SSS Dev") && org.includes("SSS Test") && org.includes("90") && org.includes("30"), "org cards for both environments with their retention");
 assert(org.includes("unknown") && org.includes("isreadauditenabled"), "missing org field degrades to unknown");
+const devRows = await orgCardRows(1);
+const testRows = await orgCardRows(2);
+const retRow = (rows) => rows.find((r) => r[0].startsWith("Retention")) ?? ["", ""];
+assert(JSON.stringify(retRow(devRows)) === JSON.stringify(["Retention, days (auditretentionperiodv2)", "90"]), "retention read from v2 and the column named — " + retRow(devRows).join(" = "));
+assert(
+  JSON.stringify(retRow(testRows)) === JSON.stringify(["Retention, days (auditretentionperiod, legacy)", "30"]),
+  "an environment with v2 null reports the legacy column's value and says it is the legacy one — " + retRow(testRows).join(" = "),
+);
+assert((devRows.find((r) => r[0].includes("isreadauditenabled")) ?? [])[1] === "unknown" && retRow(devRows)[1] === "90", "the $select that loses isreadauditenabled still returns a retention, not “unknown”");
+const orgSelects = [...new Set(await page.evaluate(() => window.__mock.orgQueries.filter((q) => q.startsWith("organizations"))))];
+assert(orgSelects.length === 3, "the $select chain narrowed twice before one was accepted, got " + orgSelects.length + ": " + orgSelects.join(" | "));
+assert(
+  orgSelects[1].includes("isreadauditenabled") && !orgSelects[1].includes("auditretentionperiodv2,auditretentionperiod"),
+  "the chain narrows one field at a time: the legacy retention is dropped before read auditing — " + orgSelects[1],
+);
+assert(
+  !orgSelects[2].includes("isreadauditenabled") && orgSelects[2].includes("auditretentionperiodv2,auditretentionperiod"),
+  "dropping read auditing does not cost either retention column — " + orgSelects[2],
+);
 assert(org.includes("Read-only in v1"), "org tab states it is read-only");
 await page.evaluate(() => document.documentElement.setAttribute("data-theme", "dark"));
 await shot("03-org-dark.png", "org-dark.png");
@@ -267,6 +335,7 @@ await page.click("#btn-apply");
 await page.waitForSelector("dialog[open]");
 assert((await page.textContent("#dlg-title")) === "Preview changes", "preview dialog");
 assert((await page.textContent("#dlg-body")).includes("3 metadata writes"), "preview counts the writes");
+assert(!(await page.textContent("#dlg-body")).includes("nothing will be captured"), "no organization warning in the preview while the primary's organization auditing is on");
 await shot("04-preview.png", "preview.png");
 await page.click("#dlg-ok");
 
@@ -310,6 +379,16 @@ assert(saved.length === 4, "plan CSV + plan script saved");
 assert(saved[2].name === "audit-plan.csv" && saved[2].content.includes("table,sss_fails,,off,on"), "plan CSV rows");
 assert(saved[3].name === "audit-plan.ps1" && saved[3].content.includes("EntityDefinitions(LogicalName=") && saved[3].content.includes("Table = 'sss_fails'"), "plan script is a runnable list");
 
+// The CSV only carries the columns of expanded tables, and applying the plan reloaded the matrix,
+// so expand sss_case again: an audited column under a table whose own flag is off must not read as
+// a win in the file an auditor is handed.
+await page.click('.tab[data-tab="matrix"]');
+await page.click('button[aria-label="Expand sss_case"]');
+await page.waitForFunction(() => !!document.querySelector("td.col-inert"));
+await page.click("#btn-export-csv");
+const csv2 = (await page.evaluate(() => window.__mock.saved)).at(-1).content;
+assert(/^column,sss_case,sss_note,String,on,no — a level above is off,/m.test(csv2), "CSV says an audited column under an off table captures nothing");
+
 // ---- the matrix reflects the applied change after the refresh
 await page.click('.tab[data-tab="matrix"]');
 await page.waitForFunction(() => {
@@ -317,5 +396,61 @@ await page.waitForFunction(() => {
   return tr && !tr.querySelector(".diffmark");
 });
 assert(true, "account no longer differs after the write");
+
+// ---------------------------------------------------------------- fixture variants
+/** A fresh context on one fixture variant, loaded and handed to `fn`; its page errors are asserted too. */
+const runVariant = async (variant, fn) => {
+  const ctx = await browser.newContext({ viewport: { width: 1400, height: 900 } });
+  await ctx.addInitScript(MOCK);
+  const p = await ctx.newPage();
+  const errs = [];
+  p.on("pageerror", (e) => errs.push("pageerror: " + e.message));
+  p.on("console", (m) => {
+    if (m.type() === "error") errs.push("console: " + m.text());
+  });
+  await p.goto(`${PAGE}?v=${variant}`);
+  await p.waitForFunction(() => document.querySelectorAll("#columns .colchip").length === 2);
+  const out = await fn(p);
+  assert(errs.length === 0, `no page/console errors in the ?v=${variant} run: ` + errs.join(" | "));
+  await ctx.close();
+  return out;
+};
+
+// ---- organization auditing off in the PRIMARY: banner, inert columns, preview warning
+await runVariant("orgoff", async (p) => {
+  assert(!(await p.$eval("#org-banner", (e) => e.hidden)), "organization banner shown on the matrix when the primary's organization auditing is off");
+  const banner = await p.textContent("#org-banner");
+  assert(banner.includes("SSS Dev") && banner.includes("organization level"), "the banner names the primary environment — " + banner);
+  assert(banner.includes("2 tables whose flag reads on"), "the banner counts the table flags that read on while capturing nothing — " + banner);
+
+  await p.click('button[aria-label="Expand account"]');
+  await p.waitForSelector("td.col-inert");
+  assert((await p.$$eval("td.col-inert", (e) => e.length)) === 1, "an audited column under an on table is still inert when the organization switch is off");
+  const title = await p.$eval("td.col-inert", (e) => e.getAttribute("title"));
+  assert(title.includes("auditing is off for the organization"), "the inert tooltip names the organization as the level that is off — " + title);
+  const counts = (await p.textContent("#counts")).replace(/\s+/g, " ");
+  assert(/1\s*audited columns capturing nothing/.test(counts), "the counts bar reports the organization-inert column — " + counts);
+  await p.screenshot({ path: resolve(OUT, "06-org-off.png") });
+
+  await p.click("#btn-plan-match");
+  await p.waitForFunction(() => document.querySelector("#plan-count").textContent === "3");
+  await p.click('.tab[data-tab="apply"]');
+  await p.click("#btn-apply");
+  await p.waitForSelector("dialog[open]");
+  const warnings = await p.$$eval("#dlg-body .warnings", (ws) => ws.map((w) => w.textContent));
+  assert(
+    warnings.some((w) => w.includes("These writes will set the flags, but nothing will be captured")),
+    "the preview warns that a plan turning flags on captures nothing while the organization switch is off — " + warnings.join(" | "),
+  );
+  assert(warnings.some((w) => w.includes("Auditing is off for SSS Dev at the organization level")), "the preview warning names the environment whose organization switch is off");
+  await p.click("#dlg-cancel");
+});
+
+// ---- OwnershipType as the metadata API's flags integer
+await runVariant("int", async (p) => {
+  const ownInts = await ownershipLabels(p);
+  assert(JSON.stringify(ownInts) === JSON.stringify(ownStrings), "OwnershipType as a flags integer yields the same labels as the string form: " + ownInts.join(","));
+  assert(new Set(ownInts).size === 4 && !ownInts.includes("none"), "the integer form is decoded, not labelled “none” across the board: " + ownInts.join(","));
+});
 
 await finish();
