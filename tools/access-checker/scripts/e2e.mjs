@@ -75,10 +75,17 @@ const MOCK = `
     return { value: rows.map((r) => ({ ...r })) };
   };
   const execute = async (req) => {
-    window.__calls.push(req.operationName + ':' + (req.entityId ?? ''));
+    window.__calls.push(req.operationName + ':' + (req.entityId ?? req.parameters?.RoleId ?? ''));
     switch (req.operationName) {
-      case 'RetrieveRolePrivilegesRole':
-        return { RolePrivileges: (rolePrivs[req.entityId] ?? []).map(([n, d]) => ({ PrivilegeId: P(n), Depth: d, BusinessUnitId: BU_SALES })) };
+      case 'RetrieveRolePrivilegesRole': {
+        // Unbound function taking RoleId. Reject the bound shape outright: sending
+        // entityName/entityId is what Dataverse answers with "Resource not found
+        // for the segment", and a lenient mock hid that until a real environment.
+        if (req.entityName || req.entityId) throw new Error('mock: RetrieveRolePrivilegesRole is unbound, got a bound request');
+        const roleId = req.parameters?.RoleId;
+        if (typeof roleId !== 'string' || !roleId) throw new Error('mock: RetrieveRolePrivilegesRole needs a RoleId parameter');
+        return { RolePrivileges: (rolePrivs[roleId] ?? []).map(([n, d]) => ({ PrivilegeId: P(n), Depth: d, BusinessUnitId: BU_SALES })) };
+      }
       case 'RetrieveUserPrivileges':
         return { RolePrivileges: [...rolePrivs[R_SALES], ...rolePrivs[R_SHARER]].map(([n, d]) => ({ PrivilegeId: P(n), Depth: { Basic: 0, Local: 1, Deep: 2, Global: 3 }[d] })) };
       case 'RetrievePrincipalAccess': {

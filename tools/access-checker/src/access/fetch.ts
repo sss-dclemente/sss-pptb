@@ -131,7 +131,10 @@ export async function fetchRolePrivileges(api: DataverseLike, cache: Cache, role
   const todo = [...new Map(roles.map((r) => [r.id, r])).values()].filter((r) => !cache.rolePrivileges[r.id]);
   await Promise.all(
     todo.map(async (role) => {
-      const res = await api.execute({ entityName: "role", entityId: role.id, operationName: "RetrieveRolePrivilegesRole", operationType: "function" });
+      // RetrieveRolePrivilegesRole is an UNBOUND function taking RoleId; binding it to the role
+      // entity produces "Resource not found for the segment". RetrieveUserPrivileges below is
+      // bound to systemuser, hence the difference.
+      const res = await api.execute({ operationName: "RetrieveRolePrivilegesRole", operationType: "function", parameters: { RoleId: role.id } });
       const map: Record<string, Depth> = {};
       for (const p of (res.RolePrivileges as Row[] | undefined) ?? []) {
         const name = nameById.get(id(p.PrivilegeId));
