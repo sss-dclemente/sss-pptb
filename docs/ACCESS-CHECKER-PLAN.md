@@ -1,6 +1,6 @@
 # ACCESS-CHECKER-PLAN — SSS Access Checker
 
-Status: DRAFT, awaiting owner OK on decisions A1–A6. Build order #3 in `pptb-tool-ideas.md`; absorbs "Share Explorer (POA)" and "Column Security Matrix" as tabs.
+Status: APPROVED (A1–A6 confirmed by owner), implemented in `tools/access-checker/`. Build order #3 in `pptb-tool-ideas.md`; absorbs "Share Explorer (POA)" and "Column Security Matrix" as tabs.
 
 One-liner: "why can / can't user X do Y on record Z". Pick a user, a table and optionally a record; get the verdict per access right and the chain that produced it: roles (direct and via teams) with privilege depth, business-unit position, ownership, shares, hierarchy, column security.
 
@@ -13,7 +13,7 @@ Facts: `docs/PPTB-NOTES.md`. `@pptb/types` 1.2.5 `execute` supports bound functi
 | # | Decision | Recommendation | Why |
 |---|---|---|---|
 | A1 | Writes | **v1 read-only.** No revoke, no role assignment | Access changes are exactly what an auditor wants to see done deliberately, not from a matrix. Revoke share → v1.1 with the same preview/confirm pattern |
-| A2 | Verdict source | Platform truth first: `RetrievePrincipalAccess` (record) and `RetrieveUserPrivileges`-equivalent via role privileges (table level). The explanation is computed by the tool and shown as "how we got here", never overriding the platform verdict | Dataverse security has edge cases (hierarchy, access teams, inherited privileges). Never claim more than the platform returns |
+| A2 | Verdict source | Platform truth first: `RetrievePrincipalAccess` (record) and `RetrieveUserPrivileges` (table level, effective depth per privilege). The explanation is computed by the tool and shown as "how we got here", never overriding the platform verdict | Dataverse security has edge cases (hierarchy, access teams, inherited privileges). Never claim more than the platform returns |
 | A3 | Scope of explanation | Roles direct + owner teams + AAD group teams (whatever `teammembership_association` returns); privilege depth per entity per role; BU chain; ownership (user / team the user belongs to); explicit shares (POA) incl. shares to teams the user is in; manager/position hierarchy flagged as "possible" when user is above owner and the org has hierarchy security on | Covers 95% of real "why" questions. Access teams appear through team membership |
 | A4 | Inputs | User: search box over `systemusers` (fullname / domainname / internalemailaddress `contains`). Table: dropdown from `getAllEntitiesMetadata` (user-facing tables only). Record: GUID paste or search by primary name attribute. Record optional → table-level check only | Same three inputs every time; a GUID paste beats a lookup dialog |
 | A5 | Tabs | 1 **Check** (verdict + why) · 2 **Shares** (POA on the chosen record: who, what rights, via user or team) · 3 **Column security** (secured columns of the table × user effective read / update / create, via user and team profiles) | Three questions people actually ask about one record |
