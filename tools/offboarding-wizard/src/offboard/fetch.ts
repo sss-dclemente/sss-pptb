@@ -112,16 +112,23 @@ const label = (v: unknown, fallback: string): string => {
   return l.UserLocalizedLabel?.Label ?? l.LocalizedLabels?.[0]?.Label ?? fallback;
 };
 
+/** OwnershipTypes as flags, or null when the value is not a number at all (an empty string is not). */
+const ownershipFlags = (v: unknown): number | null => {
+  if (typeof v === "number") return Number.isFinite(v) ? v : null;
+  if (typeof v !== "string" || v.trim() === "") return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+};
+
 const isOwned = (v: unknown): boolean => {
-  const n = typeof v === "number" ? v : Number(v);
-  if (Number.isFinite(n)) return (n & 1) !== 0 || (n & 2) !== 0; // UserOwned | TeamOwned
-  const t = String(v ?? "");
-  return t === "UserOwned" || t === "TeamOwned";
+  const n = ownershipFlags(v);
+  if (n != null) return (n & 1) !== 0 || (n & 2) !== 0; // UserOwned | TeamOwned
+  return v === "UserOwned" || v === "TeamOwned";
 };
 
 const isTeamOwned = (v: unknown): boolean => {
-  const n = typeof v === "number" ? v : Number(v);
-  return Number.isFinite(n) ? (n & 2) !== 0 : String(v ?? "") === "TeamOwned";
+  const n = ownershipFlags(v);
+  return n != null ? (n & 2) !== 0 : v === "TeamOwned";
 };
 
 /** User- and team-owned tables only: those are the ones an owner filter applies to. */

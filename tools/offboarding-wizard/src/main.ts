@@ -379,7 +379,13 @@ function updatePlanSummary(): void {
   const total = rows.reduce((n, r) => n + r.count, 0);
   el.replaceChildren(
     rows.length ? table(["Category", "#Operations"], rows.map((r) => [r.label, String(r.count)])) : h("p", { class: "caption" }, "Nothing selected on the Inventory tab."),
-    h("p", { class: "caption" }, `${total} operation${total === 1 ? "" : "s"} · applied ${DEFAULT_WRITE_CONCURRENCY} at a time`),
+    // An estimate, not the plan: what the successor already holds and which roles have an equivalent
+    // in their business unit are only read when the preview is built, and both can only remove rows.
+    h(
+      "p",
+      { class: "caption" },
+      `${total} operation${total === 1 ? "" : "s"} at most · applied ${DEFAULT_WRITE_CONCURRENCY} at a time. The preview is the real count: anything the successor already holds is dropped there.`,
+    ),
   );
   const btn = document.querySelector<HTMLButtonElement>("#btn-preview");
   if (btn) btn.disabled = !total || !successor || (useTeamTarget && !recordTeam);

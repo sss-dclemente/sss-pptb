@@ -131,6 +131,8 @@ interface PrincipalOpts {
   kindRemove: PlannedOp["kind"];
   /** Ids the successor already holds; a copy of one of these is skipped, not planned. */
   held?: Set<string>;
+  /** Singular noun for skip messages, since the category label is plural. */
+  singular: string;
   /** Roles only: leaver role id → the equivalent role in the successor's BU, or null if there is none. */
   remap?: Map<string, RoleRef | null>;
   skipped: string[];
@@ -145,7 +147,7 @@ function principalOps(cat: CategoryResult, leaverId: string, successor: UserInfo
       if (p.remap && !target) {
         p.skipped.push(`Role "${it.label}": no equivalent role exists in ${successor.fullName}'s business unit, so it cannot be granted from here.`);
       } else if (target && p.held?.has(target.id)) {
-        p.skipped.push(`${cat.label} "${it.label}": ${successor.fullName} already has it.`);
+        p.skipped.push(`${p.singular} "${it.label}": ${successor.fullName} already has it.`);
       } else if (target) {
         const remapped = target.id !== it.id;
         ops.push({
@@ -224,6 +226,7 @@ export function buildPlan(inv: Inventory, recordIds: Map<string, { id: string; n
         remove: o.roleRemove,
         kindCopy: "role-copy",
         kindRemove: "role-remove",
+        singular: "Security role",
         held: o.successorHeld?.roleIds,
         remap: o.roleRemap,
         skipped,
@@ -242,6 +245,7 @@ export function buildPlan(inv: Inventory, recordIds: Map<string, { id: string; n
         remove: o.profileRemove,
         kindCopy: "profile-copy",
         kindRemove: "profile-remove",
+        singular: "Field security profile",
         held: o.successorHeld?.profileIds,
         skipped,
       }),
@@ -268,14 +272,17 @@ export function buildPlan(inv: Inventory, recordIds: Map<string, { id: string; n
       })),
     );
 
-  const movesRecords = ops.some((op) => op.category === "records");
+  // Any ownership move is an assign, not just the records category: flows, personal views, charts,
+  // queues, connection references and connections are user-owned records too, and the consequences
+  // below apply to every one of them.
+  const movesOwnership = ops.some((op) => op.kind === "reassign-record" || op.kind === "reassign-asset");
   // The setting that can defeat the whole exercise: with it on, every record handed to the successor
   // is shared straight back to the leaver with full rights. Only warned about when it is really on.
-  if (movesRecords && inv.orgAssign?.shareToPreviousOwnerOnAssign === true)
+  if (movesOwnership && inv.orgAssign?.shareToPreviousOwnerOnAssign === true)
     warnings.push(
-      "This environment has \"share to previous owner on assign\" enabled: every reassigned record is shared back to the leaver with full rights. Turn it off, or revoke those shares afterwards, or the leaver keeps access to everything in this plan.",
+      "This environment has \"share to previous owner on assign\" enabled: everything reassigned here is shared back to the leaver with full rights. Turn it off, or revoke those shares afterwards, or the leaver keeps access to everything in this plan.",
     );
-  if (movesRecords)
+  if (movesOwnership)
     warnings.push("Reassigning a record deactivates any workflow or business rule currently active on it; the new owner has to reactivate them.");
   if (ops.some((op) => op.category === "workflows"))
     warnings.push(
