@@ -10,10 +10,9 @@
  *    metadata: workflows, userqueries, userqueryvisualizations, queues, connectionreferences,
  *    connections, roles, queuemembership_association, and systemuser.accessmode. All six of those
  *    tables are UserOwned and expose _ownerid_value, so the owner filter below is valid on each.
- *  - UNVERIFIED, and the reason each one degrades instead of throwing:
- *    whether the ToolBox bridge forwards the "@odata.count" annotation (queryData is typed
- *    Promise<{ value }>), and whether getAllEntitiesMetadata yields OwnershipType as the Web API's
- *    string or as the client metadata API's integer — both are handled defensively.
+ *  - UNVERIFIED, and the reason it degrades instead of throwing: whether getAllEntitiesMetadata
+ *    yields OwnershipType as the Web API's string or as the client metadata API's integer. Both are
+ *    handled. ("@odata.count" is settled: PPTB-NOTES §12, queryData returns response.data unchanged.)
  */
 import type { CategoryKey, CategoryResult, InventoryItem, LeaverInfo, OrgAssignSettings, PrincipalHeld, RoleRef, ScanSummary, TableInfo, TableScanRow, TeamRef, UserInfo } from "./types";
 import { WORKFLOW_CATEGORY_LABEL, WORKFLOW_STATE_LABEL } from "./types";
@@ -199,8 +198,9 @@ export async function pool<T, R>(
  * `$count=true` returns the count "regardless of the page size requested", so a single row is asked
  * for rather than the undocumented `$top=0`. The annotation saturates at PAGE_LIMIT without saying
  * so — distinguishing 5 000 from 5 000+ needs a Prefer header that queryData cannot send — so a
- * count at the limit is reported as approximate. If the bridge drops the annotation entirely
- * (UNVERIFIED), fall back to a capped page of ids so the scan still produces a number.
+ * count at the limit is reported as approximate. The bridge does forward the annotation
+ * (PPTB-NOTES §12: queryData returns response.data unchanged), so the capped id-page fallback below
+ * is belt-and-braces rather than the expected path.
  */
 export async function countOwned(api: DataverseLike, t: TableInfo, leaverId: string, cap: number): Promise<{ count: number | null; approximate: boolean }> {
   const res = (await api.queryData(`${t.entitySetName}?$select=${t.primaryId}&$filter=_ownerid_value eq ${leaverId}&$count=true&$top=1`)) as unknown as {

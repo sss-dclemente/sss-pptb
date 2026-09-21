@@ -133,7 +133,7 @@ Verified after v0.1.0 against the Microsoft Learn table reference and a live env
 
 Still open, each degrading instead of throwing:
 
-1. Whether the ToolBox bridge forwards the `@odata.count` annotation (`queryData` is typed `Promise<{ value }>`). Mitigated by the capped id-page fallback.
+1. ~~Whether the ToolBox bridge forwards the `@odata.count` annotation~~ — **settled by `docs/PPTB-NOTES.md` §12**: `queryData` returns `response.data` unchanged, so annotations reach the tool and the declared `Promise<{ value }>` type is narrower than what actually comes back. The capped id-page fallback stays as a belt-and-braces path rather than the expected one.
 2. Whether `getAllEntitiesMetadata` yields `OwnershipType` as the Web API's string or the client metadata API's flags integer. Both are accepted; getting it wrong would have scanned zero tables in silence.
 3. Whether `ownerid@odata.bind` and `parentsystemuserid@odata.bind` survive the host's `update` wrapper unchanged (the Web API contract is confirmed; the bridge is not).
 4. Whether the bridge surfaces the Dataverse error body on a failed write: the result row shows whatever `Error.message` carries.
