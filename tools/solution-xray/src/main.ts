@@ -1,3 +1,4 @@
+import { $, badge, card, emptyState, foldCard, h, table, wireTabs } from "../../_shared/dom";
 import { filesFromDrop, initTheme, inToolbox, notify, pickZips, saveText } from "./host";
 import { diffSolutions, type SolutionDiff } from "./xray/diff";
 import { buildInventory, managedLabel } from "./xray/inventory";
@@ -9,65 +10,6 @@ import type { SolutionInfo } from "./xray/types";
 // ---------- state ----------
 const solutions: SolutionInfo[] = [];
 let activeTab = "inventory";
-
-// ---------- DOM helpers ----------
-const $ = <T extends HTMLElement = HTMLElement>(sel: string): T => {
-  const el = document.querySelector<T>(sel);
-  if (!el) throw new Error(`missing ${sel}`);
-  return el;
-};
-
-function h<K extends keyof HTMLElementTagNameMap>(
-  tag: K,
-  attrs: Record<string, string | boolean | undefined> = {},
-  ...children: (Node | string | null | undefined | false)[]
-): HTMLElementTagNameMap[K] {
-  const el = document.createElement(tag);
-  for (const [k, v] of Object.entries(attrs)) {
-    if (v === undefined || v === false) continue;
-    if (k === "class") el.className = String(v);
-    else if (v === true) el.setAttribute(k, "");
-    else el.setAttribute(k, v);
-  }
-  for (const c of children) if (c != null && c !== false) el.append(typeof c === "string" ? document.createTextNode(c) : c);
-  return el;
-}
-
-function badge(text: string, kind: "" | "ok" | "warn" | "bad" | "neutral" = ""): HTMLElement {
-  return h("span", { class: `badge${kind ? ` badge-${kind}` : ""}` }, text);
-}
-
-function emptyState(title: string, hint: string): HTMLElement {
-  return h("div", { class: "empty-state" }, h("strong", {}, title), hint);
-}
-
-function table(headers: string[], rows: (Node | string)[][], rowClass?: (i: number) => string | undefined): HTMLElement {
-  return h(
-    "table",
-    {},
-    h("thead", {}, h("tr", {}, ...headers.map((t) => h("th", { class: t.startsWith("#") ? "r" : undefined }, t.replace(/^#/, ""))))),
-    h(
-      "tbody",
-      {},
-      ...rows.map((cells, i) =>
-        h("tr", { class: rowClass?.(i) }, ...cells.map((c, j) => h("td", { class: headers[j]?.startsWith("#") ? "r" : undefined }, c))),
-      ),
-    ),
-  );
-}
-
-function card(title: string, body: Node, extra?: Node): HTMLElement {
-  return h("div", { class: "card" }, h("div", { class: "card-head" }, h("h3", {}, title), extra ?? null), h("div", { class: "card-body" }, body));
-}
-
-function foldCard(title: string, count: number, body: Node, open = false): HTMLElement {
-  return h(
-    "details",
-    { class: "card", open },
-    h("summary", {}, h("div", { class: "card-head" }, h("h3", {}, title), h("span", { class: "count" }, badge(String(count), "neutral")))),
-    h("div", { class: "card-body" }, body),
-  );
-}
 
 function label(s: SolutionInfo): string {
   return `${s.displayName || s.uniqueName} ${s.version ? `v${s.version}` : ""} (${s.managed ? "managed" : "unmanaged"})`;
@@ -404,14 +346,10 @@ function wire(): void {
     renderAll();
   });
 
-  document.querySelectorAll<HTMLButtonElement>(".tab").forEach((btn) =>
-    btn.addEventListener("click", () => {
-      activeTab = btn.dataset.tab!;
-      document.querySelectorAll(".tab").forEach((t) => t.classList.toggle("is-active", t === btn));
-      document.querySelectorAll<HTMLElement>(".panel").forEach((p) => (p.hidden = p.id !== `tab-${activeTab}`));
-      renderActive();
-    }),
-  );
+  wireTabs((name) => {
+    activeTab = name;
+    renderActive();
+  });
 
   $("#inv-select").addEventListener("change", renderInventory);
   $("#cmp-a").addEventListener("change", renderCompare);

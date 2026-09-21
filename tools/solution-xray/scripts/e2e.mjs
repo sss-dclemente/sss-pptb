@@ -4,21 +4,13 @@
 import { createRequire } from "node:module";
 import { writeFileSync, mkdirSync } from "node:fs";
 import { resolve } from "node:path";
+import { launchPage } from "../../_shared/e2e-loader.mjs";
 
 const TOOL = new URL("..", import.meta.url).pathname.replace(/\/$/, "");
 const OUT = resolve(TOOL, "scripts/.e2e-out");
 mkdirSync(OUT, { recursive: true });
 const require = createRequire(TOOL + "/package.json");
 const JSZip = require("jszip");
-// Playwright is not a dependency of this package. Resolve it from the local
-// node_modules, a global install, or PLAYWRIGHT_PATH.
-function loadPlaywright() {
-  for (const c of [process.env.PLAYWRIGHT_PATH, "playwright", "/opt/node22/lib/node_modules/playwright", "/usr/lib/node_modules/playwright", "/usr/local/lib/node_modules/playwright"].filter(Boolean)) {
-    try { return require(c); } catch { /* next */ }
-  }
-  throw new Error("playwright not found: npm i -g playwright, or set PLAYWRIGHT_PATH");
-}
-const { chromium } = loadPlaywright();
 
 const solutionXml = ({ name, version, managed, prefix = "sss", roots = [], missing = [] }) => `<?xml version="1.0" encoding="utf-8"?>
 <ImportExportXml version="9.2.24" SolutionPackageVersion="9.2" languagecode="1033" generatedBy="CrmLive">
@@ -154,14 +146,8 @@ const solE = await zip({
 const files = { "SolA_1_0_0_0.zip": solA1, "SolA_1_1_0_0_managed.zip": solA2, "SolB_2_0_0_0_managed.zip": solB, "SolC_1_0_0_0_managed.zip": solC, "SolD.zip": solD, "SolE.zip": solE };
 for (const [n, b] of Object.entries(files)) writeFileSync(resolve(OUT, n), b);
 
-const browser = await chromium.launch(process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH } : {});
-const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
-const errors = [];
-page.on("pageerror", (e) => errors.push("pageerror: " + e.message));
-page.on("console", (m) => { if (m.type() === "error") errors.push("console: " + m.text()); });
-
+const { page, assert, finish } = await launchPage(import.meta.url, { width: 1280, height: 900 });
 await page.goto("file://" + TOOL + "/dist/index.html");
-const assert = (c, msg) => { if (!c) { console.error("FAIL:", msg); process.exitCode = 1; } else console.log("ok:", msg); };
 
 assert((await page.textContent("#host-mode")).includes("Standalone"), "standalone mode detected");
 
@@ -239,5 +225,4 @@ assert(true, "remove works");
 await page.click("#btn-clear");
 assert((await page.textContent("#solution-list")).includes("No solutions loaded"), "clear works");
 
-assert(errors.length === 0, "no page/console errors" + (errors.length ? ": " + errors.join(" | ") : ""));
-await browser.close();
+await finish();
