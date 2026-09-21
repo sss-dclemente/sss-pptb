@@ -24,7 +24,7 @@
   "homepage": "https://simplesmoothsafe.com",
   "repository": {
     "type": "git",
-    "url": "https://github.com/sss-dclemente/sss-pptb.git",
+    "url": "git+https://github.com/sss-dclemente/sss-pptb.git",
     "directory": "tools/solution-xray"
   },
   "configurations": {
