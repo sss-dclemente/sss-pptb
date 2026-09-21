@@ -43,16 +43,16 @@ Merge with XRay: highlight importjob failures against the zip's inventory (same 
 - Real screenshots for README; request Verified badge after v1.0.0 and 10 MAU.
 - Inter-tool invocation (`pptb.config.json`): accept a zip path as prefill so other SSS tools can hand over a solution.
 
-## RetrieveUserPrivileges understates team-inherited depth (open)
+## RetrieveUserPrivileges understates team-inherited depth (fixed in 0.1.6)
 
-`fetchUserPrivileges` backs the `platform` column in **table mode**, and table mode displays `platformDepth ?? bestDepth` as the answer. Per the Web API reference for [RetrieveUserPrivileges](https://learn.microsoft.com/en-us/power-apps/developer/data-platform/webapi/reference/retrieveuserprivileges):
+`fetchUserPrivileges` backed the `platform` column in **table mode**, and table mode displays `platformDepth ?? bestDepth` as the answer. Per the Web API reference for [RetrieveUserPrivileges](https://learn.microsoft.com/en-us/power-apps/developer/data-platform/webapi/reference/retrieveuserprivileges):
 
 > For privileges that the user inherits through their team membership, this function only returns the **Basic** (user-level) depth, regardless of the actual depth granted by the team's security roles.
 
-So for a user whose access comes through a team role, table mode can report Basic where the effective depth is Local, Deep or Global — and the `platform says otherwise` badge can fire against a tool verdict that is the more accurate of the two. That is exactly the "user with a mix of direct role + team role" case `docs/RELEASE.md` asks to test.
+So table mode reported Basic where the effective depth was Local, Deep or Global, for exactly the "user with a mix of direct role + team role" case `docs/RELEASE.md` asks to test. Record mode was never affected: it uses `RetrievePrincipalAccess`, computed per record.
 
-Record mode is unaffected: it uses `RetrievePrincipalAccess`, which is computed per record and has no such caveat.
+Replaced with [RetrieveUserPrivilegeByPrivilegeName](https://learn.microsoft.com/en-us/power-apps/developer/data-platform/webapi/reference/retrieveuserprivilegebyprivilegename), which returns the real effective depth including team roles. It resolves one privilege per call, so the tool asks only for the eight rights of the table being checked rather than every privilege in the environment, and caches per user and privilege. A right with no privilege for the table, such as Assign or Share on an organization-owned table, has no definition to ask about and is skipped.
 
-The reference names the remedy: `RetrieveUserPrivilegeByPrivilegeId` or `RetrieveUserPrivilegeByPrivilegeName` return the full effective depth including team-inherited privileges. Both are per-privilege, so this trades one call for N and needs a decision on which privileges to resolve — plausibly only those already relevant to the selected table rather than all of them.
+`RetrieveUserSetOfPrivilegesByNames` would do the same in a single call, but its parameter is a `Collection(Edm.String)` and the host serializes arrays as JSON without a collection branch. Given PPTB-NOTES §12, that serialization needs verifying against a live environment before it is worth the change; `PrivilegeName` is an `Edm.String`, which the host provably handles.
 
-Not fixed in 0.1.4, which only corrects the unbound-call crash. Decide before the real-environment pass signs off on table mode.
+The e2e mock previously returned team-derived privileges at their real depth, so the existing "table-level Share Local via team" assertion passed while a real environment would have shown Basic. It now models `RetrieveUserPrivileges` faithfully, defect included, and asserts the tool never calls it. Against the old implementation the suite fails four assertions, two of them on the depth itself.

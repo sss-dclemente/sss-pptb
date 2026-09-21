@@ -50,7 +50,7 @@ export function explain(d: CheckData): Explanation {
   if (isAdmin) notes.push("User holds System Administrator: all privileges at Global depth, column security bypassed.");
   if (!d.heldRoles.length) notes.push("User holds no security roles, directly or through teams.");
   if (d.platformRights === null && mode === "record") notes.push("RetrievePrincipalAccess failed or is unavailable; platform verdict not shown.");
-  if (d.platformDepths === null && mode === "table") notes.push("RetrieveUserPrivileges failed or is unavailable; platform depths not shown.");
+  if (d.platformDepths === null && mode === "table") notes.push("RetrieveUserPrivilegeByPrivilegeName failed or is unavailable; platform depths not shown.");
   const teamBuNote = d.heldRoles.some((h) => h.viaTeam && h.viaTeam.businessUnitId && h.viaTeam.businessUnitId !== d.user.businessUnitId);
   if (teamBuNote) notes.push("Some roles come from a team in another BU: Local/Deep depth for those is evaluated against the team's BU (approximation of inherited team privileges).");
 

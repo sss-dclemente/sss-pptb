@@ -84,14 +84,39 @@ const MOCK = `
     return { value: rows.map((r) => ({ ...r })) };
   };
   const execute = async (req) => {
-    window.__calls.push(req.operationName + ':' + (req.entityId ?? ''));
+    window.__calls.push(req.operationName + ':' + (req.parameters?.PrivilegeName ?? req.entityId ?? ''));
     switch (req.operationName) {
       case 'RetrieveRolePrivilegesRole':
         // Whatever shape it takes, execute() cannot send an unquoted Edm.Guid. Both
         // attempts failed against a real environment; the call belongs in queryData.
         throw new Error('mock: RetrieveRolePrivilegesRole must go through queryData, not execute');
-      case 'RetrieveUserPrivileges':
-        return { RolePrivileges: [...rolePrivs[R_SALES], ...rolePrivs[R_SHARER]].map(([n, d]) => ({ PrivilegeId: P(n), Depth: { Basic: 0, Local: 1, Deep: 2, Global: 3 }[d] })) };
+      case 'RetrieveUserPrivileges': {
+        // Modelled faithfully, defect included: privileges inherited through team membership
+        // come back at Basic depth whatever the team's roles grant. R_SALES is held directly,
+        // so its depths are real; R_SHARER comes through team Sales EU, so its prvShareAccount
+        // at Local is flattened to Basic here. That understatement is why the tool no longer
+        // uses this message — see the assertion that it is never called.
+        const D = { Basic: 0, Local: 1, Deep: 2, Global: 3 };
+        const direct = rolePrivs[R_SALES].map(([n, d]) => ({ PrivilegeId: P(n), Depth: D[d] }));
+        const viaTeam = rolePrivs[R_SHARER].map(([n]) => ({ PrivilegeId: P(n), Depth: D.Basic }));
+        return { RolePrivileges: [...direct, ...viaTeam] };
+      }
+      case 'RetrieveUserPrivilegeByPrivilegeName': {
+        if (!req.entityId || req.entityName !== 'systemuser') throw new Error('mock: RetrieveUserPrivilegeByPrivilegeName is bound to systemuser');
+        const want = req.parameters?.PrivilegeName;
+        if (typeof want !== 'string' || !want) throw new Error('mock: RetrieveUserPrivilegeByPrivilegeName needs a PrivilegeName');
+        if (want !== want.trim() || !/^prv/.test(want)) throw new Error('mock: PrivilegeName should be the stored spelling, got ' + want);
+        // Real behaviour: best depth across every role held, directly or through a team.
+        const D = { Basic: 0, Local: 1, Deep: 2, Global: 3 };
+        let best = null;
+        for (const set of [rolePrivs[R_SALES], rolePrivs[R_SHARER]]) {
+          for (const [n, d] of set) {
+            if (n.toLowerCase() !== want.toLowerCase()) continue;
+            if (best === null || D[d] > best) best = D[d];
+          }
+        }
+        return { RolePrivileges: best === null ? [] : [{ PrivilegeId: P(want), Depth: best, BusinessUnitId: BU_SALES }] };
+      }
       case 'RetrievePrincipalAccess': {
         const id = req.parameters.Target.id;
         if (req.parameters.Target.entityLogicalName !== 'account') throw new Error('mock: bad target');
@@ -159,7 +184,11 @@ assert((await chip("Share")).includes("granted") && (await chip("Share")).includ
 assert((await chip("Delete")).includes("denied") && (await chip("Assign")).includes("denied"), "table-level Delete/Assign denied");
 const why1 = await text("#why");
 assert(why1.includes("Deep via Sales Person") && why1.includes("Local via Sharer (team Sales EU)"), "why summaries name roles and team");
-assert(why1.includes("agrees") && !why1.includes("platform says otherwise"), "tool agrees with RetrieveUserPrivileges");
+assert(why1.includes("agrees") && !why1.includes("platform says otherwise"), "tool agrees with RetrieveUserPrivilegeByPrivilegeName");
+// The point of moving off RetrieveUserPrivileges: prvShareAccount comes from a role held
+// through a team, and its real depth is Local. The old message reports team-inherited
+// privileges as Basic, which would have shown "Basic" here and flagged a disagreement.
+assert((await chip("Share")).includes("Local") && !(await chip("Share")).includes("Basic"), "team-inherited depth is the real depth, not Basic");
 assert((await text("#tab-check table.roles")).includes("via team Sales EU (owner team)"), "roles table shows team role");
 assert((await text("#tab-shares")).includes("Table-level check"), "shares tab explains table-level");
 const cols = await text("#tab-columns table.columns");
@@ -226,6 +255,9 @@ await page.evaluate(() => window.__emit({ event: "settings:updated", data: { the
 assert((await page.getAttribute("html", "data-theme")) === "dark", "dark theme applied from settings:updated");
 const calls = await page.evaluate(() => window.__calls);
 assert(calls.filter((c) => c === "RetrieveRolePrivilegesRole(RoleId=" + "c0000000-0000-0000-0000-000000000001" + ")").length === 1, "role privileges cached across checks");
+assert(calls.filter((c) => c === "RetrieveUserPrivilegeByPrivilegeName:prvShareAccount").length === 1, "user privileges cached per privilege");
+assert(!calls.some((c) => c.startsWith("RetrieveUserPrivileges:")), "RetrieveUserPrivileges is never called");
+assert(calls.filter((c) => c.startsWith("RetrieveUserPrivilegeByPrivilegeName:")).every((c) => /:prv\w+Account$/.test(c)), "only the checked table's privileges are fetched");
 assert(calls.filter((c) => c.startsWith("privileges?")).length === 1, "privilege list fetched once");
 
 await finish();

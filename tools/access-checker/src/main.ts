@@ -165,7 +165,7 @@ async function runCheck(): Promise<void> {
         const owner = (await fetchUsersById(a, [rec.ownerId])).get(rec.ownerId);
         if (owner) ownerManagers = await fetchManagerChain(a, owner);
       }
-    } else platformDepths = await fetchUserPrivileges(a, cache, fresh.id);
+    } else platformDepths = await fetchUserPrivileges(a, cache, fresh.id, t.logicalName);
 
     data = {
       user: fresh,

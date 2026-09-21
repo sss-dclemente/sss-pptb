@@ -3,7 +3,8 @@
  * Collections always go through queryData with $filter so results are a { value } array,
  * which is the one shape the host guarantees.
  */
-import { parseAccessMask, parseDepth } from "./privileges";
+import { parseAccessMask, parseDepth, privilegeName } from "./privileges";
+import { RIGHTS } from "./types";
 import type {
   BusinessUnit,
   Depth,
@@ -42,6 +43,9 @@ export class Cache {
   privileges: PrivilegeDef[] | null = null;
   tables: TableInfo[] | null = null;
   rolePrivileges: RolePrivilegeMap = {};
+  /** userId → privilege name (lower-case) → effective depth, or null when the user does not hold it.
+   *  From RetrieveUserPrivilegeByPrivilegeName; an absent key means not asked yet. */
+  userPrivileges: Record<string, Record<string, Depth | null>> = {};
   hierarchy: boolean | null | undefined = undefined;
 }
 
@@ -139,7 +143,7 @@ export async function fetchRolePrivileges(api: DataverseLike, cache: Cache, role
       // 'Edm.String' cannot be converted to type 'Edm.Guid'", because the host quotes every
       // string parameter and has no branch for a Guid. queryData appends the path verbatim,
       // which is the only way to send the unquoted Guid the function expects.
-      // RetrieveUserPrivileges below is bound to systemuser and its id goes into the path,
+      // RetrieveUserPrivilegeByPrivilegeName below is bound to systemuser and its id goes into the path,
       // so it is unaffected.
       if (!GUID_RE.test(role.id)) throw new Error(`RetrieveRolePrivilegesRole: unexpected role id ${role.id}`);
       const res = (await api.queryData(`RetrieveRolePrivilegesRole(RoleId=${role.id})`)) as unknown as Row;
@@ -157,22 +161,66 @@ export async function fetchRolePrivileges(api: DataverseLike, cache: Cache, role
   return out;
 }
 
-/** Effective depth per privilege as the platform computes it (RetrieveUserPrivileges). null on failure. */
-export async function fetchUserPrivileges(api: DataverseLike, cache: Cache, userId: string): Promise<Record<string, Depth> | null> {
+/**
+ * Effective depth for the eight rights of one table, as the platform computes it.
+ *
+ * Not RetrieveUserPrivileges: that one reports privileges inherited through team membership at
+ * Basic depth only, whatever the team's roles actually grant, so it understates precisely the
+ * case this tool exists to explain. RetrieveUserPrivilegeByPrivilegeName returns the real
+ * effective depth, team roles included, but works one privilege at a time — hence asking only
+ * for the rights of the table being checked rather than every privilege in the environment.
+ *
+ * It is bound to systemuser and its parameter is an Edm.String, so it can go through execute().
+ * RetrieveRolePrivilegesRole cannot: its Edm.Guid does not survive the host's parameter
+ * formatting (PPTB-NOTES §12).
+ *
+ * null if any call fails, so the caller shows no platform column rather than a partial map
+ * whose missing entries would read as denials.
+ */
+export async function fetchUserPrivileges(api: DataverseLike, cache: Cache, userId: string, tableLogicalName: string): Promise<Record<string, Depth> | null> {
+  const defs = await fetchPrivilegeDefs(api, cache);
+  // Privilege names are stored as prv{Right}{SchemaName}; privilegeName() lower-cases, so match
+  // case-insensitively and send back the stored spelling. A right with no privilege for this
+  // table (Assign and Share on an organization-owned table) simply has no def to send.
+  const storedByLower = new Map(defs.map((d) => [d.name.toLowerCase(), d.name]));
+  const wanted = RIGHTS.map((r) => privilegeName(r, tableLogicalName))
+    .map((lower) => ({ lower, stored: storedByLower.get(lower) }))
+    .filter((x): x is { lower: string; stored: string } => x.stored != null);
+
+  const known = (cache.userPrivileges[userId] ??= {});
+  const todo = wanted.filter((w) => !(w.lower in known));
+
   try {
-    const defs = await fetchPrivilegeDefs(api, cache);
-    const nameById = new Map(defs.map((d) => [d.id, d.name.toLowerCase()]));
-    const res = await api.execute({ entityName: "systemuser", entityId: userId, operationName: "RetrieveUserPrivileges", operationType: "function" });
-    const map: Record<string, Depth> = {};
-    for (const p of (res.RolePrivileges as Row[] | undefined) ?? []) {
-      const name = nameById.get(id(p.PrivilegeId));
-      const depth = parseDepth(p.Depth);
-      if (name && depth != null && (map[name] == null || map[name] < depth)) map[name] = depth;
-    }
-    return map;
+    await Promise.all(
+      todo.map(async ({ lower, stored }) => {
+        const res = await api.execute({
+          entityName: "systemuser",
+          entityId: userId,
+          operationName: "RetrieveUserPrivilegeByPrivilegeName",
+          operationType: "function",
+          parameters: { PrivilegeName: stored },
+        });
+        // An empty RolePrivileges means the user does not hold the privilege. Record that as
+        // null rather than leaving the key out, so it is not re-fetched on the next check.
+        let best: Depth | null = null;
+        for (const pr of (res.RolePrivileges as Row[] | undefined) ?? []) {
+          const d = parseDepth(pr.Depth);
+          if (d != null && (best == null || d > best)) best = d;
+        }
+        known[lower] = best;
+      }),
+    );
   } catch {
+    for (const { lower } of todo) delete known[lower];
     return null;
   }
+
+  const map: Record<string, Depth> = {};
+  for (const { lower } of wanted) {
+    const d = known[lower];
+    if (d != null) map[lower] = d;
+  }
+  return map;
 }
 
 // ---------- business units, org ----------
