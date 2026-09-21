@@ -1,6 +1,6 @@
 # SCREENSHOTS — what to capture, per tool
 
-The ten images under `tools/*/docs/img/` are synthetic placeholders. `configurations.readmeUrl` points at `main`, so whatever is committed there is what the marketplace listing renders. Replacing them is the last blocking step before submission (`docs/RELEASE.md`).
+The eighteen images under `tools/*/docs/img/` are synthetic placeholders. `configurations.readmeUrl` points at `main`, so whatever is committed there is what the marketplace listing renders. Replacing them is the last blocking step before submission (`docs/RELEASE.md`).
 
 Work through one tool at a time. Each shot below names the file to overwrite, the state to build, and what has to be visible for the image to earn its place.
 
@@ -8,9 +8,9 @@ Work through one tool at a time. Each shot below names the file to overwrite, th
 
 **Use a sandbox or trial environment, not a client one.** These images go into a public repo and a public marketplace listing. A real Dataverse environment puts table names, user names, security roles and record data in front of everyone who browses the catalogue. A developer or trial environment with data you own gives an equally real capture with none of that exposure. If you do use a live environment, check every shot for client-identifying values before committing — the Access Checker ones in particular put user names and role names on screen by design.
 
-**Keep the window the same size for all ten.** The e2e suites render at 1400×900 and the layouts are tuned for it. A consistent size makes the four shots in a README look like one set.
+**Keep the window the same size for all eighteen.** The e2e suites render at 1400×900 and the layouts are tuned for it. A consistent size makes the shots in a README look like one set.
 
-**Theme** is Settings → theme in ToolBox. Three files want dark (`inventory-dark`, `snapshot-dark`, `columns-dark`); the rest are light.
+**Theme** is Settings → theme in ToolBox. Five files want dark (`inventory-dark`, `snapshot-dark`, `columns-dark`, `report-dark`, `org-dark`); the rest are light.
 
 **Load the tools with Debug → Load Local Tool.** Install-from-npm is broken in the host (PPTB-NOTES §11), so it is not an option until they ship the fix.
 
@@ -107,15 +107,74 @@ If you capture it, add it to `tools/access-checker/README.md` under the existing
 
 ---
 
+## 4. SSS Offboarding Wizard — `tools/offboarding-wizard/docs/img/`
+
+Needs one connection and a sandbox user who owns a realistic mix — records in several tables, at least one active modern flow, a couple of personal views, a team, two roles. The tool's argument is *how much a leaving user silently holds*, so a thin inventory undersells it. Use a sandbox: these shots put a person's name, their teams and their roles on screen.
+
+### `inventory.png` — light
+Inventory tab, the leaver selected and the record scan finished.
+- The leaver header with business unit, manager and state
+- Several category cards with non-zero counts, at least one expanded to its detail table
+- The records-per-table card showing more than one table, and the active-modern-flow flag if the user has one
+
+This is the first image on the listing. Do not capture it mid-scan with a half-empty progress bar.
+
+### `plan.png` — light
+The preview dialog open, over the Plan & apply tab.
+- The successor selected and the per-category options visible behind the dialog
+- Operation counts per category in the dialog, with at least one warning or skip line (an owner team or an Entra group team does this nicely)
+- Some of the verbatim calls visible — they are what tells a reviewer the tool shows its work before writing
+
+### `report-dark.png` — dark
+The results after a small applied plan, theme switched.
+- One row per operation with its ok status
+- Ideally one failed row alongside the successes: an honest failure row is more convincing than a clean sheet
+- The manual-steps list visible if it fits
+
+## 5. SSS Audit Config Matrix — `tools/audit-matrix/docs/img/`
+
+Needs two connections to environments whose audit configuration genuinely differs (dev vs test is the natural pair), or one connection plus a snapshot exported from the other. A matrix with no `≠` in it demonstrates nothing.
+
+### `matrix.png` — light
+Matrix tab, both environments loaded, nothing filtered.
+- Both environment columns with their connection names in the header
+- The counts row: tables audited, differences
+- Enough rows that the on/off mix is visible, with at least two `≠` markers on screen
+- A `locked` row if your environment has one
+
+### `columns.png` — light
+The same matrix with one table expanded to its columns.
+- The parent table row and its columns indented below it
+- At least one column differing between the environments
+- The column counts naming their scope
+
+### `differences.png` — light
+The "only differences" filter active.
+- Only differing rows left, and the count making clear how many
+- This is the shot that sells the tool to someone doing an environment comparison, so pick a table set where the differences are real and explicable
+
+### `preview.png` — light
+The preview dialog from **Plan: match other env**.
+- Each operation with its current value, planned value and reason
+- The count of operations, and the confirm/cancel buttons
+- No locked row anywhere in the list (if one appears, that is a bug, not a screenshot)
+
+### `org-dark.png` — dark
+Org settings tab, both environments side by side, theme switched.
+- The four switches per environment, with a real difference between them if you have one
+- If a field reads `unknown`, fix the attribute name before capturing — a listing image should not advertise a gap
+
+---
+
 ## After the captures
 
 Per tool:
 
 1. Overwrite the files in `tools/<tool>/docs/img/`, same names.
-2. Delete the line `Synthetic sample data. Replace with real captures before publishing.` from `tools/<tool>/README.md` — it is line 20, 18 and 21 respectively today.
+2. Delete the line `Synthetic sample data. Replace with real captures before publishing.` from `tools/<tool>/README.md`.
 3. Check each image once more for anything you would not want on a public listing.
 4. If you added `shares.png`, add its markdown to the access-checker README.
 
 Then commit and **push to `main`**. `readmeUrl` resolves against `main`, so the listing only picks the images up once they are there — not from a branch.
 
-Only after that does `docs/RELEASE.md` step 3, the submission form, make sense to run.
+Only after that does that tool's submission step in `docs/RELEASE.md` make sense to run.
