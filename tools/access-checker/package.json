@@ -1,6 +1,6 @@
 {
   "name": "@simplesmoothsafe/pptb-access-checker",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "displayName": "SSS Access Checker",
   "description": "Why can (or can't) a user do X on a record? Verdict per access right with the chain that produced it: roles, teams, business unit, ownership, shares, hierarchy, column security.",
   "main": "index.html",
@@ -29,7 +29,7 @@
   },
   "engines": { "node": ">=18.0.0" },
   "scripts": {
-    "build": "tsc --noEmit && vite build && node scripts/check-dist.mjs",
+    "build": "tsc --noEmit && vite build && node scripts/check-dist.mjs && node scripts/emit-root-html.mjs",
     "dev-watch": "vite build --mode development --watch",
     "typecheck": "tsc --noEmit",
     "validate": "node node_modules/@pptb/validate/dist/cli.js",
@@ -41,5 +41,5 @@
     "typescript": "^5.6.0",
     "vite": "^5.4.0"
   },
-  "files": ["dist"]
+  "files": ["dist", "index.html"]
 }
