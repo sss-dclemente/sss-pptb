@@ -3,7 +3,7 @@
 export const RIGHTS = ["Create", "Read", "Write", "Delete", "Append", "AppendTo", "Assign", "Share"] as const;
 export type Right = (typeof RIGHTS)[number];
 
-/** Privilege depth as returned by RetrieveRolePrivilegesRole / RetrieveUserPrivileges. */
+/** Privilege depth as returned by RetrieveRolePrivilegesRole / RetrieveUserPrivilegeByPrivilegeName. */
 export type Depth = 0 | 1 | 2 | 3; // Basic, Local, Deep, Global
 export const DEPTH_LABEL: Record<Depth, string> = { 0: "Basic", 1: "Local", 2: "Deep", 3: "Global" };
 
@@ -114,7 +114,8 @@ export interface CheckData {
   shares: ShareEntry[] | null;
   /** Rights the platform reports for the user on the record (RetrievePrincipalAccess). null when unavailable. */
   platformRights: Right[] | null;
-  /** Effective depth per privilege name reported by the platform (RetrieveUserPrivileges). null when unavailable. */
+  /** Effective depth per privilege name reported by the platform (RetrieveUserPrivilegeByPrivilegeName),
+   *  for the rights of the checked table only. null when unavailable. */
   platformDepths: Record<string, Depth> | null;
   hierarchyEnabled: boolean | null;
   /** Manager chain above the record owner (nearest first), only when the owner is a user and hierarchy is on. */
