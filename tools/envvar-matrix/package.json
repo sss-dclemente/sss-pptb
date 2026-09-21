@@ -1,6 +1,6 @@
 {
   "name": "@simplesmoothsafe/pptb-envvar-matrix",
-  "version": "0.1.1",
+  "version": "0.1.3",
   "displayName": "SSS EnvVar & ConnRef Matrix",
   "description": "Environment variables and connection references as a matrix across environments: missing values, differences, copy values between environments, deploymentSettings.json export.",
   "main": "index.html",
