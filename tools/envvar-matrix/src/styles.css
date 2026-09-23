@@ -54,7 +54,7 @@ table.matrix input[type="checkbox"] { accent-color: var(--accent); }
 
 dialog {
   border: 1px solid var(--border-color); border-radius: var(--radius-md); background: var(--bg-card); color: var(--fg-body);
-  padding: 0; max-width: min(900px, 92vw); width: 100%; font-family: var(--font-sans); font-size: var(--fs-body);
+  margin: auto; padding: 0; max-width: min(900px, 92vw); width: 100%; font-family: var(--font-sans); font-size: var(--fs-body);
 }
 dialog::backdrop { background: rgba(15, 23, 42, 0.5); }
 dialog .dlg-head { display: flex; align-items: center; gap: var(--s-2); padding: var(--s-3) var(--s-4); border-bottom: 1px solid var(--border-subtle); }

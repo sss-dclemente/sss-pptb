@@ -46,7 +46,8 @@
     "dev-watch": "vite build --mode development --watch",
     "typecheck": "tsc --noEmit",
     "validate": "node node_modules/@pptb/validate/dist/cli.js",
-    "e2e": "node scripts/e2e.mjs"
+    "e2e": "node scripts/e2e.mjs",
+    "screenshots": "node scripts/screenshots.mjs"
   },
   "devDependencies": {
     "@pptb/types": "^1.2.5",
