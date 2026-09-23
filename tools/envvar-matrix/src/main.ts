@@ -4,8 +4,8 @@ import { deploymentSettings, matrixCsv, safeFileName, snapshot } from "./matrix/
 import { fetchColumn, fetchSolutionScope, fetchSolutions, type SolutionInfo } from "./matrix/fetch";
 import { buildMatrix, filterConnRefs, filterEnvVars } from "./matrix/matrix";
 import { parseSnapshot } from "./matrix/snapshot";
-import type { ColumnData, ColumnMeta, EnvVarRow, Filters, Matrix } from "./matrix/types";
-import { applyPlan, planCopy, planSet, type WritePlan, type WriteResult } from "./matrix/write";
+import type { ColumnData, ColumnMeta, EnvVarRow, Filters, Matrix, Target } from "./matrix/types";
+import { applyPlan, connectionChangedMessage, planCopy, planSet, sameConnection, type ConnectionStamp, type WritePlan, type WriteResult } from "./matrix/write";
 
 // ---------- state ----------
 let live: ColumnData[] = [];
@@ -14,6 +14,8 @@ let matrix: Matrix = { columns: [], envVars: [], connRefs: [] };
 let activeTab: "envvars" | "connrefs" = "envvars";
 const selected = new Set<string>();
 let solutions: SolutionInfo[] = [];
+/** selected solution id ("" = all). Source of truth for the dropdown; `scope` is always derived from it. */
+let selectedSolution = "";
 let scope: Set<string> | null = null;
 
 const columns = (): ColumnData[] => [...live, ...snaps];
@@ -83,9 +85,13 @@ function renderHeader(): void {
   if (writable.length > 1 && $<HTMLSelectElement>("#copy-to").value === $<HTMLSelectElement>("#copy-from").value) $<HTMLSelectElement>("#copy-to").value = writable[1].key;
 
   const solSel = $<HTMLSelectElement>("#filter-solution");
-  const prev = solSel.value;
   solSel.replaceChildren(h("option", { value: "" }, "all"), ...solutions.map((s) => h("option", { value: s.id }, `${s.friendlyName} ${s.version}${s.isManaged ? " (managed)" : ""}`)));
-  if ([...solSel.options].some((o) => o.value === prev)) solSel.value = prev;
+  // Dropdown and scope stay in sync: a selection that is no longer listed means "all", never an empty scope.
+  if (!solutions.some((s) => s.id === selectedSolution)) {
+    selectedSolution = "";
+    scope = null;
+  }
+  solSel.value = selectedSolution;
   solSel.disabled = !live.length;
 
   const canWrite = liveCols().length > 0;
@@ -241,6 +247,7 @@ async function loadLive(): Promise<void> {
   if (!api || !conns.length) {
     live = [];
     solutions = [];
+    selectedSolution = "";
     scope = null;
     rebuild();
     return;
@@ -250,6 +257,7 @@ async function loadLive(): Promise<void> {
     key: c.target,
     kind: "live",
     target: c.target,
+    connectionId: c.conn.id,
     name: c.conn.name,
     url: c.conn.url,
     environment: c.conn.environment,
@@ -264,6 +272,8 @@ async function loadLive(): Promise<void> {
   const failed = live.filter((c) => c.meta.error);
   const primaryOk = live.some((c) => c.meta.target === "primary" && !c.meta.error);
   solutions = primaryOk ? await fetchSolutions(api, "primary").catch(() => []) : [];
+  // The primary may be a different org now: a solution id it doesn't list is reset to "all" (scope null), not queried.
+  if (!solutions.some((s) => s.id === selectedSolution)) selectedSolution = "";
   await applySolutionFilter();
   setStatus(null);
   if (failed.length) await notify("Load failed", failed.map((c) => `${c.meta.name}: ${c.meta.error}`).join("\n"), "error");
@@ -271,19 +281,40 @@ async function loadLive(): Promise<void> {
 }
 
 async function applySolutionFilter(): Promise<void> {
-  const id = $<HTMLSelectElement>("#filter-solution").value;
+  const id = selectedSolution;
   const api = dataverse();
   const primary = live.find((c) => c.meta.target === "primary" && !c.meta.error);
-  if (!id || !api || !primary) {
+  if (!id || !api || !primary || !solutions.some((s) => s.id === id)) {
+    selectedSolution = "";
     scope = null;
     return;
   }
   try {
-    scope = await fetchSolutionScope(api, "primary", id, primary);
+    const next = await fetchSolutionScope(api, "primary", id, primary);
+    // ignore a stale result if the selection or the primary changed meanwhile
+    if (selectedSolution === id && live.includes(primary)) scope = next;
   } catch (e) {
-    scope = null;
+    if (selectedSolution === id) {
+      selectedSolution = "";
+      scope = null;
+    }
     await notify("Solution filter failed", (e as Error).message, "warning");
   }
+}
+
+/** The host's current connection for `t`, as a stamp comparable with a plan's. */
+async function currentConnection(t: Target): Promise<ConnectionStamp | null> {
+  const c = (await getConnections()).find((x) => x.target === t);
+  return c ? { connectionId: c.conn.id ?? null, url: c.conn.url } : null;
+}
+
+/** Refuses (with an error notification) when the plan's target connection is no longer the one it was built for. */
+async function checkPlanConnection(plan: WritePlan): Promise<boolean> {
+  const t = plan.target.target;
+  const cur = t ? await currentConnection(t).catch(() => null) : null;
+  if (t && sameConnection(plan.stamp, cur)) return true;
+  await notify("Connection changed", connectionChangedMessage(plan, cur), "error");
+  return false;
 }
 
 async function loadSnapshot(): Promise<void> {
@@ -324,6 +355,7 @@ function planTable(items: WritePlan["items"]): HTMLElement {
 }
 
 async function runPlan(plan: WritePlan): Promise<void> {
+  if (!(await checkPlanConnection(plan))) return;
   const writes = plan.items.filter((i) => i.action === "create" || i.action === "update");
   const invalid = plan.items.filter((i) => i.action === "invalid");
   const cautions = writes.filter((i) => i.warning);
@@ -345,8 +377,13 @@ async function runPlan(plan: WritePlan): Promise<void> {
   if (!ok || !writes.length) return;
   const api = dataverse();
   if (!api) return;
+  // Re-check at Apply: the connection may have changed while the preview was open (applyPlan checks again per write).
+  if (!(await checkPlanConnection(plan))) {
+    await refresh();
+    return;
+  }
   setStatus("Writing…");
-  const results = await applyPlan(api, plan);
+  const results = await applyPlan(api, plan, currentConnection);
   setStatus(null);
   await showResults(results, plan.target);
   await refresh();
@@ -409,9 +446,12 @@ function wire(): void {
   });
   for (const id of ["#filter-text", "#filter-diff", "#filter-missing"]) $(id).addEventListener("input", renderTable);
   $("#filter-solution").addEventListener("change", async () => {
+    selectedSolution = $<HTMLSelectElement>("#filter-solution").value;
+    scope = null;
     setStatus("Loading solution scope…");
     await applySolutionFilter();
     setStatus(null);
+    renderHeader();
     renderTable();
   });
   $("#btn-refresh").addEventListener("click", () => void refresh());
@@ -431,7 +471,12 @@ function wire(): void {
   });
   $("#btn-export-csv").addEventListener("click", () => void exportFile("envvar-matrix.csv", matrixCsv(matrix), "text/csv"));
 
-  onConnectionChange(() => void refresh());
+  onConnectionChange(() => {
+    // An open dialog (set value, preview, results) belongs to the previous connection: close it, never apply it.
+    const dlg = $<HTMLDialogElement>("#dlg");
+    if (dlg.open) dlg.close();
+    void refresh();
+  });
   $("#host-mode").textContent = inToolbox() ? "Running inside Power Platform ToolBox" : "Standalone mode (snapshots only)";
 }
 

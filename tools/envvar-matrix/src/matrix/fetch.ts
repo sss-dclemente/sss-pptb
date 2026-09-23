@@ -116,13 +116,48 @@ export async function fetchSolutions(api: DataverseLike, target: Target): Promis
     .sort((a, b) => a.friendlyName.localeCompare(b.friendlyName));
 }
 
-/** Schema/logical names (lowercase) of env var definitions (380) and connection references (371) in a solution. */
+/** Component type of environment variable definitions (fixed platform value). */
+export const ENV_VAR_DEFINITION_COMPONENT = 380;
+const OBJECTID_CHUNK = 20;
+
+/** connectionreference ObjectTypeCode per connection (target + org url). Never 371: that is the Connector component type. */
+const connRefTypeCache = new Map<string, number>();
+
+/**
+ * Solution component type of connection references in this org. connectionreference is a solution-aware table, so its
+ * componenttype is the table's ObjectTypeCode, which differs per org. Returns null when metadata can't be read.
+ */
+export async function connRefComponentType(api: DataverseLike, target: Target, orgUrl: string): Promise<number | null> {
+  const key = `${target}|${orgUrl.toLowerCase().replace(/\/+$/, "")}`;
+  const hit = connRefTypeCache.get(key);
+  if (hit != null) return hit;
+  try {
+    const r = (await api.queryData("EntityDefinitions(LogicalName='connectionreference')?$select=ObjectTypeCode", target)) as unknown as Row;
+    const code = Number(r.ObjectTypeCode ?? (Array.isArray(r.value) ? (r.value[0] as Row | undefined)?.ObjectTypeCode : undefined));
+    if (!Number.isInteger(code) || code <= 0) return null;
+    connRefTypeCache.set(key, code);
+    return code;
+  } catch {
+    return null;
+  }
+}
+
+/** Schema/logical names (lowercase) of env var definitions (380) and connection references (org-specific type) in a solution. */
 export async function fetchSolutionScope(api: DataverseLike, target: Target, solutionId: string, column: ColumnData): Promise<Set<string>> {
-  const rows = await queryAll(
-    api,
-    `solutioncomponents?$select=objectid,componenttype&$filter=_solutionid_value eq ${solutionId} and (componenttype eq 380 or componenttype eq 371)`,
-    target,
-  );
+  const base = `solutioncomponents?$select=objectid,componenttype&$filter=_solutionid_value eq ${solutionId} and `;
+  const crType = await connRefComponentType(api, target, column.meta.url);
+  let rows: Row[];
+  if (crType != null) {
+    rows = await queryAll(api, `${base}(componenttype eq ${ENV_VAR_DEFINITION_COMPONENT} or componenttype eq ${crType})`, target);
+  } else {
+    // Fallback without the type code: match the solution's components against the known connection reference ids.
+    rows = await queryAll(api, `${base}componenttype eq ${ENV_VAR_DEFINITION_COMPONENT}`, target);
+    const ids = column.connRefs.map((c) => c.id);
+    for (let i = 0; i < ids.length; i += OBJECTID_CHUNK) {
+      const chunk = ids.slice(i, i + OBJECTID_CHUNK);
+      rows.push(...(await queryAll(api, `${base}(${chunk.map((id) => `objectid eq ${id}`).join(" or ")})`, target)));
+    }
+  }
   const ids = new Set(rows.map((x) => String(x.objectid).toLowerCase()));
   const out = new Set<string>();
   for (const e of column.envVars) if (ids.has(e.definitionId.toLowerCase())) out.add(e.schemaName.toLowerCase());

@@ -26,6 +26,7 @@ const MOCK = `
   const envs = {
     primary: {
       conn: { id: g(1), name: 'Contoso Dev', url: 'https://contoso-dev.crm4.dynamics.com', environment: 'Sandbox', environmentColor: '#0f766e' },
+      crType: 10097,
       defs: [
         def(101, 'cts_ApiBaseUrl', 'API base URL', STR, 'https://api-dev.contoso.com'),
         def(102, 'cts_ClientSecret', 'API client secret', SECRET, null),
@@ -59,6 +60,7 @@ const MOCK = `
     },
     secondary: {
       conn: { id: g(2), name: 'Contoso UAT', url: 'https://contoso-uat.crm4.dynamics.com', environment: 'Sandbox', environmentColor: '#b45309' },
+      crType: 10112,
       defs: [
         def(401, 'cts_ApiBaseUrl', 'API base URL', STR, 'https://api-dev.contoso.com'),
         def(402, 'cts_ClientSecret', 'API client secret', SECRET, null),
@@ -107,8 +109,10 @@ const MOCK = `
       if (q.startsWith('environmentvariabledefinitions')) return { value: e.defs };
       if (q.startsWith('environmentvariablevalues')) return { value: e.vals };
       if (q.startsWith('connectionreferences')) return { value: e.crs };
+      // connectionreference ObjectTypeCode is org-specific (371 is the Connector component type)
+      if (q.startsWith("EntityDefinitions(LogicalName='connectionreference')")) return { ObjectTypeCode: e.crType };
       if (q.startsWith('solutioncomponents'))
-        return { value: [...e.defs.map((d) => ({ objectid: d.environmentvariabledefinitionid, componenttype: 380 })), ...e.crs.map((c) => ({ objectid: c.connectionreferenceid, componenttype: 371 }))] };
+        return { value: [...e.defs.map((d) => ({ objectid: d.environmentvariabledefinitionid, componenttype: 380 })), ...e.crs.map((c) => ({ objectid: c.connectionreferenceid, componenttype: e.crType }))] };
       throw new Error('unexpected query ' + q);
     },
     getSolutions: async () => ({ value: [{ solutionid: g(900), uniquename: 'ContosoCore', friendlyname: 'Contoso Core', version: '1.4.2.0', ismanaged: false, isvisible: true }] }),
