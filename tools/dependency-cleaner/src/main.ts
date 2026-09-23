@@ -30,6 +30,8 @@ let planConn: { id: string; url: string } | null = null;
 let connGen = 0;
 let cancelFlag = false;
 let running = false;
+/** set synchronously when Confirm starts, so a second click cannot run the operations again */
+let applying = false;
 /** url: the primary connection the restore plan was compared against */
 let restore: { backup: Backup; plan: RestorePlan | null; url: string | null } | null = null;
 
@@ -132,10 +134,11 @@ async function loadConnections(): Promise<void> {
 }
 
 // ---------- diagnose ----------
-async function runDiagnosis(): Promise<void> {
+/** `solutionId`: the solution to diagnose; the dropdown's when omitted (re-diagnosis after a fix passes the diagnosed one). */
+async function runDiagnosis(solutionId?: string): Promise<void> {
   const a = api();
   const p = primary();
-  const sol = solutions.find((x) => x.id === $<HTMLSelectElement>("#solution").value);
+  const sol = solutions.find((x) => x.id === (solutionId ?? $<HTMLSelectElement>("#solution").value));
   if (!a || !p || !sol || running) return;
   running = true;
   cancelFlag = false;
@@ -248,6 +251,7 @@ function renderDiagnosis(): void {
       d.errors.length ? badge(`${d.errors.length} lookups failed`, "warn") : null,
     ),
   );
+  for (const w of d.warnings ?? []) sum.append(h("div", { class: "warnings" }, w));
   if (d.errors.length) sum.append(h("div", { class: "warnings" }, `RetrieveRequiredComponents failed for ${d.errors.length} component(s): ${d.errors.slice(0, 3).map((e) => `${e.component} (${e.error})`).join("; ")}`));
   const shown = d.findings.filter((f) => showSafe || f.status === "blocker");
   if (!shown.length) {
@@ -295,7 +299,7 @@ function managedRefused(): boolean {
 
 function updateConfirm(): void {
   const prodOk = !isProd(primary()) || $<HTMLInputElement>("#prod-ack").checked;
-  $<HTMLButtonElement>("#btn-confirm").disabled = !(backupDone && ops.length && planConn && prodOk && !managedRefused());
+  $<HTMLButtonElement>("#btn-confirm").disabled = applying || !(backupDone && ops.length && planConn && prodOk && !managedRefused());
   $("#btn-backup").textContent = backupDone ? "1. Backup saved ✓" : "1. Download backup";
 }
 
@@ -410,7 +414,19 @@ function resultsTable(results: OpResult[]): HTMLElement {
 
 async function confirmFix(): Promise<void> {
   const a = api();
-  if (!a || !diagnosis || !prepared || !backupDone || !ops.length || !planConn) return;
+  if (applying || !a || !diagnosis || !prepared || !backupDone || !ops.length || !planConn) return;
+  applying = true;
+  $<HTMLButtonElement>("#btn-confirm").disabled = true;
+  try {
+    await applyFix(a);
+  } finally {
+    applying = false;
+    updateConfirm();
+  }
+}
+
+async function applyFix(a: DataverseLike): Promise<void> {
+  if (!diagnosis || !planConn) return;
   const sol = diagnosis.solution;
   // the plan belongs to the connection it was previewed on: re-read the host's current one
   const now = await currentPrimary();
@@ -447,8 +463,8 @@ async function confirmFix(): Promise<void> {
   renderFix();
   const res = $("#fix-results");
   res.replaceChildren(h("h3", {}, "Results"), resultsTable(results));
-  // re-diagnose (plan §3.4)
-  await runDiagnosis();
+  // re-diagnose (plan §3.4) the solution that was fixed, whatever the dropdown shows now
+  await runDiagnosis(sol.id);
   const nowKeys = new Set((diagnosis?.findings ?? []).filter((f) => f.status === "blocker").map((f) => f.key));
   const fixed = before.filter((k) => !nowKeys.has(k)).length;
   res.append(

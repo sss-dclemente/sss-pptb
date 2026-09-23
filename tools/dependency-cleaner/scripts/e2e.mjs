@@ -55,15 +55,17 @@ const zipBytes = Array.from(await zip.generateAsync({ type: "uint8array" }));
 const MOCK = `
 (() => {
   const g = (n) => '00000000-0000-0000-0000-' + String(n).padStart(12, '0');
-  const SOL = { core: g(1), fs: g(2), sys: g(3), managed: g(4), common: g(5), def: g(6) };
+  const SOL = { core: g(1), fs: g(2), sys: g(3), managed: g(4), common: g(5), def: g(6), sales: g(7), other: g(8) };
   const PUB = { sss: g(11), ms: g(12), sys: g(13) };
-  const E = { acc: g(101), wo: g(102), common: g(103) };
+  const E = { acc: g(101), wo: g(102), common: g(103), contact: g(104) };
   const A = { name: g(201), woid: g(202), st: g(203), sss: g(204) };
   const FORM_A = g(301), FORM_B = g(302), VIEW = g(401), FORM_FS = g(303), CHART = g(501);
   const FORM_A_XML = '<form><tabs><tab name="general"><labels><label description="General" languagecode="1033"/></labels><columns><column width="100%"><sections>'
     + '<section name="s1"><labels><label description="Summary" languagecode="1033"/></labels><rows>'
     + '<row><cell id="{c1}"><labels><label description="Name" languagecode="1033"/></labels><control id="name" classid="{4273EDBD-AC1D-40d3-9FB2-095C621B552D}" datafieldname="name"/></cell></row>'
     + '<row><cell id="{c2}"><labels><label description="Work Order" languagecode="1033"/></labels><control id="msdyn_workorderid" classid="{270BD3DB-D9AF-4782-9025-509E298DEC0A}" datafieldname="msdyn_workorderid"/></cell></row>'
+    + '<row><cell id="{c3}"><control id="SubAccounts" classid="{E7A81278-8635-4d9e-8D4D-59480B391C5B}" indicationOfSubgrid="true"><parameters><TargetEntityType>account</TargetEntityType><RelationshipName>account_parent_account</RelationshipName></parameters></control></cell></row>'
+    + '<row><cell id="{c4}"><control id="Contacts" classid="{E7A81278-8635-4d9e-8D4D-59480B391C5B}" indicationOfSubgrid="true"><parameters><TargetEntityType>contact</TargetEntityType><RelationshipName>contact_customer_accounts</RelationshipName></parameters></control></cell></row>'
     + '</rows></section></sections></column></columns></tab></tabs></form>';
   const FORM_B_XML = '<form><tabs><tab name="qc"><columns><column width="100%"><sections><section name="q1"><rows>'
     + '<row><cell id="{q1}"><control id="msdyn_serviceterritory" classid="{270BD3DB-D9AF-4782-9025-509E298DEC0A}" datafieldname="msdyn_serviceterritory"/></cell></row>'
@@ -72,12 +74,13 @@ const MOCK = `
     + '<link-entity name="msdyn_workorder" from="msdyn_workorderid" to="msdyn_workorderid" alias="wo" link-type="outer"><attribute name="msdyn_name"/></link-entity></entity></fetch>';
   const VIEW_LAYOUT = '<grid name="resultset" object="1" jump="name" select="1" icon="1" preview="1"><row name="result" id="accountid"><cell name="name" width="300"/><cell name="wo.msdyn_name" width="150"/></row></grid>';
 
-  // component catalog: every subcomponent of account and who owns it (managed layers)
+  // component catalog: every subcomponent of account and which solutions have a solutioncomponent row for it.
+  // As in a D365 dev environment, the out-of-box account main form has rows in System and in every msdyn app that extends it.
   const catalog = {
     [A.woid]: { type: 2, table: 'account', owners: [SOL.fs] },
     [A.st]: { type: 2, table: 'account', owners: [SOL.fs] },
     [A.sss]: { type: 2, table: 'account', owners: [] },
-    [FORM_A]: { type: 60, table: 'account', owners: [SOL.sys] },
+    [FORM_A]: { type: 60, table: 'account', owners: [SOL.sys, SOL.fs, SOL.sales] },
     [FORM_B]: { type: 60, table: 'account', owners: [] },
     [VIEW]: { type: 26, table: 'account', owners: [] },
   };
@@ -86,7 +89,8 @@ const MOCK = `
     [FORM_FS]: { type: 60, table: 'account', owners: [SOL.fs] },
     [CHART]: { type: 59, table: 'account', owners: [] },
   };
-  const owners = { [E.acc]: [SOL.sys], [E.wo]: [SOL.fs], [E.common]: [SOL.common] };
+  // account / contact: System created them; Sales and Field Service extend them, so they carry rows too
+  const owners = { [E.acc]: [SOL.fs, SOL.sys, SOL.sales], [E.contact]: [SOL.sales, SOL.sys, SOL.fs], [E.wo]: [SOL.fs], [E.common]: [SOL.common] };
   let seq = 1000;
   const row = (objectid, componenttype, behavior, root) => ({ solutioncomponentid: g(seq++), objectid, componenttype, rootcomponentbehavior: behavior, _rootsolutioncomponentid_value: root });
   const accRow = row(E.acc, 1, 0, null);
@@ -102,6 +106,7 @@ const MOCK = `
         { solutionid: SOL.managed, uniquename: 'SssManaged', friendlyname: 'SSS Managed', version: '2.0.0.0', ismanaged: true, _publisherid_value: PUB.sss },
         { solutionid: SOL.common, uniquename: 'msdyn_AppCommon', friendlyname: 'App Common', version: '1.0', ismanaged: true, _publisherid_value: PUB.ms },
         { solutionid: SOL.def, uniquename: 'Default', friendlyname: 'Default Solution', version: '1.0', ismanaged: false, _publisherid_value: PUB.sys },
+        { solutionid: SOL.sales, uniquename: 'msdynce_Sales', friendlyname: 'Sales', version: '9.0.2', ismanaged: true, _publisherid_value: PUB.ms },
       ],
     },
     secondary: {
@@ -122,11 +127,12 @@ const MOCK = `
   const charts = { [CHART]: { savedqueryvisualizationid: CHART, name: 'Accounts by Industry', primaryentitytypecode: 'account' } };
   const views = { [VIEW]: { savedqueryid: VIEW, name: 'Accounts with work orders', returnedtypecode: 'account', fetchxml: VIEW_FETCH, layoutxml: VIEW_LAYOUT } };
   const attrs = { account: [
-    { LogicalName: 'name', MetadataId: A.name, RequiredLevel: { Value: 'ApplicationRequired' } },
-    { LogicalName: 'msdyn_workorderid', MetadataId: A.woid, RequiredLevel: { Value: 'None' } },
-    { LogicalName: 'msdyn_serviceterritory', MetadataId: A.st, RequiredLevel: { Value: 'ApplicationRequired' } },
-    { LogicalName: 'sss_custom', MetadataId: A.sss, RequiredLevel: { Value: 'None' } },
-  ], msdyn_workorder: [], msdyn_common: [] };
+    { LogicalName: 'name', MetadataId: A.name, RequiredLevel: { Value: 'ApplicationRequired' }, IsCustomAttribute: false },
+    { LogicalName: 'msdyn_workorderid', MetadataId: A.woid, RequiredLevel: { Value: 'None' }, IsCustomAttribute: true },
+    { LogicalName: 'msdyn_serviceterritory', MetadataId: A.st, RequiredLevel: { Value: 'ApplicationRequired' }, IsCustomAttribute: true },
+    { LogicalName: 'sss_custom', MetadataId: A.sss, RequiredLevel: { Value: 'None' }, IsCustomAttribute: true },
+  ], contact: [], msdyn_workorder: [], msdyn_common: [] };
+  const entityByName = { account: E.acc, contact: E.contact, msdyn_workorder: E.wo, msdyn_common: E.common };
   const attrByName = Object.fromEntries(attrs.account.map((a) => [a.LogicalName, a.MetadataId]));
   const dep = (id, type, parent) => ({ '@odata.type': '#Microsoft.Dynamics.CRM.dependency', requiredcomponentobjectid: id, requiredcomponenttype: type, requiredcomponentparentid: parent ?? null, dependencytype: 1 });
   function required(id, type) {
@@ -135,6 +141,7 @@ const MOCK = `
       const xml = forms[id]?.formxml ?? '';
       const out = [dep(E.acc, 1)];
       for (const m of xml.matchAll(/datafieldname="([^"]+)"/g)) if (attrByName[m[1]] && m[1] !== 'name') out.push(dep(attrByName[m[1]], 2, E.acc));
+      for (const m of xml.matchAll(/<TargetEntityType>([^<]+)<[/]TargetEntityType>/g)) if (entityByName[m[1]]) out.push(dep(entityByName[m[1]], 1));
       return out;
     }
     if (type === 26) return /link-entity name="msdyn_workorder"/.test(views[id]?.fetchxml ?? '') ? [dep(E.wo, 1), dep(E.acc, 1)] : [dep(E.acc, 1)];
@@ -144,7 +151,7 @@ const MOCK = `
   }
 
   const M = window.__mock = { envs, members, forms, views, queries: [], executes: [], updates: [], log: [], saved: [], notes: [], rrc: 0, managedFlip: false, nextText: null, nextBinary: null, FORM_A_XML, VIEW_FETCH, VIEW_LAYOUT, ids: { FORM_A, FORM_B, VIEW, FORM_FS, CHART, A, E, SOL },
-    listeners: [], extraReq: {}, attrFail: false };
+    listeners: [], extraReq: {}, attrFail: false, formsFail: false, throttleOnce: false, throttled: 0, writeDelay: 0, inflight: 0, maxInflight: 0, byIdsCalls: 0 };
   M.emit = (event) => { for (const cb of M.listeners) cb(null, { event }); };
   M.addExtra = () => { for (const [id, c] of Object.entries(extra)) { catalog[id] = c; members.push(row(id, c.type, null, accRow.solutioncomponentid)); } };
 
@@ -172,9 +179,10 @@ const MOCK = `
   window.dataverseAPI = {
     getSolutions: async (cols, target = 'primary') => ({ value: envs[target].solutions.map((s) => ({ ...s, ismanaged: s.solutionid === SOL.core && M.managedFlip ? true : s.ismanaged })) }),
     getAllEntitiesMetadata: async () => ({ value: [
-      { LogicalName: 'account', MetadataId: E.acc, PrimaryNameAttribute: 'name' },
-      { LogicalName: 'msdyn_workorder', MetadataId: E.wo, PrimaryNameAttribute: 'msdyn_name' },
-      { LogicalName: 'msdyn_common', MetadataId: E.common, PrimaryNameAttribute: 'msdyn_name' },
+      { LogicalName: 'account', MetadataId: E.acc, PrimaryNameAttribute: 'name', IsCustomEntity: false },
+      { LogicalName: 'contact', MetadataId: E.contact, PrimaryNameAttribute: 'fullname', IsCustomEntity: false },
+      { LogicalName: 'msdyn_workorder', MetadataId: E.wo, PrimaryNameAttribute: 'msdyn_name', IsCustomEntity: true },
+      { LogicalName: 'msdyn_common', MetadataId: E.common, PrimaryNameAttribute: 'msdyn_name', IsCustomEntity: true },
     ] }),
     getEntityRelatedMetadata: async (table) => {
       if (M.attrFail) throw new Error('mock: attribute metadata unavailable');
@@ -182,7 +190,24 @@ const MOCK = `
     },
     queryData: async (q, target = 'primary') => {
       M.queries.push({ q, target });
-      await new Promise((r) => setTimeout(r, 10));
+      // concurrency of id-chunked reads (owning solutions, record names)
+      const byIds = / or |objectid eq|formid eq|savedqueryid eq/.test(q) && !q.includes('_solutionid_value eq');
+      if (byIds) { M.byIdsCalls++; M.inflight++; M.maxInflight = Math.max(M.maxInflight, M.inflight); }
+      try {
+        await new Promise((r) => setTimeout(r, 10));
+        if (byIds && M.throttleOnce && q.includes('objectid eq')) {
+          M.throttleOnce = false;
+          M.throttled++;
+          throw Object.assign(new Error('mock: 429 Too Many Requests. Retry-After: 0'), { status: 429 });
+        }
+        if (M.formsFail && q.startsWith('systemforms?')) throw new Error('mock: systemforms unavailable');
+        return await answer(q, target);
+      } finally {
+        if (byIds) M.inflight--;
+      }
+    },
+  };
+  async function answer(q, target) {
       let m;
       if ((m = q.match(/^RetrieveRequiredComponents\\(ObjectId=([^,]+),ComponentType=(\\d+)\\)$/))) {
         if (!isGuid(m[1])) throw new Error('mock: ObjectId must be an unquoted guid, got ' + m[1]);
@@ -213,7 +238,8 @@ const MOCK = `
       if (q.startsWith('savedqueryvisualizations?')) return { value: idsIn(q, 'savedqueryvisualizationid').filter((id) => charts[id]).map((id) => ({ ...charts[id] })) };
       if (q.startsWith('savedqueries?')) return { value: idsIn(q, 'savedqueryid').filter((id) => views[id]).map((id) => ({ ...views[id] })) };
       throw new Error('mock: unexpected query ' + q);
-    },
+  }
+  Object.assign(window.dataverseAPI, {
     execute: async (req) => {
       M.executes.push(JSON.parse(JSON.stringify(req)));
       const p = req.parameters ?? {};
@@ -247,13 +273,14 @@ const MOCK = `
       throw new Error('mock: unexpected execute ' + req.operationName);
     },
     update: async (entity, id, rec) => {
+      if (M.writeDelay) await new Promise((r) => setTimeout(r, M.writeDelay));
       M.updates.push({ entity, id, rec: { ...rec } });
       M.log.push('update:' + entity);
       if (entity === 'systemform') forms[id].formxml = rec.formxml;
       else if (entity === 'savedquery') Object.assign(views[id], rec);
       else throw new Error('mock: unexpected update ' + entity);
     },
-  };
+  });
 })();
 `;
 
@@ -289,6 +316,14 @@ assert(ownQ.length >= 1 && ownQ.every((x) => (x.q.match(/objectid eq/g) || []).l
 const cards = await page.$$eval("#findings .finding", (els) => els.map((e) => ({ key: e.dataset.key, text: e.textContent })));
 assert(cards.length === 5, "5 blocker findings shown (safe one hidden): " + cards.map((c) => c.key).join(","));
 const byName = (n) => cards.find((c) => c.text.includes(n));
+// bug 1: account / contact and the account main form have solutioncomponent rows in System, Sales and Field Service.
+// Ownership is the solution that created them (System), not any msdyn solution that extends them.
+const ids0 = await M(() => window.__mock.ids);
+assert(!cards.some((c) => c.key === `1:${ids0.E.acc}`) && !cards.some((c) => /Remove this table|Table account belongs to/.test(c.text)), "bug 1: account (System table extended by Sales + Field Service) is not reported as msdyn-owned / 'Remove this table'");
+const formAOpts = await page.$$eval(`.finding[data-key="60:${ids0.FORM_A}"] select option`, (els) => els.map((e) => e.value));
+assert(formAOpts.includes("edit-form"), "bug 1: customized System main form is not msdyn-owned (edit-form offered): " + formAOpts.join(","));
+const formAChips = await page.$$eval(`.finding[data-key="60:${ids0.FORM_A}"] .req`, (els) => els.map((e) => e.textContent));
+assert(formAChips.length > 0 && !formAChips.some((t) => /Table (account|contact)\b/.test(t)), "bug 1: account / contact are not required msdyn components of the account form: " + formAChips.join(" | "));
 assert(byName("msdyn_workorderid")?.text.includes("FieldService") && byName("msdyn_workorderid").text.includes("msdyn_workorder"), "column msdyn_workorderid: owned by FieldService, requires msdyn_workorder");
 const formCard = cards.find((c) => c.text.includes("Form") && c.text.includes("Account") && !c.text.includes("Quick"));
 assert(formCard && formCard.text.includes("Column msdyn_workorderid") && formCard.text.includes("blocker"), "form grouped as dependent with required column chip");
@@ -359,6 +394,7 @@ const ups = await M(() => window.__mock.updates);
 const fu = ups.find((u) => u.entity === "systemform");
 const vu = ups.find((u) => u.entity === "savedquery");
 assert(ups.length === 2 && fu.id === ids.FORM_A && !fu.rec.formxml.includes("msdyn_workorderid") && fu.rec.formxml.includes('datafieldname="name"'), "form updateRecord: msdyn control stripped, primary name kept");
+assert(fu.rec.formxml.includes("<TargetEntityType>account</TargetEntityType>") && fu.rec.formxml.includes("<TargetEntityType>contact</TargetEntityType>"), "bug 1: subgrids targeting account / contact are not stripped from the form");
 assert(!vu.rec.fetchxml.includes("link-entity") && vu.rec.fetchxml.includes('attribute name="name"') && !vu.rec.layoutxml.includes("wo.msdyn_name") && vu.rec.layoutxml.includes('cell name="name"'), "view updateRecord: link-entity and its layout cell stripped");
 const members = await M(() => window.__mock.members.map((m) => m.objectid + ":" + m.rootcomponentbehavior));
 assert(members.includes(ids.E.acc + ":1") && !members.some((m) => m.startsWith(ids.A.woid)) && !members.some((m) => m.startsWith(ids.FORM_B)) && members.some((m) => m.startsWith(ids.A.sss)), "solution: account shell, msdyn columns gone, own column kept");
@@ -460,6 +496,7 @@ const keep = {
   ownCol: await keepBox("sss_custom"),
 };
 assert(keep.quick && keep.mainForm && keep.view && keep.chart, "B1: unmanaged / non-filtered forms, views and charts are kept by default: " + JSON.stringify(keep));
+assert(keep.mainForm, "bug 1: shell keeps the customized System main form (rows in System + Sales + Field Service)");
 assert(!keep.fsForm && !keep.msdynCol && keep.ownCol, "B1: form owned by filtered FieldService and msdyn column leave; own-prefix column kept: " + JSON.stringify(keep));
 const b1ops = await opLabels();
 assert(b1ops.some((t) => t.startsWith("AddSolutionComponent Chart Accounts by Industry")) && b1ops.some((t) => t.startsWith("AddSolutionComponent Form =Quick Create")) && !b1ops.some((t) => t.includes("Work Order Summary")), "B1: re-add ops for kept chart and quick create form, none for the Field Service form");
@@ -548,9 +585,75 @@ assert(b4d.writes === w0 && b4d.refused, "B4: restore apply refuses after the co
 await fresh();
 await M(() => { window.__mock.attrFail = true; });
 await diagnoseNow();
-await selD(`60:${ids.FORM_B}`, "edit-form");
-await previewNow();
-const b5 = await opLabels();
+const optsOf = (key) => page.$$eval(`.finding[data-key="${key}"] select option`, (els) => els.map((e) => e.value));
+const b5opts = await optsOf(`60:${ids.FORM_B}`);
+let b5 = [];
+if (b5opts.includes("edit-form")) {
+  await selD(`60:${ids.FORM_B}`, "edit-form");
+  await previewNow();
+  b5 = await opLabels();
+}
 assert(!b5.some((t) => t.startsWith("Update form =Quick Create")), "B5: quick create form (required msdyn column) not edited when column metadata fails: " + b5.join(" | "));
+assert(JSON.stringify(b5opts) === '["","report"]' && /Name lookup failed/.test(await page.textContent("#diag-summary")), "bug 4: column metadata failure → warning shown and the finding is report-only: " + b5opts.join(","));
+
+// ---- bug 4: id-chunked reads run at most 4 at a time, retry once on 429, name failures are not silent ----
+await fresh();
+await M(() => {
+  const m = window.__mock;
+  const g = (n) => "00000000-0000-0000-0000-" + String(n).padStart(12, "0");
+  // the view requires 400 unknown forms: 400+ ids → 11 chunks of ≤40 for owning solutions and again for names
+  m.extraReq[m.ids.VIEW] = [[m.ids.E.wo, 1], [m.ids.E.acc, 1], ...Array.from({ length: 400 }, (_, i) => [g(700000 + i), 60])];
+  m.throttleOnce = true;
+  m.maxInflight = 0;
+  m.byIdsCalls = 0;
+});
+await page.click('.tab[data-tab="diagnose"]');
+await page.evaluate(() => document.querySelector("#diag-summary").replaceChildren());
+await page.click("#btn-run");
+await page.waitForFunction(() => document.querySelector("#diag-summary .summary") || window.__mock.notes.some((n) => n.title === "Diagnosis failed"));
+const b6 = await M(() => ({ max: window.__mock.maxInflight, calls: window.__mock.byIdsCalls, throttled: window.__mock.throttled, failed: window.__mock.notes.filter((n) => n.title === "Diagnosis failed").map((n) => n.body) }));
+assert(b6.calls >= 22 && b6.max <= 4 && b6.max >= 2, "bug 4: many ids → chunked reads with ≤4 in flight: " + JSON.stringify(b6));
+assert(b6.throttled === 1 && b6.failed.length === 0 && (await page.$$eval("#findings .finding", (e) => e.length)) === 5, "bug 4: a 429 is retried once and the diagnosis completes: " + JSON.stringify(b6));
+// a failed name lookup → warning + the affected findings are report-only (an edit would match nothing)
+await fresh();
+await M(() => { window.__mock.formsFail = true; });
+await diagnoseNow();
+const b6opts = await optsOf(`60:${ids.FORM_A}`);
+assert(JSON.stringify(b6opts) === '["","report"]' && /Name lookup failed/.test(await page.textContent("#diag-summary")), "bug 4: form name lookup failure → warning shown and the form finding is report-only: " + b6opts.join(","));
+
+// ---- bug 5: re-diagnosis after a fix uses the diagnosed solution, not the dropdown ----
+await fresh();
+await M(() => {
+  const m = window.__mock;
+  m.envs.primary.solutions.push({ solutionid: m.ids.SOL.other, uniquename: "SssOther", friendlyname: "SSS Other", version: "1.0", ismanaged: false, _publisherid_value: m.envs.primary.solutions[0]._publisherid_value });
+  m.emit("connection:updated");
+});
+await page.waitForFunction(() => document.querySelectorAll("#solution option").length === 2);
+await page.selectOption("#solution", ids.SOL.core);
+await planToConfirm();
+await page.click('.tab[data-tab="diagnose"]');
+await page.selectOption("#solution", ids.SOL.other);
+await page.click('.tab[data-tab="fix"]');
+const q5 = await M(() => window.__mock.queries.length);
+await page.click("#btn-confirm");
+await page.waitForSelector("#rediag", { timeout: 15000 });
+const b7 = await page.evaluate((n) => window.__mock.queries.slice(n).filter((x) => x.q.includes("_solutionid_value eq")).map((x) => x.q.match(/_solutionid_value eq ([0-9a-f-]{36})/)[1]), q5);
+const b7sum = await page.textContent("#diag-summary");
+assert(b7.length > 0 && b7.every((x) => x === ids.SOL.core) && b7sum.includes("SSS Core"), "bug 5: re-diagnosis read the diagnosed solution (SssCore), not the dropdown: " + JSON.stringify(b7) + " " + b7sum);
+
+// ---- bug 6: double-click on Confirm runs the operations once ----
+await fresh();
+await planToConfirm();
+await M(() => { window.__mock.writeDelay = 50; });
+const w6 = await M(() => ({ updates: window.__mock.updates.length, pubs: window.__mock.log.filter((x) => x === "PublishXml").length }));
+await page.evaluate(() => {
+  const b = document.querySelector("#btn-confirm");
+  b.click();
+  b.click();
+});
+await page.waitForSelector("#rediag", { timeout: 15000 });
+await page.waitForTimeout(300);
+const b8 = await page.evaluate((w) => ({ updates: window.__mock.updates.length - w.updates, pubs: window.__mock.log.filter((x) => x === "PublishXml").length - w.pubs }), w6);
+assert(b8.updates === 1 && b8.pubs === 1, "bug 6: double-click on Confirm → one view update and one PublishXml: " + JSON.stringify(b8));
 
 await finish();

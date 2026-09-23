@@ -5,6 +5,33 @@ import { CT, type Component, type Diagnosis, type Finding, type NamedComponent, 
 
 export const CONCURRENCY = 4;
 const SYSTEM_BUCKETS = new Set(["default", "active", "basic"]);
+/** component types whose name is a schema name carrying the publisher prefix (msdyn_x); forms, views, charts… carry display names */
+const SCHEMA_NAMED = new Set<number>([CT.Entity, CT.Attribute, CT.OptionSet, CT.Relationship, CT.EntityRelationship, CT.WebResource]);
+
+/**
+ * Who owns a component: the solution that CREATED it, not every managed solution with a solutioncomponent row for it.
+ * In a D365 dev environment every msdyn app that extends account or contact (Sales, Field Service…) has a row for the
+ * table and often for its main form, so "any managed solution that contains it" made account look like Field Service's.
+ * First match wins:
+ *  1. Dataverse names the base (creating) solution in a dependency row (requiredcomponentbasesolutionid; also taken
+ *     from any other row of the diagnosis that requires the same component) and it is managed → that solution.
+ *  2. Platform component → System, never in the filter: table metadata IsCustomEntity = false, column metadata
+ *     IsCustomAttribute = false, or, for other types (forms, views…) or unknown metadata, the managed System solution
+ *     contains it (out of the box).
+ *  3. Exactly one managed solution contains it → that one.
+ *  4. Several: the one whose publisher prefix is the component's schema-name prefix (msdyn_x → msdyn); else the first
+ *     when every candidate matches the filter; else (a mix) the first candidate outside the filter: ambiguous ownership
+ *     is never read as filtered, so nothing is removed or dropped on a guess.
+ * Present in the target: a platform component always; otherwise when ANY managed solution containing it is there
+ * (installing it brings the component along).
+ */
+export interface Ownership {
+  owner: SolutionInfo | null;
+  /** every managed solution with a row for it (System included) */
+  candidates: SolutionInfo[];
+  platform: boolean;
+}
+
 
 export class Cancelled extends Error {
   constructor() {
@@ -74,6 +101,11 @@ export async function diagnose(i: DiagnoseInput): Promise<Diagnosis> {
     (owning.get(id) ?? [])
       .map((sid) => solById.get(sid))
       .filter((s): s is SolutionInfo => !!s && s.isManaged && s.id !== i.solution.id && !SYSTEM_BUCKETS.has(s.uniqueName.toLowerCase()));
+  const isSystem = (s: SolutionInfo): boolean => s.uniqueName.toLowerCase() === "system";
+  const systemSolution: SolutionInfo = i.allSolutions.find(isSystem) ?? { id: "", uniqueName: "System", friendlyName: "System", version: "", isManaged: true, publisherId: null, prefix: "" };
+  // base (creating) solution per component, from every dependency row that names one
+  const baseOf = new Map<string, string>();
+  for (const rows of deps.values()) for (const r of rows) if (r.requiredBaseSolutionId && !baseOf.has(r.requiredId)) baseOf.set(r.requiredId, r.requiredBaseSolutionId);
 
   // 3. names (all solution components, for display and the shell preview; required components)
   const nameReqs: NameRequest[] = components.map((c) => {
@@ -81,14 +113,43 @@ export async function diagnose(i: DiagnoseInput): Promise<Diagnosis> {
     return { type: c.type, id: c.objectId, parentId: root?.type === CT.Entity ? root.objectId : null };
   });
   for (const rows of deps.values()) for (const r of rows) nameReqs.push({ type: r.requiredType, id: r.requiredId, parentId: r.requiredParentId });
-  const names = await resolveNames(i.api, i.meta, nameReqs);
+  const nameFailures = new Map<string, string>();
+  const names = await resolveNames(i.api, i.meta, nameReqs, nameFailures);
+  const warnings: string[] = [];
+  if (nameFailures.size)
+    warnings.push(
+      `Name lookup failed for ${nameFailures.size} component(s) (${[...new Set(nameFailures.values())].slice(0, 2).join("; ")}). Findings that involve them are report only: an edit keyed on an unresolved name would change nothing. Run Diagnose again.`,
+    );
   const named = (type: number, id: string): NamedComponent => names.get(reqKey(type, id)) ?? { type, id, name: id };
+  const isCustom = (n: NamedComponent): boolean | null => {
+    if (n.type === CT.Entity) return i.meta.entities?.get(n.id)?.isCustom ?? null;
+    if (n.type === CT.Attribute && n.table) return i.meta.attributes.get(n.table)?.find((a) => a.id === n.id)?.isCustom ?? null;
+    return null;
+  };
+  const ownership = (n: NamedComponent, baseId: string | null): Ownership => {
+    const all = managedOwners(n.id);
+    const base = solById.get(baseId ?? baseOf.get(n.id) ?? "");
+    const custom = isCustom(n);
+    const platform = (o: SolutionInfo = systemSolution): Ownership => ({ owner: o, candidates: all, platform: true });
+    if (base?.isManaged && !SYSTEM_BUCKETS.has(base.uniqueName.toLowerCase())) return isSystem(base) ? platform(base) : { owner: base, candidates: all, platform: false };
+    if (custom === false) return platform();
+    const sys = all.find(isSystem);
+    if (sys && custom === null) return platform(sys);
+    const cands = all.filter((s) => !isSystem(s));
+    if (cands.length <= 1) return { owner: cands[0] ?? null, candidates: all, platform: false };
+    const pfx = SCHEMA_NAMED.has(n.type) ? /^([a-z0-9]+)_/i.exec(n.name)?.[1]?.toLowerCase() : undefined;
+    const byPrefix = pfx ? cands.find((s) => s.prefix === pfx) : undefined;
+    const inFilter = cands.filter((s) => matchesFilter(i.filter, s, n.name));
+    const owner = byPrefix ?? (inFilter.length === cands.length ? cands[0] : cands.find((s) => !matchesFilter(i.filter, s, n.name))!);
+    return { owner, candidates: all, platform: false };
+  };
   for (const c of components) {
     const n = named(c.type, c.objectId);
     c.name = n.name;
     c.table = n.table;
     // ownership for the shell preview: forms, views and charts are named by display name, so a prefix says nothing
-    c.filteredOwner = managedOwners(c.objectId).find((s) => matchesFilter(i.filter, s, n.name))?.uniqueName ?? null;
+    const o = ownership(n, null).owner;
+    c.filteredOwner = o && matchesFilter(i.filter, o, n.name) ? o.uniqueName : null;
   }
 
   // 4. filter + target → findings grouped by dependent
@@ -105,14 +166,13 @@ export async function diagnose(i: DiagnoseInput): Promise<Diagnosis> {
       if (seen.has(k)) continue;
       seen.add(k);
       const n = named(r.requiredType, r.requiredId);
-      const managed = managedOwners(r.requiredId);
+      const { owner, candidates: managed, platform } = ownership(n, r.requiredBaseSolutionId);
       // a component that ships in this solution and no managed solution owns is ours
-      if (!managed.length && inSolution.has(r.requiredId)) continue;
-      if (r === self && !managed.length) continue;
-      const base = r.requiredBaseSolutionId ? solById.get(r.requiredBaseSolutionId) : undefined;
-      const owner = (base?.isManaged ? base : undefined) ?? managed.find((s) => matchesFilter(i.filter, s, n.name)) ?? managed[0] ?? null;
-      const inFilter = matchesFilter(i.filter, owner, n.name);
-      const present = !!owner && !!i.targetSolutions?.has(owner.uniqueName.toLowerCase());
+      if (!owner && inSolution.has(r.requiredId)) continue;
+      if (r === self && !owner) continue;
+      const inFilter = !platform && matchesFilter(i.filter, owner, n.name);
+      const inTarget = (s: SolutionInfo) => !!i.targetSolutions?.has(s.uniqueName.toLowerCase());
+      const present = !!owner && (platform || inTarget(owner) || managed.some(inTarget));
       const missingInTarget = !!i.targetSolutions && !!owner && !present;
       if (!inFilter && !missingInTarget) continue;
       if (r === self) selfOwned = true;
@@ -122,7 +182,14 @@ export async function diagnose(i: DiagnoseInput): Promise<Diagnosis> {
     const dep = named(c.type, c.objectId);
     const rootRow = c.type === CT.Entity ? c : c.rootRowId ? byRowId.get(c.rootRowId) : undefined;
     const root = rootRow && rootRow.type === CT.Entity ? { ...named(rootRow.type, rootRow.objectId), behavior: rootRow.behavior ?? 0 } : null;
-    const cls = classify({ ...dep, behavior: c.behavior, root, selfOwned }, required, i.filter, i.link(dep));
+    // a name that could not be read makes form / view edits and shell choices guesswork: report only
+    const lookupErrors = [...new Set([reqKey(c.type, c.objectId), ...required.map((r) => reqKey(r.type, r.id))].map((k) => nameFailures.get(k)).filter((x): x is string => !!x))];
+    const cls = lookupErrors.length
+      ? {
+          cause: `Some names could not be read (${lookupErrors.join("; ")}), so this cannot be fixed automatically. Run Diagnose again.`,
+          fixes: [{ kind: "report" as const, label: "Report only: open in maker portal", link: i.link(dep), note: "Name lookup failed: not edited automatically." }],
+        }
+      : classify({ ...dep, behavior: c.behavior, root, selfOwned }, required, i.filter, i.link(dep));
     findings.push({
       key: reqKey(c.type, c.objectId),
       dependent: { ...dep, rootBehavior: root?.behavior ?? null, rootTable: root?.name, selfOwned },
@@ -142,6 +209,7 @@ export async function diagnose(i: DiagnoseInput): Promise<Diagnosis> {
     components,
     findings,
     errors,
+    warnings,
     takenAt: new Date().toISOString(),
   };
 }

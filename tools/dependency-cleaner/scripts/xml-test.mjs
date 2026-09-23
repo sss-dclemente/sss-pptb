@@ -201,6 +201,52 @@ const bad = await run((a) => {
 }, "<form><tabs>");
 assert(/invalid XML/.test(bad), "form: invalid XML throws");
 
+// ---------- hidden controls (bug 2) ----------
+
+const HIDDEN = `<form><tabs><tab name="t"><columns><column width="100%"><sections><section name="s"><rows>
+<row><cell id="{a}"><control id="name" classid="{4273EDBD-AC1D-40d3-9FB2-095C621B552D}" datafieldname="name" /></cell></row>
+</rows></section></sections></column></columns></tab></tabs>
+<hiddencontrols>
+  <data id="msdyn_workorderid" datafieldname="msdyn_WorkOrderId" classid="{5546E6CD-394C-4bee-94A8-4425E17EF6C6}" />
+  <data id="msdyn_serviceterritory" datafieldname="msdyn_serviceterritory" classid="{5546E6CD-394C-4bee-94A8-4425E17EF6C6}" />
+  <data id="transactioncurrencyid" datafieldname="transactioncurrencyid" classid="{5546E6CD-394C-4bee-94A8-4425E17EF6C6}" />
+</hiddencontrols>
+</form>`;
+const hidden = await run(
+  (a) => {
+    const r = XmlLib.stripForm(a.xml, ["msdyn_workorderid", "msdyn_serviceterritory"], ["msdyn_serviceterritory"], []);
+    const d = new DOMParser().parseFromString(r.xml, "application/xml");
+    return { r, ok: !d.getElementsByTagName("parsererror").length, data: [...d.querySelectorAll("hiddencontrols data")].map((x) => x.getAttribute("datafieldname")) };
+  },
+  { xml: HIDDEN },
+);
+assert(hidden.ok && !hidden.data.includes("msdyn_WorkOrderId") && hidden.r.removed.includes("msdyn_workorderid"), "form (bug 2): hidden <hiddencontrols><data> field on a msdyn column removed: " + hidden.data.join(","));
+assert(hidden.data.includes("msdyn_serviceterritory") && hidden.r.kept.some((k) => k.name === "msdyn_serviceterritory"), "form (bug 2): protected hidden field kept and listed");
+assert(hidden.data.includes("transactioncurrencyid"), "form (bug 2): unrelated hidden field kept");
+
+// ---------- quick view with entity-escaped QuickForms (bug 3) ----------
+
+const QV = (quickForms) => `<form><tabs><tab name="t"><columns><column width="100%"><sections><section name="s"><rows>
+<row><cell id="{a}"><control id="name" classid="{4273EDBD-AC1D-40d3-9FB2-095C621B552D}" datafieldname="name" /></cell></row>
+<row><cell id="{qv}"><control id="wo_qv" classid="{5C5600E0-1D6E-4205-A272-BE80DA87FD42}"><parameters><ControlMode>Edit</ControlMode><QuickForms>${quickForms}</QuickForms><ControlMode>Edit</ControlMode></parameters></control></cell></row>
+<row><cell id="{qv2}"><control id="contact_qv" classid="{5C5600E0-1D6E-4205-A272-BE80DA87FD42}"><parameters><QuickForms>&lt;QuickFormIds&gt;&lt;QuickFormId entityname="contact"&gt;{b0000000-0000-0000-0000-000000000002}&lt;/QuickFormId&gt;&lt;/QuickFormIds&gt;</QuickForms></parameters></control></cell></row>
+</rows></section></sections></column></columns></tab></tabs></form>`;
+const qvRun = (fn) => run(
+  (a) => {
+    const r = XmlLib.stripForm(a.xml, [], [], ["msdyn_workorder"]);
+    const d = new DOMParser().parseFromString(r.xml, "application/xml");
+    return { r, ok: !d.getElementsByTagName("parsererror").length, ids: [...d.querySelectorAll("control")].map((c) => c.getAttribute("id")) };
+  },
+  { xml: fn },
+);
+const qvEscaped = await qvRun(QV('&lt;QuickFormIds&gt;&lt;QuickFormId entityname="msdyn_workorder"&gt;{a0000000-0000-0000-0000-000000000001}&lt;/QuickFormId&gt;&lt;/QuickFormIds&gt;'));
+assert(qvEscaped.ok && !qvEscaped.ids.includes("wo_qv") && qvEscaped.r.removed.some((x) => /quickview wo_qv \(msdyn_workorder\)/.test(x)), "form (bug 3): quick view with entity-escaped QuickForms text removed: " + qvEscaped.ids.join(","));
+assert(qvEscaped.ids.includes("contact_qv") && qvEscaped.ids.includes("name"), "form (bug 3): quick view on another table kept");
+const qvElement = await qvRun(QV('<QuickFormIds><QuickFormId entityname="msdyn_workorder">{a0000000-0000-0000-0000-000000000001}</QuickFormId></QuickFormIds>'));
+assert(!qvElement.ids.includes("wo_qv") && qvElement.ids.includes("contact_qv"), "form (bug 3): quick view with element-form QuickForms still removed: " + JSON.stringify(qvElement.ids) + JSON.stringify(qvElement.r.removed));
+const qvCdata = await qvRun(QV('<![CDATA[<QuickFormIds><QuickFormId entityname="msdyn_workorder">{a0000000-0000-0000-0000-000000000001}</QuickFormId></QuickFormIds>]]>'));
+assert(!qvCdata.ids.includes("wo_qv"), "form (bug 3): quick view with CDATA QuickForms removed");
+
 // ---------- view tests ----------
 
 const view = await run(

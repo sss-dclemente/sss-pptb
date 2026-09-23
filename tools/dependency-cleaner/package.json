@@ -1,6 +1,6 @@
 {
   "name": "@simplesmoothsafe/pptb-dependency-cleaner",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "displayName": "SSS Dependency Cleaner",
   "description": "Why does my solution depend on msdyn_*? Find every dependency of an unmanaged solution on a managed solution the target environment lacks, see the component that causes it, and fix it in place: convert tables to shells, remove components, strip msdyn columns from forms and views. Preview, backup and restore.",
   "main": "index.html",

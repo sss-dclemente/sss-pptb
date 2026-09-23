@@ -138,6 +138,8 @@ export interface Diagnosis {
   findings: Finding[];
   /** components whose RetrieveRequiredComponents call failed */
   errors: { component: string; error: string }[];
+  /** non-fatal problems, e.g. name lookups that failed (the findings involved are report-only) */
+  warnings: string[];
   takenAt: string;
 }
 

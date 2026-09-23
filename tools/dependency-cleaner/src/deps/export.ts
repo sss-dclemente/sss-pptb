@@ -44,6 +44,7 @@ export function findingsJson(d: Diagnosis): string {
       filter: d.filter,
       findings: d.findings,
       errors: d.errors,
+      warnings: d.warnings,
     },
     null,
     2,
