@@ -66,6 +66,26 @@ const prefixesOf = (names: string[]) =>
 
 // ---------- forms ----------
 
+/** Tables of the quick view forms a control's <parameters> reference. Real formxml stores <QuickForms> as
+ * entity-escaped (or CDATA) text: `&lt;QuickFormIds&gt;&lt;QuickFormId entityname="x"&gt;guid&lt;/QuickFormId&gt;…`;
+ * older / hand-made XML nests the elements directly. Both are read. */
+function quickViewTables(params: Element): string[] {
+  const out = els(params, "QuickFormId").map((q) => lc(q.getAttribute("entityname")));
+  for (const qf of els(params, "QuickForms")) {
+    if (qf.children.length) continue; // element form, read above
+    const text = (qf.textContent ?? "").trim();
+    if (!text.startsWith("<")) continue;
+    const inner = new DOMParser().parseFromString(text, "application/xml");
+    if (inner.getElementsByTagName("parsererror").length) {
+      // fall back to a plain scan so a malformed fragment still identifies its table
+      for (const m of text.matchAll(/entityname\s*=\s*["']([^"']+)["']/gi)) out.push(lc(m[1]));
+      continue;
+    }
+    out.push(...els(inner, "QuickFormId").map((q) => lc(q.getAttribute("entityname"))));
+  }
+  return out.filter(Boolean);
+}
+
 /** Remove controls bound to `columns` (logical names, lowercase) from Dataverse systemform.formxml.
  * Never removes columns in `protectedColumns` (primary name, ApplicationRequired) — lists them in `kept`.
  * `tables`: also remove subgrid / quick-view controls targeting these tables. */
@@ -99,7 +119,7 @@ export function stripForm(formxml: string, columns: string[], protectedColumns: 
       const params = control.getElementsByTagName("parameters")[0];
       if (params) {
         const target = lc(params.getElementsByTagName("TargetEntityType")[0]?.textContent);
-        const qv = els(params, "QuickFormId").map((q) => lc(q.getAttribute("entityname"))).find((t) => tbls.has(t));
+        const qv = quickViewTables(params).find((t) => tbls.has(t));
         if (target && tbls.has(target)) why = `subgrid ${control.getAttribute("id") ?? "?"} (${target})`;
         else if (qv) why = `quickview ${control.getAttribute("id") ?? "?"} (${qv})`;
       }
@@ -115,6 +135,22 @@ export function stripForm(formxml: string, columns: string[], protectedColumns: 
       removeNode(cell);
       if (row) touchedRows.add(row);
     } else removeNode(control);
+  }
+
+  // Hidden fields: <hiddencontrols><data id=… datafieldname=… classid=…/> bind a column without a cell.
+  for (const data of els(doc, "hiddencontrols").flatMap((hc) => childEls(hc, "data"))) {
+    const field = lc(data.getAttribute("datafieldname"));
+    if (!field || !cols.has(field)) continue;
+    if (prot.has(field)) {
+      addKept(field, "protected: primary name or ApplicationRequired column");
+      continue;
+    }
+    for (const id of [data.getAttribute("id"), data.getAttribute("uniqueid")]) if (id) removedControlIds.add(lc(id));
+    removedCols.add(field);
+    addRemoved(field);
+    const parent = data.parentElement;
+    removeNode(data);
+    if (parent) tidyEmpty(parent);
   }
 
   // Empty rows go; sections that end up without any control go (with a warning); tabs never go.
