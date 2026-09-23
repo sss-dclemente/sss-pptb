@@ -28,7 +28,8 @@ export function compareVersions(a: string, b: string): number {
   return 0;
 }
 
-type Keyed = Map<string, string>; // name -> fingerprint
+/** stable key -> { display name, fingerprint } */
+type Keyed = Map<string, { name: string; fp: string }>;
 
 function fingerprint(parts: (string | number | boolean | null | undefined)[]): string {
   return parts.map((p) => (p == null ? "" : String(p))).join("|");
@@ -36,8 +37,9 @@ function fingerprint(parts: (string | number | boolean | null | undefined)[]): s
 
 function categories(s: SolutionInfo): Record<string, Keyed> {
   const out: Record<string, Keyed> = {};
-  const put = (cat: string, name: string, fp = "") => {
-    (out[cat] ??= new Map()).set(name, fp);
+  /** key defaults to the display name; pass a stable id-based key when names are not unique */
+  const put = (cat: string, name: string, fp = "", key = name) => {
+    (out[cat] ??= new Map()).set(key, { name, fp });
   };
 
   for (const e of s.entities) {
@@ -47,7 +49,13 @@ function categories(s: SolutionInfo): Record<string, Keyed> {
   for (const r of s.relationships) put("Relationship", r.name, fingerprint([r.type, r.referencing, r.referenced]));
   for (const o of s.optionSets) put("Global choice", o.name);
   for (const r of s.roles) put("Security role", r.name);
-  for (const w of s.workflows) put("Process / flow", w.name, fingerprint([w.category, w.primaryEntity, w.connectionReferences.join(",")]));
+  for (const w of s.workflows) {
+    // Same-named processes (e.g. business rules) exist on different tables: key by workflow id, else table + name.
+    const entity = w.primaryEntity && w.primaryEntity !== "none" ? w.primaryEntity : null;
+    const id = w.id?.replace(/[{}]/g, "").toLowerCase();
+    const key = id ? `id:${id}` : `name:${(entity ?? "").toLowerCase()}/${w.name}`;
+    put("Process / flow", entity ? `${w.name} (${entity})` : w.name, fingerprint([w.category, w.primaryEntity, w.connectionReferences.join(",")]), key);
+  }
   for (const w of s.webResources) put("Web resource", w.name, w.detail ?? "");
   for (const a of s.appModules) put("Model-driven app", a.name);
   for (const c of s.canvasApps) put("Canvas app", c.name);
@@ -68,13 +76,14 @@ export function diffSolutions(a: SolutionInfo, b: SolutionInfo): SolutionDiff {
   const cats = new Set([...Object.keys(ca), ...Object.keys(cb)]);
 
   for (const cat of cats) {
-    const ma = ca[cat] ?? new Map<string, string>();
-    const mb = cb[cat] ?? new Map<string, string>();
-    for (const [name, fp] of mb) {
-      if (!ma.has(name)) entries.push({ category: cat, name, change: "added" });
-      else if (ma.get(name) !== fp) entries.push({ category: cat, name, change: "changed", detail: `${ma.get(name)} → ${fp}` });
+    const ma: Keyed = ca[cat] ?? new Map();
+    const mb: Keyed = cb[cat] ?? new Map();
+    for (const [key, { name, fp }] of mb) {
+      const prev = ma.get(key);
+      if (!prev) entries.push({ category: cat, name, change: "added" });
+      else if (prev.fp !== fp) entries.push({ category: cat, name, change: "changed", detail: `${prev.fp} → ${fp}` });
     }
-    for (const name of ma.keys()) if (!mb.has(name)) entries.push({ category: cat, name, change: "removed" });
+    for (const [key, { name }] of ma) if (!mb.has(key)) entries.push({ category: cat, name, change: "removed" });
   }
 
   const order = { removed: 0, changed: 1, added: 2 };

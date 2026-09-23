@@ -24,15 +24,36 @@ const MOCK = `
       defs: [def('d1', 'sss_apiurl', S, 'https://dev.api'), def('d2', 'sss_apikey', SECRET, null), def('d3', 'sss_flag', BOOL, 'yes'), def('d4', 'sss_onlydev', S, null)],
       vals: [val('v1', 'd1', 'https://dev.api/v2'), val('v2', 'd2', 'kv-ref'), val('v4', 'd4', 'd')],
       crs: [cr('r1', 'sss_office365', 'shared_office365', 'conn-dev-1'), cr('r2', 'sss_sql', 'shared_sql', null)],
+      // connectionreference ObjectTypeCode is org-specific (custom-table range); 371 is the Connector component type.
+      crType: 10097,
+      sols: [{ solutionid: 'sol1', uniquename: 'SolA', friendlyname: 'Sol A', version: '1.0.0.0', ismanaged: false, isvisible: true }],
+      comps: [{ solutionid: 'sol1', objectid: 'd1', componenttype: 380 }, { solutionid: 'sol1', objectid: 'r1', componenttype: 10097 }, { solutionid: 'sol1', objectid: 'shared_sql', componenttype: 371 }],
     },
     secondary: {
       conn: { id: 'c2', name: 'SSS Test', url: 'https://sss-test.crm4.dynamics.com', environment: 'Test', environmentColor: '#92400e' },
       defs: [def('t1', 'sss_apiurl', S, 'https://dev.api', true), def('t2', 'sss_apikey', SECRET, null, true), def('t3', 'sss_flag', BOOL, null, true), def('t5', 'sss_onlytest', S, null)],
       vals: [val('w1', 't1', 'https://test.api', true), val('w2', 't2', 'kv-ref'), val('w5', 't5', 't'), val('w6', 't5', 't-dup')],
       crs: [cr('s1', 'sss_office365', 'shared_office365', null), cr('s2', 'sss_sql', 'shared_sql', 'conn-test-9')],
+      crType: 10112,
+      sols: [],
+      comps: [],
+    },
+    // third environment the primary connection can be switched to (connection change scenarios)
+    prod: {
+      conn: { id: 'c3', name: 'SSS Prod', url: 'https://sss-prod.crm4.dynamics.com', environment: 'Prod', environmentColor: '#b91c1c' },
+      defs: [def('p1', 'sss_apiurl', S, 'https://dev.api'), def('p2', 'sss_flag', BOOL, 'no')],
+      vals: [val('pv1', 'p1', 'https://prod.api')],
+      crs: [cr('q1', 'sss_office365', 'shared_office365', 'conn-prod-1'), cr('q2', 'sss_sql', 'shared_sql', 'conn-prod-2')],
+      crType: 10123,
+      sols: [{ solutionid: 'sol2', uniquename: 'SolB', friendlyname: 'Sol B', version: '2.0.0.0', ismanaged: true, isvisible: true }],
+      comps: [{ solutionid: 'sol2', objectid: 'p1', componenttype: 380 }, { solutionid: 'sol2', objectid: 'q1', componenttype: 10123 }],
     },
   };
-  window.__mock = { envs, writes: [], saved: [], notes: [], nextOpen: null, queries: [], fail: null };
+  envs.dev = envs.primary;
+  const listeners = [];
+  window.__mock = { envs, writes: [], saved: [], notes: [], nextOpen: null, queries: [], fail: null, failEntityDefs: false };
+  window.__mock.emit = (event) => listeners.forEach((cb) => cb({}, { event }));
+  window.__mock.usePrimary = (name) => { envs.primary = envs[name]; };
   // Server-side paging: 3 rows per page, absolute @odata.nextLink like Dataverse returns.
   const page = (q, target, rows) => {
     const m = q.match(/&\\$skiptoken=(\\d+)/);
@@ -48,7 +69,7 @@ const MOCK = `
       getSecondaryConnection: async () => envs.secondary.conn,
     },
     utils: { getCurrentTheme: async () => 'light', showNotification: async (o) => { window.__mock.notes.push(o); } },
-    events: { on() {} },
+    events: { on(cb) { listeners.push(cb); } },
     fileSystem: {
       saveFile: async (name, content) => { window.__mock.saved.push({ name, content }); return '/tmp/' + name; },
       selectPath: async () => (window.__mock.nextOpen ? '/tmp/snapshot.json' : null),
@@ -64,19 +85,29 @@ const MOCK = `
       if (q.startsWith('environmentvariabledefinitions')) return page(q, target, e.defs);
       if (q.startsWith('environmentvariablevalues')) return page(q, target, e.vals);
       if (q.startsWith('connectionreferences')) return page(q, target, e.crs);
-      if (q.startsWith('solutioncomponents')) return { value: [{ objectid: 'd1', componenttype: 380 }, { objectid: 'r1', componenttype: 371 }] };
+      if (q.startsWith("EntityDefinitions(LogicalName='connectionreference')")) {
+        if (window.__mock.failEntityDefs) throw new Error('403 metadata');
+        return { ObjectTypeCode: e.crType };
+      }
+      if (q.startsWith('solutioncomponents')) {
+        // honour the filter: solution id, componenttype list, objectid list
+        const sol = (q.match(/_solutionid_value eq ([^ &)]+)/) || [])[1];
+        const types = [...q.matchAll(/componenttype eq (\\d+)/g)].map((m) => Number(m[1]));
+        const oids = [...q.matchAll(/objectid eq ([^ &)]+)/g)].map((m) => m[1]);
+        return { value: e.comps.filter((c) => c.solutionid === sol && (!types.length || types.includes(c.componenttype)) && (!oids.length || oids.includes(c.objectid))) };
+      }
       throw new Error('unexpected query ' + q);
     },
-    getSolutions: async () => ({ value: [{ solutionid: 'sol1', uniquename: 'SolA', friendlyname: 'Sol A', version: '1.0.0.0', ismanaged: false, isvisible: true }] }),
+    getSolutions: async (cols, target = 'primary') => ({ value: envs[target].sols }),
     create: async (entity, rec, target = 'primary') => {
-      window.__mock.writes.push({ op: 'create', entity, rec, target });
+      window.__mock.writes.push({ op: 'create', entity, rec, target, env: envs[target].conn.name });
       const defId = String(rec['EnvironmentVariableDefinitionId@odata.bind']).match(/\\(([^)]+)\\)/)[1];
       const id = 'n' + (seq++);
       envs[target].vals.push({ environmentvariablevalueid: id, value: rec.value, _environmentvariabledefinitionid_value: defId });
       return { id };
     },
     update: async (entity, id, rec, target = 'primary') => {
-      window.__mock.writes.push({ op: 'update', entity, id, rec, target });
+      window.__mock.writes.push({ op: 'update', entity, id, rec, target, env: envs[target].conn.name });
       const v = envs[target].vals.find((x) => x.environmentvariablevalueid === id);
       if (!v) throw new Error('no such value ' + id);
       v.value = rec.value;
@@ -296,5 +327,96 @@ await page.evaluate(() => { window.__mock.fail = null; });
 await page.click("#btn-refresh");
 await page.waitForFunction(() => !document.querySelector("#columns").textContent.includes("load failed"));
 assert(true, "column recovers after refresh");
+
+// ---- bug 2: connection references scoped by the org-specific connectionreference ObjectTypeCode, not 371 (Connector) ----
+{
+  await page.evaluate(() => { window.__mock.queries = []; });
+  await page.selectOption("#filter-solution", "sol1");
+  await page.waitForFunction(() => document.querySelectorAll("table.matrix tbody tr").length === 1);
+  const qs = await page.evaluate(() => window.__mock.queries.map((x) => x.q));
+  const sc = qs.filter((q) => q.startsWith("solutioncomponents"));
+  assert(sc.length > 0 && sc.every((q) => !q.includes("componenttype eq 371")) && sc.some((q) => q.includes("componenttype eq 10097")), "bug2: solutioncomponents filtered by resolved connectionreference ObjectTypeCode (10097), never 371");
+  assert(dsScoped.ConnectionReferences.length === 1, "bug2: scoped deploymentSettings includes the solution's connection reference");
+  await page.selectOption("#filter-solution", "");
+  await page.waitForFunction(() => document.querySelectorAll("table.matrix tbody tr").length === 5);
+}
+
+// ---- bug 1: connection change while a solution is selected ----
+const waitPrimary = (name) => page.waitForFunction((n) => document.querySelector("#columns").textContent.includes(n), name);
+await page.selectOption("#filter-solution", "sol1");
+await page.waitForFunction(() => document.querySelectorAll("table.matrix tbody tr").length === 1);
+await page.evaluate(() => { window.__mock.usePrimary("prod"); window.__mock.emit("connection:updated"); });
+await waitPrimary("SSS Prod");
+await page.waitForTimeout(200);
+assert((await page.$eval("#filter-solution", (s) => s.value)) === "", "bug1: solution dropdown reset to all after connection change");
+names = await rowNames();
+assert(names.length === 4, "bug1: grid not empty after connection change (got " + names.length + " rows)");
+await page.selectOption("#export-col", "primary");
+await page.click("#btn-export-settings");
+{
+  const ds1 = JSON.parse((await page.evaluate(() => window.__mock.saved)).at(-1).content);
+  assert(ds1.EnvironmentVariables.length === 2 && ds1.ConnectionReferences.length === 2, "bug1: deploymentSettings not empty after connection change");
+}
+
+// ---- bug 2 fallback: ObjectTypeCode lookup fails → solutioncomponents matched by connection reference ids ----
+await page.evaluate(() => { window.__mock.failEntityDefs = true; window.__mock.queries = []; });
+await page.selectOption("#filter-solution", "sol2");
+await page.waitForFunction(() => document.querySelectorAll("table.matrix tbody tr").length === 1);
+assert(JSON.stringify(await rowNames()) === '["sss_apiurl"]', "bug2 fallback: env vars scoped");
+await page.click("#btn-export-settings");
+{
+  const ds2 = JSON.parse((await page.evaluate(() => window.__mock.saved)).at(-1).content);
+  const fq = await page.evaluate(() => window.__mock.queries.map((x) => x.q).filter((q) => q.startsWith("solutioncomponents")));
+  assert(JSON.stringify(ds2.ConnectionReferences.map((c) => c.LogicalName)) === '["sss_office365"]' && fq.some((q) => q.includes("objectid eq q1")), "bug2 fallback: scoped connection references via objectid filter");
+}
+await page.click('.tab[data-tab="connrefs"]');
+assert(JSON.stringify(await rowNames()) === '["sss_office365"]', "bug2 fallback: conn ref grid scoped");
+await page.click('.tab[data-tab="envvars"]');
+await page.selectOption("#filter-solution", "");
+await page.evaluate(() => { window.__mock.failEntityDefs = false; });
+
+// ---- bug 3: preview is bound to the connection it was built for ----
+await page.evaluate(() => { window.__mock.usePrimary("dev"); window.__mock.emit("connection:updated"); });
+await waitPrimary("SSS Dev");
+await page.waitForFunction(() => document.querySelectorAll("table.matrix tbody tr").length === 5);
+async function openDevPreview(value) {
+  await page.hover("table.matrix tbody tr:nth-child(2)");
+  await page.click('button[aria-label="Set sss_apiurl in SSS Dev"]');
+  await page.waitForSelector("dialog[open]");
+  await page.fill("dialog textarea", value);
+  await page.click("#dlg-ok");
+  await page.waitForFunction(() => document.querySelector("#dlg-title").textContent === "Preview changes" && document.querySelector("dialog").open);
+}
+// (a) connection change event closes the open preview
+let wBefore = await page.evaluate(() => window.__mock.writes.length);
+await openDevPreview("https://dev.api/v8");
+await page.evaluate(() => { window.__mock.usePrimary("prod"); window.__mock.emit("connection:updated"); });
+await waitPrimary("SSS Prod");
+await page.waitForTimeout(200);
+const stillOpen = await page.$eval("dialog", (d) => d.open);
+if (stillOpen && !(await page.isHidden("#dlg-ok"))) {
+  await page.click("#dlg-ok");
+  await page.waitForTimeout(500);
+}
+if (await page.$eval("dialog", (d) => d.open)) await page.click("#dlg-cancel");
+assert(!stillOpen, "bug3: open preview closed on connection change");
+assert((await page.evaluate(() => window.__mock.writes.length)) === wBefore, "bug3: nothing written to the new connection from a stale preview");
+// (b) host switched without (or before) the event: Apply re-checks the connection and refuses
+await page.evaluate(() => { window.__mock.usePrimary("dev"); window.__mock.emit("connection:updated"); });
+await waitPrimary("SSS Dev");
+await page.waitForFunction(() => document.querySelectorAll("table.matrix tbody tr").length === 5);
+wBefore = await page.evaluate(() => window.__mock.writes.length);
+await openDevPreview("https://dev.api/v7");
+await page.evaluate(() => { window.__mock.notes = []; window.__mock.usePrimary("prod"); });
+await page.click("#dlg-ok");
+await page.waitForTimeout(500);
+if (await page.$eval("dialog", (d) => d.open)) await page.click("#dlg-cancel");
+{
+  const w = await page.evaluate(() => window.__mock.writes);
+  assert(w.length === wBefore, "bug3: Apply refused when the target connection changed after preview (writes: " + w.slice(wBefore).map((x) => x.env).join(",") + ")");
+  assert((await page.evaluate(() => window.__mock.notes)).some((n) => /connection changed/i.test(n.title + " " + n.body)), "bug3: clear 'connection changed' error shown");
+}
+await page.evaluate(() => { window.__mock.usePrimary("dev"); window.__mock.emit("connection:updated"); });
+await waitPrimary("SSS Dev");
 
 await finish();

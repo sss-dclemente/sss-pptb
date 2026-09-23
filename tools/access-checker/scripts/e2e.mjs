@@ -16,7 +16,13 @@ const TOOL = new URL("..", import.meta.url).pathname.replace(/\/$/, "");
 
 const MOCK = `
 (() => {
-  const BU_ROOT = 'b0000000-0000-0000-0000-000000000001', BU_SALES = 'b0000000-0000-0000-0000-000000000002';
+  const BU_ROOT = 'b0000000-0000-0000-0000-000000000001', BU_SALES = 'b0000000-0000-0000-0000-000000000002', BU_OPS = 'b0000000-0000-0000-0000-000000000003';
+  // Eva (BU Ops) reads contacts through team "Sales Readers" (BU Sales, Read Local + Write Deep) and holds
+  // "Contact Appender" (BU Sales, Append Local) directly. She owns a contact in Ops: Basic ⊂ Local ⊂ Deep.
+  const EVA = 'a0000000-0000-0000-0000-000000000005', PLUS = 'a0000000-0000-0000-0000-000000000006';
+  const R_CREADER = 'c0000000-0000-0000-0000-000000000006', R_CAPP = 'c0000000-0000-0000-0000-000000000007';
+  const T_READERS = 'd0000000-0000-0000-0000-000000000002';
+  const CON_E = 'e1000000-0000-0000-0000-000000000001', ACC_T = 'e0000000-0000-0000-0000-000000000004';
   const ANA = 'a0000000-0000-0000-0000-000000000001', BRUNO = 'a0000000-0000-0000-0000-000000000002', CARLA = 'a0000000-0000-0000-0000-000000000003', DIEGO = 'a0000000-0000-0000-0000-000000000004';
   const R_SALES = 'c0000000-0000-0000-0000-000000000001', R_SHARER = 'c0000000-0000-0000-0000-000000000002', R_TEAMONLY = 'c0000000-0000-0000-0000-000000000003', R_ROOTAPP = 'c0000000-0000-0000-0000-000000000004', R_ADMIN = 'c0000000-0000-0000-0000-000000000005';
   const SYSADMIN_TEMPLATE = '627090ff-40a3-4053-8790-584edc5be201';
@@ -49,12 +55,16 @@ const MOCK = `
     [R_TEAMONLY]: [['prvAssignAccount','Basic']],
     [R_ROOTAPP]: [['prvAppendToAccount','Local']],
     [R_ADMIN]: privNames.map((n) => [n, 'Global']),
+    [R_CREADER]: [['prvReadContact','Local'],['prvWriteContact','Deep']],
+    [R_CAPP]: [['prvAppendContact','Local']],
   };
   const users = [
     { systemuserid: ANA, fullname: 'Ana Silva', domainname: 'ana@sss.test', internalemailaddress: 'ana@sss.test', _businessunitid_value: BU_SALES, _parentsystemuserid_value: CARLA, isdisabled: false, applicationid: null },
     { systemuserid: BRUNO, fullname: 'Bruno Costa', domainname: 'bruno@sss.test', internalemailaddress: 'bruno@sss.test', _businessunitid_value: BU_SALES, _parentsystemuserid_value: ANA, isdisabled: false, applicationid: null },
     { systemuserid: CARLA, fullname: 'Carla Reis', domainname: 'carla@sss.test', internalemailaddress: 'carla@sss.test', _businessunitid_value: BU_ROOT, _parentsystemuserid_value: null, isdisabled: false, applicationid: null },
     { systemuserid: DIEGO, fullname: 'Diego Admin', domainname: 'diego@sss.test', internalemailaddress: 'diego@sss.test', _businessunitid_value: BU_ROOT, _parentsystemuserid_value: null, isdisabled: false, applicationid: null },
+    { systemuserid: EVA, fullname: 'Eva Nunes', domainname: 'eva@sss.test', internalemailaddress: 'eva@sss.test', _businessunitid_value: BU_OPS, _parentsystemuserid_value: null, isdisabled: false, applicationid: null },
+    { systemuserid: PLUS, fullname: 'Plus User', domainname: 'a+b@x.com', internalemailaddress: 'a+b@x.com', _businessunitid_value: BU_SALES, _parentsystemuserid_value: null, isdisabled: false, applicationid: null },
     ...DUMMIES.map((d) => ({ systemuserid: d.id, fullname: d.name, domainname: d.id + '@x.test', internalemailaddress: null, _businessunitid_value: BU_SALES, _parentsystemuserid_value: null, isdisabled: false, applicationid: null })),
   ];
   const role = (roleid, name, bu, isinherited, tpl = null) => ({ roleid, name, _businessunitid_value: bu, _roletemplateid_value: tpl, isinherited });
@@ -64,32 +74,47 @@ const MOCK = `
     [R_TEAMONLY]: role(R_TEAMONLY, 'Team Assigner', BU_SALES, 0),
     [R_ROOTAPP]: role(R_ROOTAPP, 'Root Appender', BU_ROOT, 1),
     [R_ADMIN]: role(R_ADMIN, 'Administrador do Sistema', BU_ROOT, 1, SYSADMIN_TEMPLATE),
+    [R_CREADER]: role(R_CREADER, 'Contact Reader', BU_SALES, 1),
+    [R_CAPP]: role(R_CAPP, 'Contact Appender', BU_SALES, 1),
   };
   const teams = [{ teamid: T_EU, name: 'Sales EU', teamtype: 0, _businessunitid_value: BU_SALES }];
+  const readers = { teamid: T_READERS, name: 'Sales Readers', teamtype: 0, _businessunitid_value: BU_SALES };
   const expand = {
-    systemuserroles_association: { [ANA]: [roles[R_SALES], roles[R_ROOTAPP]], [DIEGO]: [roles[R_ADMIN]] },
-    teammembership_association: { [ANA]: teams },
+    systemuserroles_association: { [ANA]: [roles[R_SALES], roles[R_ROOTAPP]], [DIEGO]: [roles[R_ADMIN]], [EVA]: [roles[R_CAPP]] },
+    teammembership_association: { [ANA]: teams, [EVA]: [readers] },
     systemuserprofiles_association: { [ANA]: [] },
-    teamroles_association: { [T_EU]: [roles[R_SHARER], roles[R_TEAMONLY]] },
+    teamroles_association: { [T_EU]: [roles[R_SHARER], roles[R_TEAMONLY]], [T_READERS]: [roles[R_CREADER]] },
     teamprofiles_association: { [T_EU]: [{ fieldsecurityprofileid: FSP, name: 'Margin Readers' }] },
   };
   // Roles a user holds directly or through teams, for RetrieveUserPrivilegeByPrivilegeName.
-  const heldBy = { [ANA]: [R_SALES, R_ROOTAPP, R_SHARER, R_TEAMONLY], [DIEGO]: [R_ADMIN] };
+  const heldBy = { [ANA]: [R_SALES, R_ROOTAPP, R_SHARER, R_TEAMONLY], [DIEGO]: [R_ADMIN], [EVA]: [R_CAPP, R_CREADER] };
+  // Tests mutate these to model a role change between two checks.
+  window.__mock = { rolePrivs, R_SALES };
   const acc = (accountid, name, owner, ownerName, bu) => ({ accountid, name, _ownerid_value: owner, '_ownerid_value@Microsoft.Dynamics.CRM.lookuplogicalname': 'systemuser', '_ownerid_value@OData.Community.Display.V1.FormattedValue': ownerName, _owningbusinessunit_value: bu });
-  const accounts = [acc(ACC_B, 'Bruno Corp', BRUNO, 'Bruno Costa', BU_SALES), acc(ACC_C, 'Carla Holdings', CARLA, 'Carla Reis', BU_ROOT), acc(ACC_A, 'Ana Ventures', ANA, 'Ana Silva', BU_SALES)];
+  const accounts = [acc(ACC_B, 'Bruno Corp', BRUNO, 'Bruno Costa', BU_SALES), acc(ACC_C, 'Carla Holdings', CARLA, 'Carla Reis', BU_ROOT), acc(ACC_A, 'Ana Ventures', ANA, 'Ana Silva', BU_SALES), acc(ACC_T, 'AT&T Wireless', CARLA, 'Carla Reis', BU_ROOT)];
+  const contacts = [{ contactid: CON_E, fullname: 'Eva Contact', _ownerid_value: EVA, '_ownerid_value@Microsoft.Dynamics.CRM.lookuplogicalname': 'systemuser', '_ownerid_value@OData.Community.Display.V1.FormattedValue': 'Eva Nunes', _owningbusinessunit_value: BU_OPS }];
   const sets = {
     systemusers: { key: 'systemuserid', rows: users, pageSize: 25 },
-    teams: { key: 'teamid', rows: teams },
-    businessunits: { key: 'businessunitid', rows: [{ businessunitid: BU_ROOT, name: 'Root', _parentbusinessunitid_value: null }, { businessunitid: BU_SALES, name: 'Sales', _parentbusinessunitid_value: BU_ROOT }] },
+    teams: { key: 'teamid', rows: [...teams, readers] },
+    businessunits: { key: 'businessunitid', rows: [{ businessunitid: BU_ROOT, name: 'Root', _parentbusinessunitid_value: null }, { businessunitid: BU_SALES, name: 'Sales', _parentbusinessunitid_value: BU_ROOT }, { businessunitid: BU_OPS, name: 'Ops', _parentbusinessunitid_value: BU_ROOT }] },
     privileges: { key: 'privilegeid', rows: privileges, pageSize: 10 },
     organizations: { key: 'organizationid', rows: [{ organizationid: '00000000-0000-0000-0000-000000000009', ishierarchicalsecuritymodelenabled: true, maxdepthforhierarchicalsecuritymodel: 1 }] },
     accounts: { key: 'accountid', rows: accounts },
+    contacts: { key: 'contactid', rows: contacts },
     fieldpermissions: { key: 'fieldpermissionid', rows: [{ fieldpermissionid: '11111111-0000-0000-0000-000000000001', entityname: 'account', attributelogicalname: 'sss_margin', canread: 4, canupdate: 0, cancreate: 0, _fieldsecurityprofileid_value: FSP }] },
   };
   const pick = (row, cols) => (cols ? Object.fromEntries(cols.map((c) => [c, row[c] ?? null])) : row);
   window.__calls = [];
+  window.__filters = [];
+  // substring of a query (or 'attrs:<table>') → ms; lets a test hold a request in flight.
+  window.__delays = {};
+  const hold = async (key) => {
+    const hit = Object.entries(window.__delays).find(([k]) => key.includes(k));
+    if (hit) await new Promise((r) => setTimeout(r, hit[1]));
+  };
   const queryData = async (q) => {
     window.__calls.push(q);
+    await hold(q);
     // RetrieveRolePrivilegesRole goes through queryData, not execute: it is an unbound
     // function whose RoleId is an Edm.Guid, and execute quotes every string parameter.
     // Require the unquoted guid here so neither wrong shape can pass again.
@@ -106,10 +131,13 @@ const MOCK = `
       if (!e) throw new Error('mock: no entity ' + ed[1]);
       return { '@odata.context': 'https://sss-dev.crm4.dynamics.com/api/data/v9.2/$metadata#EntityDefinitions(Privileges)/$entity', LogicalName: e.LogicalName, MetadataId: P(e.LogicalName), Privileges: entityPrivileges(e) };
     }
-    const [set, rest = ''] = q.split('?');
+    // Parsed the way the server parses a URL: '#' starts a fragment (never sent), '&' separates
+    // parameters, '+' is a space and %XX is decoded.
+    const [set, rest = ''] = q.split('#')[0].split('?');
     const src = sets[set];
     if (!src) throw new Error('mock: unknown set ' + set);
-    const params = Object.fromEntries(rest.split('&').map((p) => { const i = p.indexOf('='); return [p.slice(0, i), decodeURIComponent(p.slice(i + 1))]; }));
+    const params = Object.fromEntries(rest.split('&').map((p) => { const i = p.indexOf('='); return [p.slice(0, i), decodeURIComponent(p.slice(i + 1).replace(/\\+/g, ' '))]; }));
+    if (params.$filter) window.__filters.push(params.$filter);
     let rows = src.rows;
     const f = params.$filter ?? '';
     const ids = [...f.matchAll(/(\\w+) eq ([0-9a-f-]{36})/g)];
@@ -171,6 +199,7 @@ const MOCK = `
       }
       case 'RetrievePrincipalAccess': {
         const id = req.parameters.Target.id;
+        if (req.parameters.Target.entityLogicalName === 'contact') return { AccessRights: id === CON_E && req.entityId === EVA ? 'ReadAccess, WriteAccess, AppendAccess' : 'None' };
         if (req.parameters.Target.entityLogicalName !== 'account') throw new Error('mock: bad target');
         // Platform truth per record for Ana. ACC_A: "Team privileges only" Assign Basic does not reach her own
         // record. ACC_C: the Delete share is ignored (no Delete privilege); AppendTo comes from Root Appender (BU Root).
@@ -195,7 +224,11 @@ const MOCK = `
   window.dataverseAPI = {
     queryData, execute,
     getAllEntitiesMetadata: async () => ({ value: entities }),
-    getEntityRelatedMetadata: async (e, path) => ({ value: e === 'account' && path === 'Attributes' ? [{ LogicalName: 'name', DisplayName: lbl('Account Name'), IsSecured: false }, { LogicalName: 'sss_margin', DisplayName: lbl('Margin'), IsSecured: true }] : [] }),
+    getEntityRelatedMetadata: async (e, path) => {
+      await hold('attrs:' + e);
+      if (window.__failAttrs) throw new Error('mock: attribute metadata unavailable');
+      return { value: e === 'account' && path === 'Attributes' ? [{ LogicalName: 'name', DisplayName: lbl('Account Name'), IsSecured: false }, { LogicalName: 'sss_margin', DisplayName: lbl('Margin'), IsSecured: true }] : [] };
+    },
   };
   window.toolboxAPI = {
     connections: { getActiveConnection: async () => ({ id: 'c1', name: 'SSS Dev', url: 'https://sss-dev.crm4.dynamics.com', environment: 'Dev', environmentColor: '#0f766e' }), getSecondaryConnection: async () => null },
@@ -353,7 +386,13 @@ assert((await chip("Write")).includes("denied") && (await text("#why")).includes
 await page.evaluate(() => window.__emit({ event: "settings:updated", data: { theme: "dark" } }));
 assert((await page.getAttribute("html", "data-theme")) === "dark", "dark theme applied from settings:updated");
 const calls = await page.evaluate(() => window.__calls);
-assert(calls.filter((c) => c === "RetrieveRolePrivilegesRole(RoleId=" + "c0000000-0000-0000-0000-000000000001" + ")").length === 1, "role privileges cached across checks");
+// Role privileges are re-read on every check (a role edited between checks must not show a stale
+// depth), but only once per role within a check.
+{
+  const salesReads = calls.filter((c) => c === "RetrieveRolePrivilegesRole(RoleId=" + "c0000000-0000-0000-0000-000000000001" + ")").length;
+  const checks = calls.filter((c) => c.startsWith("systemusers?$select=systemuserid,fullname") && c.endsWith("eq a0000000-0000-0000-0000-000000000001")).length;
+  assert(salesReads > 1 && salesReads <= checks, "role privileges re-read per check, once per role");
+}
 assert(calls.filter((c) => c === "RetrieveUserPrivilegeByPrivilegeName:prvShareAccount").length === 1, "user privileges cached per privilege");
 assert(!calls.some((c) => c.startsWith("RetrieveUserPrivileges:")), "RetrieveUserPrivileges is never called");
 assert(calls.filter((c) => c.startsWith("RetrieveUserPrivilegeByPrivilegeName:")).every((c) => /:prv\w+(Account|Activity|sss_Setting)$/.test(c)), "only the checked tables' privileges are fetched");
@@ -372,5 +411,99 @@ await page.waitForFunction(() => document.querySelector("#tab-check h2")?.textCo
 assert((await text("#tab-check .warnings")).includes("User holds System Administrator"), "sysadmin by role template, not name");
 await page.waitForFunction(() => document.querySelector("#tab-columns table.columns"));
 assert((await text("#tab-columns table.columns")).includes("System Administrator (bypasses column security)"), "column security bypass for template-detected sysadmin");
+
+// ---------- regression cases ----------
+const until = (fn, arg, timeout = 4000) => page.waitForFunction(fn, arg, { timeout }).then(() => true, () => false);
+const settle = () => page.waitForFunction(() => document.querySelector("#status").hidden);
+const pickUser = async (q, name) => {
+  await page.fill("#user-q", q);
+  await page.waitForFunction((n) => { const l = document.querySelector("#user-results"); return !l.hidden && l.textContent.includes(n); }, name);
+  await page.click(`#user-results li button:has-text("${name}")`);
+  await page.waitForFunction((n) => document.querySelector("#user-sel")?.textContent.includes(n), name);
+};
+const pickRecord = async (q, name) => {
+  await page.fill("#record-q", q);
+  await page.waitForFunction((n) => { const l = document.querySelector("#record-results"); return !l.hidden && l.textContent.includes(n); }, name);
+  await page.click(`#record-results li button:has-text("${name}")`);
+  await page.waitForFunction((n) => document.querySelector("#record-sel")?.textContent.includes(n), name);
+};
+const h2 = () => page.textContent("#tab-check h2");
+await page.click(".tab[data-tab='check']");
+
+// Search text with & + reaches Dataverse intact (queryData appends the query verbatim).
+await page.fill("#user-q", "a+b@x.com");
+assert(await until(() => { const l = document.querySelector("#user-results"); return !l.hidden && l.textContent.includes("Plus User"); }), "user search: 'a+b@x.com' finds Plus User");
+assert((await page.evaluate(() => window.__filters)).some((f) => f.includes("contains(internalemailaddress,'a+b@x.com')")), "user search: '+' reaches the filter as '+', not a space");
+await page.fill("#record-q", "AT&T");
+await until(() => { const l = document.querySelector("#record-results"); return !l.hidden && l.querySelector("li"); });
+{
+  const r = await text("#record-results");
+  assert(r.includes("AT&T Wireless") && !r.includes("Bruno Corp"), "record search: '&' does not split the query string");
+  assert((await page.evaluate(() => window.__filters)).includes("contains(name,'AT&T')"), "record search: filter decoded as contains(name,'AT&T')");
+}
+await page.fill("#record-q", "");
+
+// Record search results belong to the table they were searched in.
+await page.evaluate(() => (window.__delays = { "accounts?$select=accountid,name,_ownerid_value,_owningbusinessunit_value&$filter=contains": 600 }));
+await page.fill("#record-q", "carla");
+await page.waitForTimeout(400);
+await page.selectOption("#table", "contact");
+await page.waitForTimeout(700);
+assert(await page.$eval("#record-results", (e) => e.hidden || !e.textContent.includes("Carla Holdings")), "account search results dropped after switching to contact");
+await page.evaluate(() => (window.__delays = {}));
+
+// A check uses the inputs it started with; a user picked mid-check is kept.
+await pickUser("ana silva", "Ana Silva");
+await page.selectOption("#table", "account");
+await pickRecord("bruno", "Bruno Corp");
+await page.evaluate(() => (window.__delays = { "$filter=systemuserid eq a0000000-0000-0000-0000-000000000001": 1500 }));
+await page.click("#btn-check");
+await page.click("#record-sel button");
+await pickUser("diego", "Diego Admin");
+await page.evaluate(() => (window.__delays = {}));
+await page.waitForTimeout(1600);
+await settle();
+assert((await h2()).includes("Ana Silva on Bruno Corp"), "check result is for the record it started with, not the one cleared mid-check");
+assert((await text("#user-sel")).includes("Diego Admin"), "user picked mid-check is not overwritten");
+assert(await page.$eval("#record-sel", (e) => e.hidden), "record cleared mid-check stays cleared");
+
+// Column security: previous check's columns are not shown while loading or after a failure.
+assert(!!(await page.$("#tab-columns table.columns")), "columns present from the previous check");
+await page.evaluate(() => { window.__delays = { "attrs:account": 800 }; window.__failAttrs = true; });
+await page.click("#btn-check");
+await until(() => document.querySelector("#tab-check h2")?.textContent.includes("Diego Admin"));
+assert(!(await page.$("#tab-columns table.columns")) && (await text("#tab-columns")).includes("Loading"), "columns tab shows loading, not the previous check");
+await settle();
+assert(!(await page.$("#tab-columns table.columns")) && (await text("#tab-columns")).toLowerCase().includes("failed"), "columns tab shows the failure, not the previous check");
+assert(await page.$eval("#btn-export-columns", (b) => b.disabled).catch(() => true), "columns CSV export unavailable when column security failed");
+await page.evaluate(() => { window.__delays = {}; window.__failAttrs = false; });
+
+// Privileges changed between two checks: platform and role depths are re-read.
+await pickUser("ana silva", "Ana Silva");
+await page.click("#btn-check");
+await page.waitForFunction(() => document.querySelector("#tab-check h2")?.textContent.includes("Ana Silva on table Account"));
+await settle();
+assert((await chip("Delete")).includes("denied"), "before role change: Delete denied");
+await page.evaluate(() => window.__mock.rolePrivs[window.__mock.R_SALES].push(["prvDeleteAccount", "Local"]));
+await page.click("#btn-check");
+await page.waitForTimeout(100);
+await settle();
+assert((await chip("Delete")).includes("granted") && (await chip("Delete")).includes("Local"), "after role change: platform Delete Local (not cached)");
+assert(!(await text("#why")).includes("platform says otherwise"), "after role change: role depth re-read, tool agrees");
+await page.evaluate(() => window.__mock.rolePrivs[window.__mock.R_SALES].pop());
+
+// Local/Deep include Basic: the user's own record in another BU than the role's base BU.
+await pickUser("eva", "Eva Nunes");
+await page.selectOption("#table", "contact");
+await pickRecord("eva", "Eva Contact");
+await page.click("#btn-check");
+await page.waitForFunction(() => document.querySelector("#tab-check h2")?.textContent.includes("Eva Contact"));
+await settle();
+{
+  const why = await text("#why");
+  assert(!why.includes("platform says otherwise"), "own record: Local (team, other BU) / Deep / direct Local from other BU agree with platform");
+  assert(why.includes("Contact Reader via team Sales Readers: Local depth includes Basic: user owns the record"), "own record reached by Local depth via team in another BU");
+  assert(why.includes("Deep depth includes Basic: user owns the record") && why.includes("Contact Appender: Local depth includes Basic"), "own record reached by Deep and by a direct role from another BU");
+}
 
 await finish();

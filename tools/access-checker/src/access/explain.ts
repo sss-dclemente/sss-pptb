@@ -18,31 +18,49 @@ export function isInSubtree(bus: BusinessUnit[], baseId: string | null, buId: st
 
 const buName = (bus: BusinessUnit[], id: string | null): string => (id && bus.find((b) => b.id === id)?.name) || "unknown BU";
 
+/**
+ * What Basic depth covers for this path: records the user owns, or records owned by one of the user's
+ * teams. A team role set to "Team privileges only" (isinherited = 0) gives its members Basic access to
+ * records owned by that team only: not to their own records, not to other teams' records.
+ */
+function basicReach(d: CheckData, p: Pick<PrivilegePath, "role" | "viaTeam">, userIsOwner: boolean, userInOwningTeam: boolean): { reaches: boolean; reason: string } {
+  const rec = d.record!;
+  if (p.viaTeam && !p.role.isInherited) {
+    const ok = rec.ownerType === "team" && rec.ownerId === p.viaTeam.id;
+    return {
+      reaches: ok,
+      reason: ok ? `record is owned by team ${p.viaTeam.name}` : `a "Team privileges only" role covers only records owned by team ${p.viaTeam.name}${userIsOwner ? ", not the user's own records" : ""}`,
+    };
+  }
+  if (userIsOwner) return { reaches: true, reason: "user owns the record" };
+  if (userInOwningTeam) return { reaches: true, reason: "record is owned by a team the user belongs to" };
+  return { reaches: false, reason: "only records the user (or one of their teams) owns" };
+}
+
 function reach(d: CheckData, p: Pick<PrivilegePath, "depth" | "baseBuId" | "role" | "viaTeam">, userIsOwner: boolean, userInOwningTeam: boolean): { reaches: boolean; reason: string } {
   const rec = d.record!;
   const owningBu = rec.owningBusinessUnitId;
   if (d.table.ownership === "org" || d.table.ownership === "none") return { reaches: true, reason: "organization-owned table: any depth applies" };
   if (p.depth === 3) return { reaches: true, reason: "Global depth reaches every record" };
-  if (p.depth === 2) {
-    const ok = isInSubtree(d.businessUnits, p.baseBuId, owningBu);
-    return { reaches: ok, reason: ok ? `Deep depth: record BU ${buName(d.businessUnits, owningBu)} is under ${buName(d.businessUnits, p.baseBuId)}` : `Deep depth stops at ${buName(d.businessUnits, p.baseBuId)} and its children; record is in ${buName(d.businessUnits, owningBu)}` };
+  const basic = basicReach(d, p, userIsOwner, userInOwningTeam);
+  if (p.depth === 0) {
+    if (p.viaTeam && !p.role.isInherited) return { reaches: basic.reaches, reason: basic.reaches ? `Basic depth (Team privileges only): ${basic.reason}` : `Basic depth from ${basic.reason}` };
+    return { reaches: basic.reaches, reason: basic.reaches ? `Basic depth: ${basic.reason}` : `Basic depth covers ${basic.reason}` };
   }
-  if (p.depth === 1) {
-    const ok = !!owningBu && owningBu === p.baseBuId;
-    return { reaches: ok, reason: ok ? `Local depth: record is in the same BU (${buName(d.businessUnits, owningBu)})` : `Local depth covers only ${buName(d.businessUnits, p.baseBuId)}; record is in ${buName(d.businessUnits, owningBu)}` };
-  }
-  // A team role set to "Team privileges only" (isinherited = 0) gives its members Basic access to
-  // records owned by that team only: not to their own records, not to other teams' records.
-  if (p.viaTeam && !p.role.isInherited) {
-    const ok = rec.ownerType === "team" && rec.ownerId === p.viaTeam.id;
+  // Basic ⊂ Local ⊂ Deep: a wider depth always covers what Basic covers, whatever BU the record is in
+  // (the user's own record in their BU when the role is based in another BU, a team's record elsewhere).
+  const label = p.depth === 2 ? "Deep" : "Local";
+  const buOk = p.depth === 2 ? isInSubtree(d.businessUnits, p.baseBuId, owningBu) : !!owningBu && owningBu === p.baseBuId;
+  if (buOk)
     return {
-      reaches: ok,
-      reason: ok ? `Basic depth (Team privileges only): record is owned by team ${p.viaTeam.name}` : `Basic depth from a "Team privileges only" role covers only records owned by team ${p.viaTeam.name}${userIsOwner ? ", not the user's own records" : ""}`,
+      reaches: true,
+      reason: p.depth === 2 ? `Deep depth: record BU ${buName(d.businessUnits, owningBu)} is under ${buName(d.businessUnits, p.baseBuId)}` : `Local depth: record is in the same BU (${buName(d.businessUnits, owningBu)})`,
     };
-  }
-  if (userIsOwner) return { reaches: true, reason: "Basic depth: user owns the record" };
-  if (userInOwningTeam) return { reaches: true, reason: "Basic depth: record is owned by a team the user belongs to" };
-  return { reaches: false, reason: "Basic depth covers only records the user (or one of their teams) owns" };
+  if (basic.reaches) return { reaches: true, reason: `${label} depth includes Basic: ${basic.reason}` };
+  return {
+    reaches: false,
+    reason: p.depth === 2 ? `Deep depth stops at ${buName(d.businessUnits, p.baseBuId)} and its children; record is in ${buName(d.businessUnits, owningBu)}` : `Local depth covers only ${buName(d.businessUnits, p.baseBuId)}; record is in ${buName(d.businessUnits, owningBu)}`,
+  };
 }
 
 const shareText = (viaTeam: string | null): string => (viaTeam ? `shared with team ${viaTeam}` : "shared directly with the user");

@@ -20,9 +20,32 @@ export interface WriteResult extends PlannedWrite {
   error?: string;
 }
 
+/** The connection a plan was previewed against: the org its definition/value ids belong to. */
+export interface ConnectionStamp {
+  connectionId: string | null;
+  url: string;
+}
+
 export interface WritePlan {
   target: ColumnMeta;
+  /** stamped at preview time; Apply refuses if the target's current connection differs */
+  stamp: ConnectionStamp;
   items: PlannedWrite[];
+}
+
+export const stampOf = (m: ColumnMeta): ConnectionStamp => ({ connectionId: m.connectionId ?? null, url: m.url });
+
+const normUrl = (u: string): string => u.trim().toLowerCase().replace(/\/+$/, "");
+
+/** Same org and (when both known) same connection id. */
+export function sameConnection(a: ConnectionStamp, b: ConnectionStamp | null | undefined): boolean {
+  if (!b) return false;
+  if (normUrl(a.url) !== normUrl(b.url)) return false;
+  return !a.connectionId || !b.connectionId || a.connectionId === b.connectionId;
+}
+
+export function connectionChangedMessage(plan: WritePlan, current: ConnectionStamp | null | undefined): string {
+  return `Connection changed: the preview was built for ${plan.target.name} (${plan.stamp.url}) but the ${plan.target.target ?? "target"} connection is now ${current ? current.url : "not set"}. Nothing written; refresh and preview again.`;
 }
 
 /** Validate a value against the environment variable type. Returns an error message, or null when valid. */
@@ -81,6 +104,7 @@ function planOne(row: EnvVarRow, targetKey: string, src: PlanSource): PlannedWri
 export function planCopy(rows: EnvVarRow[], fromKey: string, target: ColumnMeta): WritePlan {
   return {
     target,
+    stamp: stampOf(target),
     items: rows.map((r) => {
       const c = r.cells[fromKey];
       return planOne(r, target.key, { value: c?.effective ?? null, label: "source", fromDefault: c?.source === "default" });
@@ -90,7 +114,7 @@ export function planCopy(rows: EnvVarRow[], fromKey: string, target: ColumnMeta)
 
 /** Set one explicit value in live column `target`. */
 export function planSet(row: EnvVarRow, target: ColumnMeta, newValue: string): WritePlan {
-  return { target, items: [planOne(row, target.key, { value: newValue, label: "input" })] };
+  return { target, stamp: stampOf(target), items: [planOne(row, target.key, { value: newValue, label: "input" })] };
 }
 
 export interface WriterLike {
@@ -98,13 +122,30 @@ export interface WriterLike {
   update: (entity: string, id: string, record: Record<string, unknown>, target?: Target) => Promise<void>;
 }
 
-export async function applyPlan(api: WriterLike, plan: WritePlan): Promise<WriteResult[]> {
+/**
+ * Write the plan. `currentConnection` re-reads the target's live connection; it is checked before every write, and once
+ * it no longer matches `plan.stamp` the remaining writes are refused (the plan's ids belong to the stamped org).
+ */
+export async function applyPlan(
+  api: WriterLike,
+  plan: WritePlan,
+  currentConnection: (t: Target) => Promise<ConnectionStamp | null>,
+): Promise<WriteResult[]> {
   const target = plan.target.target;
   if (!target) throw new Error("target column is not a live connection");
   const out: WriteResult[] = [];
+  let refused: string | null = null;
   for (const item of plan.items) {
     if (item.action === "skip" || item.action === "invalid") {
       out.push({ ...item, ok: item.action === "skip", error: item.action === "invalid" ? item.reason : undefined });
+      continue;
+    }
+    if (!refused) {
+      const cur = await currentConnection(target).catch(() => null);
+      if (!sameConnection(plan.stamp, cur)) refused = connectionChangedMessage(plan, cur);
+    }
+    if (refused) {
+      out.push({ ...item, ok: false, error: refused });
       continue;
     }
     try {

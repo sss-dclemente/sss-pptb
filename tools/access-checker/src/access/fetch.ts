@@ -31,6 +31,12 @@ const id = (v: unknown): string => String(v ?? "").toLowerCase();
 /** Guard before a guid is interpolated into an OData path. */
 const GUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const esc = (v: string): string => v.replace(/'/g, "''");
+/**
+ * A user-typed string literal inside $filter. queryData appends the query verbatim (no encoding), so
+ * & # % + in search text would split the query string, start a fragment, or decode to something else.
+ * Double the quotes (OData) first, then percent-encode the literal for the URL.
+ */
+const lit = (v: string): string => encodeURIComponent(esc(v));
 
 /**
  * Every page of a collection query. queryData returns the response body unchanged, so a paged result
@@ -94,8 +100,8 @@ const toUser = (r: Row): UserInfo => ({
 });
 
 export async function searchUsers(api: DataverseLike, text: string): Promise<UserInfo[]> {
-  const t = esc(text.trim());
-  if (!t) return [];
+  if (!text.trim()) return [];
+  const t = lit(text.trim());
   const r = await api.queryData(`systemusers?$select=${USER_SELECT}&$filter=(contains(fullname,'${t}') or contains(domainname,'${t}') or contains(internalemailaddress,'${t}')) and applicationid eq null&$orderby=fullname&$top=20`);
   return r.value.map(toUser);
 }
@@ -382,8 +388,8 @@ export async function fetchRecord(api: DataverseLike, t: TableInfo, recordId: st
 }
 
 export async function searchRecords(api: DataverseLike, t: TableInfo, text: string): Promise<RecordInfo[]> {
-  const q = esc(text.trim());
-  if (!q || !t.primaryName) return [];
+  if (!text.trim() || !t.primaryName) return [];
+  const q = lit(text.trim());
   const sel = [t.primaryId, t.primaryName, ...ownerFields(t)].join(",");
   const r = await api.queryData(`${t.entitySetName}?$select=${sel}&$filter=contains(${t.primaryName},'${q}')&$orderby=${t.primaryName}&$top=20`);
   return r.value.map((row) => toRecord(t, row));

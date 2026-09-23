@@ -1,5 +1,5 @@
 import JSZip from "jszip";
-import { componentTypeName, ENV_VAR_TYPE, WORKFLOW_CATEGORY } from "./componentTypes";
+import { componentTypeName, CONNECTION_REFERENCE, CUSTOM_TYPE_MIN, ENV_VAR_TYPE, WORKFLOW_CATEGORY } from "./componentTypes";
 import type {
   ConnectionReferenceInfo,
   DependencyRef,
@@ -126,6 +126,25 @@ function parseSolutionXml(doc: Document, info: SolutionInfo): void {
   );
 }
 
+/** RibbonDiffXml wrapper elements that an export writes even when there is no ribbon customization. */
+const RIBBON_CONTAINERS = new Set([
+  "CustomActions",
+  "Templates",
+  "RibbonTemplates",
+  "CommandDefinitions",
+  "RuleDefinitions",
+  "TabDisplayRules",
+  "DisplayRules",
+  "EnableRules",
+  "LocLabels",
+]);
+
+/** True when RibbonDiffXml holds any element other than the (empty) container elements every export writes. */
+function hasRibbonCustomization(ribbon: Element | null): boolean {
+  if (!ribbon) return false;
+  return Array.from(ribbon.getElementsByTagName("*")).some((e) => !RIBBON_CONTAINERS.has(e.tagName));
+}
+
 function parseEntity(el: Element): EntityInfo {
   const nameEl = el.querySelector(":scope > Name");
   const name = nameEl?.textContent?.trim() ?? "";
@@ -140,7 +159,7 @@ function parseEntity(el: Element): EntityInfo {
     forms: el.querySelectorAll(":scope > FormXml > forms > systemform").length,
     views: el.querySelectorAll(":scope > SavedQueries > savedqueries > savedquery").length,
     charts: el.querySelectorAll(":scope > Visualizations > visualization").length,
-    hasRibbon: !!el.querySelector(":scope > RibbonDiffXml > CustomActions > CustomAction, :scope > RibbonDiffXml > RuleDefinitions"),
+    hasRibbon: hasRibbonCustomization(el.querySelector(":scope > RibbonDiffXml")),
   };
 }
 
@@ -382,5 +401,46 @@ export async function parseSolutionZip(data: Uint8Array | ArrayBuffer, fileName:
     if (wf) wf.connectionReferences = refs;
   }
 
+  inferCustomTypeNames(info, files.map((f) => f.name));
   return info;
+}
+
+/**
+ * Component type codes >= 10000 are org-specific (connection references, custom APIs, ... get a different code per
+ * environment). Label a code when the zip content shows which table a root component of that code belongs to, then
+ * apply the label to every component of that code in this solution (root components and missing dependencies).
+ */
+function inferCustomTypeNames(info: SolutionInfo, paths: string[]): void {
+  const lower = (v: string | null) => (v ?? "").toLowerCase();
+  const connRefs = new Set(info.connectionReferences.map((c) => c.logicalName.toLowerCase()));
+  const folderNames = (re: RegExp) => new Set(paths.map((p) => p.match(re)?.[1]?.toLowerCase()).filter((v): v is string => !!v));
+  const customApis = folderNames(/^customapis\/([^/]+)\//i);
+  const requestParams = folderNames(/^customapis\/[^/]+\/customapirequestparameters\/([^/]+)\//i);
+  const responseProps = folderNames(/^customapis\/[^/]+\/customapiresponseproperties\/([^/]+)\//i);
+
+  const labels = new Map<number, string>();
+  for (const rc of info.rootComponents) {
+    if (rc.type < CUSTOM_TYPE_MIN || labels.has(rc.type) || !rc.schemaName) continue;
+    const n = lower(rc.schemaName);
+    const label = connRefs.has(n)
+      ? CONNECTION_REFERENCE
+      : customApis.has(n)
+        ? "Custom API"
+        : requestParams.has(n)
+          ? "Custom API Request Parameter"
+          : responseProps.has(n)
+            ? "Custom API Response Property"
+            : null;
+    if (label) labels.set(rc.type, label);
+  }
+  if (!labels.size) return;
+  const relabel = (x: { type: number; typeName: string }) => {
+    const l = labels.get(x.type);
+    if (l) x.typeName = l;
+  };
+  info.rootComponents.forEach(relabel);
+  for (const md of info.missingDependencies) {
+    relabel(md.required);
+    relabel(md.dependent);
+  }
 }

@@ -41,6 +41,8 @@ export interface ColumnMeta {
   key: string;
   kind: "live" | "snapshot";
   target?: Target;
+  /** host connection id of a live column (the org its record ids belong to) */
+  connectionId?: string;
   name: string;
   url: string;
   environment: string;

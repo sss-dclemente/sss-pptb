@@ -1,6 +1,6 @@
 {
   "name": "@simplesmoothsafe/pptb-access-checker",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "displayName": "SSS Access Checker",
   "description": "Why can (or can't) a user do X on a record? Verdict per access right with the chain that produced it: roles, teams, business unit, ownership, shares, hierarchy, column security.",
   "main": "index.html",
