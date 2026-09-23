@@ -17,13 +17,13 @@ Every tab exports its result as JSON.
 
 ## Screenshots
 
-Synthetic sample data. Replace with real captures before publishing.
+Inventory (light) and upgrade risk captured inside Power Platform ToolBox with the sample zips. Dark theme and install order are still synthetic.
 
 ![Inventory, light theme](https://raw.githubusercontent.com/sss-dclemente/sss-pptb/main/tools/solution-xray/docs/img/inventory-light.png)
 
 ![Inventory, dark theme](https://raw.githubusercontent.com/sss-dclemente/sss-pptb/main/tools/solution-xray/docs/img/inventory-dark.png)
 
-![Upgrade risk with baseline](https://raw.githubusercontent.com/sss-dclemente/sss-pptb/main/tools/solution-xray/docs/img/risk.png)
+![Upgrade risk](https://raw.githubusercontent.com/sss-dclemente/sss-pptb/main/tools/solution-xray/docs/img/risk.png)
 
 ![Install order with a dependency cycle](https://raw.githubusercontent.com/sss-dclemente/sss-pptb/main/tools/solution-xray/docs/img/install-order.png)
 

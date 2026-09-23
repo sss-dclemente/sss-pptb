@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SSS Dependency Cleaner</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <div class="content" style="height:100%">
+    <header class="topbar">
+      <div class="brand">
+        <span class="eyebrow">Simple Smooth Safe</span>
+        <h1>Dependency Cleaner</h1>
+      </div>
+      <span id="conn" class="conns" aria-label="Connections"></span>
+      <span class="spacer"></span>
+      <button id="btn-export-json" class="btn btn-ghost btn-sm" type="button" disabled>Findings JSON</button>
+      <button id="btn-export-csv" class="btn btn-ghost btn-sm" type="button" disabled>Findings CSV</button>
+    </header>
+
+    <nav class="tabs" role="tablist">
+      <button class="tab is-active" data-tab="diagnose" role="tab" type="button">Diagnose</button>
+      <button class="tab" data-tab="fix" role="tab" type="button">Fix</button>
+      <button class="tab" data-tab="restore" role="tab" type="button">Restore</button>
+      <button class="tab" data-tab="offline" role="tab" type="button">Offline</button>
+    </nav>
+
+    <div id="status" class="status" hidden></div>
+
+    <main class="main">
+      <section id="tab-diagnose" class="panel">
+        <div class="toolbar">
+          <label>Solution <select id="solution"><option value="">Loading…</option></select></label>
+          <label>Filter <input id="filter" type="text" value="msdyn, msdynce, mspp" aria-label="Publisher prefixes or solution names" title="Publisher prefixes or solution unique-name prefixes, comma separated" /></label>
+          <label class="check"><input type="checkbox" id="show-safe" /> Show present in target</label>
+          <button id="btn-run" class="btn btn-primary btn-sm" type="button" disabled>Diagnose</button>
+          <button id="btn-cancel" class="btn btn-ghost btn-sm" type="button" hidden>Cancel</button>
+        </div>
+        <div id="progress" class="progress" hidden><progress id="progress-bar" max="1" value="0"></progress><span id="progress-text" class="caption"></span></div>
+        <div id="diag-summary"></div>
+        <div id="findings"></div>
+        <div class="actionbar" id="diag-actions" hidden>
+          <span id="sel-count" class="caption"></span>
+          <button id="btn-to-fix" class="btn btn-primary btn-sm" type="button" disabled>Preview fixes…</button>
+        </div>
+      </section>
+
+      <section id="tab-fix" class="panel" hidden>
+        <div id="fix-banners"></div>
+        <div id="fix-body"></div>
+        <div class="actionbar" id="fix-actions" hidden>
+          <button id="btn-backup" class="btn btn-sm" type="button">1. Download backup</button>
+          <label class="check" id="prod-ack-wrap" hidden><input type="checkbox" id="prod-ack" /> I understand this is Production</label>
+          <button id="btn-confirm" class="btn btn-primary btn-sm" type="button" disabled>2. Confirm and apply</button>
+        </div>
+        <div id="fix-results"></div>
+      </section>
+
+      <section id="tab-restore" class="panel" hidden>
+        <div class="toolbar">
+          <button id="btn-load-backup" class="btn btn-sm" type="button">Load backup…</button>
+          <span id="restore-file" class="caption"></span>
+        </div>
+        <div id="restore-body"></div>
+        <div class="actionbar" id="restore-actions" hidden>
+          <button id="btn-restore-apply" class="btn btn-primary btn-sm" type="button" disabled>Apply restore</button>
+        </div>
+        <div id="restore-results"></div>
+      </section>
+
+      <section id="tab-offline" class="panel" hidden>
+        <div id="drop" class="dropzone">
+          <p>Drop an exported solution zip here, or</p>
+          <button id="btn-open-zip" class="btn btn-sm" type="button">Open zip…</button>
+          <p class="caption">Reads solution.xml MissingDependencies, the list the import checks. Same filter as Diagnose; a connected target marks solutions it already has.</p>
+        </div>
+        <div id="offline-body"></div>
+      </section>
+    </main>
+
+    <footer class="footer" style="padding: var(--s-2) var(--s-5); margin-top: 0; flex-direction: row; justify-content: space-between; align-items: center;">
+      <a href="https://simplesmoothsafe.com" target="_blank" rel="noopener">Simple Smooth Safe</a>
+      <span class="caption" id="host-mode"></span>
+    </footer>
+  </div>
+
+  <dialog id="dlg">
+    <div class="dlg-head"><h3 id="dlg-title">Confirm</h3><span class="spacer" style="flex:1"></span><span id="dlg-target" class="target"></span></div>
+    <div class="dlg-body" id="dlg-body"></div>
+    <div class="dlg-foot">
+      <button id="dlg-cancel" class="btn btn-ghost" type="button">Cancel</button>
+      <button id="dlg-ok" class="btn btn-primary" type="button" style="flex:none">OK</button>
+    </div>
+  </dialog>
+
+  <script type="module" src="./main.ts"></script>
+</body>
+</html>

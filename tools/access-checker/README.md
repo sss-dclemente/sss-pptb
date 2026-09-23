@@ -18,9 +18,11 @@ Read-only: the tool never changes roles, shares or profiles.
 
 ## Screenshots
 
-Synthetic sample data. Replace with real captures before publishing.
+Column security (light) captured inside Power Platform ToolBox, user redacted. Record check and dark theme are still synthetic.
 
 ![Record check](https://raw.githubusercontent.com/sss-dclemente/sss-pptb/main/tools/access-checker/docs/img/check.png)
+
+![Column security](https://raw.githubusercontent.com/sss-dclemente/sss-pptb/main/tools/access-checker/docs/img/columns.png)
 
 ![Column security, dark theme](https://raw.githubusercontent.com/sss-dclemente/sss-pptb/main/tools/access-checker/docs/img/columns-dark.png)
 
