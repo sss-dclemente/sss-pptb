@@ -1,6 +1,6 @@
 # DEPENDENCY-CLEANER-PLAN — SSS Dependency Cleaner
 
-Status: DRAFT, waiting for owner OK on D1–D8. Build starts after the bug-fix PR for the three existing tools is merged.
+Status: APPROVED (D1–D8 confirmed by owner). Build starts after the bug-fix PR for the three existing tools is merged.
 
 One-liner: "why does my solution depend on msdyn_*, and remove it". Pick an unmanaged solution in dev, see every dependency on a managed solution the target environment does not have (Field Service, Sales, Customer Service, Project Operations…), see the component in *your* solution that causes it, fix it in place: take the component out of the solution, or remove the msdyn column from the form or view. Then export again and the import works.
 
@@ -8,7 +8,7 @@ Facts: `docs/PPTB-NOTES.md` (§12: an `Edm.Guid` function parameter must go thro
 
 ---
 
-## 0. Decisions (need your OK)
+## 0. Decisions (approved)
 
 | # | Decision | Recommendation | Why |
 |---|---|---|---|
