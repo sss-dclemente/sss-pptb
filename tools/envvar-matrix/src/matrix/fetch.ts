@@ -8,19 +8,49 @@ export interface DataverseLike {
   getSolutions: (cols: string[], target?: Target) => Promise<{ value: Row[] }>;
 }
 
+const MAX_PAGES = 500;
+
+/** Relative query path of an absolute `@odata.nextLink` ("https://org/api/data/v9.2/x?..." → "x?..."). */
+export function relativeNextLink(link: string): string {
+  const m = link.match(/\/api\/data\/v\d+(?:\.\d+)*\/(.*)$/i);
+  return m ? m[1] : link;
+}
+
+/** queryData that follows `@odata.nextLink` until the last page. */
+export async function queryAll(api: DataverseLike, odata: string, target: Target): Promise<Row[]> {
+  const out: Row[] = [];
+  const seen = new Set<string>();
+  let q: string | null = odata;
+  for (let page = 0; q && page < MAX_PAGES; page++) {
+    const r: Record<string, unknown> & { value: Row[] } = await api.queryData(q, target);
+    out.push(...(r.value ?? []));
+    const next = r["@odata.nextLink"];
+    q = typeof next === "string" && next ? relativeNextLink(next) : null;
+    if (q && seen.has(q)) throw new Error(`paging loop at ${q}`);
+    if (q) seen.add(q);
+  }
+  if (q) throw new Error(`more than ${MAX_PAGES} pages for ${odata.split("?")[0]}`);
+  return out;
+}
+
 export async function fetchEnvVars(api: DataverseLike, target: Target): Promise<EnvVarRecord[]> {
   const [defs, vals] = await Promise.all([
-    api.queryData("environmentvariabledefinitions?$select=environmentvariabledefinitionid,schemaname,displayname,type,defaultvalue,ismanaged&$orderby=schemaname", target),
-    api.queryData("environmentvariablevalues?$select=environmentvariablevalueid,value,_environmentvariabledefinitionid_value", target),
+    queryAll(api, "environmentvariabledefinitions?$select=environmentvariabledefinitionid,schemaname,displayname,type,defaultvalue,ismanaged&$orderby=schemaname", target),
+    queryAll(api, "environmentvariablevalues?$select=environmentvariablevalueid,value,ismanaged,_environmentvariabledefinitionid_value", target),
   ]);
-  const valueByDef = new Map<string, Row>();
-  for (const v of vals.value) {
-    const d = s(v._environmentvariabledefinitionid_value);
-    if (d) valueByDef.set(d.toLowerCase(), v);
+  // Normally one value row per definition. More than one is surfaced (valueCount), not silently collapsed.
+  const valuesByDef = new Map<string, Row[]>();
+  for (const v of vals) {
+    const d = s(v._environmentvariabledefinitionid_value)?.toLowerCase();
+    if (!d) continue;
+    const list = valuesByDef.get(d);
+    if (list) list.push(v);
+    else valuesByDef.set(d, [v]);
   }
-  return defs.value.map((d) => {
+  return defs.map((d) => {
     const id = String(d.environmentvariabledefinitionid);
-    const v = valueByDef.get(id.toLowerCase());
+    const list = valuesByDef.get(id.toLowerCase()) ?? [];
+    const v = list[list.length - 1];
     const typeCode = Number(d.type ?? 0);
     return {
       definitionId: id,
@@ -32,16 +62,19 @@ export async function fetchEnvVars(api: DataverseLike, target: Target): Promise<
       value: v ? s(v.value) : null,
       valueId: v ? s(v.environmentvariablevalueid) : null,
       isManaged: !!d.ismanaged,
+      valueIsManaged: v ? !!v.ismanaged : false,
+      valueCount: list.length,
     };
   });
 }
 
 export async function fetchConnRefs(api: DataverseLike, target: Target): Promise<ConnRefRecord[]> {
-  const r = await api.queryData(
+  const rows = await queryAll(
+    api,
     "connectionreferences?$select=connectionreferenceid,connectionreferencelogicalname,connectionreferencedisplayname,connectorid,connectionid,ismanaged&$orderby=connectionreferencelogicalname",
     target,
   );
-  return r.value.map((c) => {
+  return rows.map((c) => {
     const connectorId = s(c.connectorid);
     return {
       id: String(c.connectionreferenceid),
@@ -85,11 +118,12 @@ export async function fetchSolutions(api: DataverseLike, target: Target): Promis
 
 /** Schema/logical names (lowercase) of env var definitions (380) and connection references (371) in a solution. */
 export async function fetchSolutionScope(api: DataverseLike, target: Target, solutionId: string, column: ColumnData): Promise<Set<string>> {
-  const r = await api.queryData(
+  const rows = await queryAll(
+    api,
     `solutioncomponents?$select=objectid,componenttype&$filter=_solutionid_value eq ${solutionId} and (componenttype eq 380 or componenttype eq 371)`,
     target,
   );
-  const ids = new Set(r.value.map((x) => String(x.objectid).toLowerCase()));
+  const ids = new Set(rows.map((x) => String(x.objectid).toLowerCase()));
   const out = new Set<string>();
   for (const e of column.envVars) if (ids.has(e.definitionId.toLowerCase())) out.add(e.schemaName.toLowerCase());
   for (const c of column.connRefs) if (ids.has(c.id.toLowerCase())) out.add(c.logicalName.toLowerCase());

@@ -9,9 +9,9 @@ Built by [Simple Smooth Safe](https://simplesmoothsafe.com).
 - **Matrix** — rows are environment variables (or connection references), columns are environments. Each cell shows the effective value and where it comes from: `value` (a value row exists), `default` (definition default only), `missing` (neither), `absent` (definition not in that environment). Rows with differences or gaps are highlighted.
 - **Columns** — the ToolBox primary and secondary connections are live columns. Any number of extra columns come from **snapshots**: export a column to JSON, load it later as a read-only column. Compare Dev, Test, UAT and Prod without ToolBox needing more than two connections.
 - **Filters** — text, only differences, only missing / unbound, and scope to a solution (its environment variable definitions and connection references).
-- **Copy values** — select rows, pick source and target columns, preview the plan (create / update / skip with a reason per row), confirm, see per-row results. Or set a single cell. Writes go to `environmentvariablevalue` in the target environment; definitions are never created and secrets are never written.
-- **Connection references** — bound / unbound / absent per environment, with connector and connection id. Read-only in v1.
-- **Export** — `deploymentSettings.json` for any column (the shape `pac solution import --settings-file` expects), matrix CSV, and snapshots.
+- **Copy values** — select rows, pick source and target columns, preview the plan (create / update / skip with a reason per row), confirm, see per-row results. Or set a single cell. Writes go to `environmentvariablevalue` in the target environment; definitions are never created and secrets are never written. Values are checked against the variable type before anything is written (Boolean `yes`/`no`, Number numeric, JSON parseable); invalid rows are shown in the preview and not written, and an empty input is skipped rather than written as an empty string. A copy or set that would only pin what the target already resolves to (for example its own default) is skipped, and a value copied from a source default is labelled as such. The preview cautions when the target value row is managed (the write adds an unmanaged layer) or when a definition has more than one value row.
+- **Connection references** — bound / unbound / absent per environment, with connector and connection id. A reference bound to a different connector in another environment counts as a difference. Read-only in v1.
+- **Export** — `deploymentSettings.json` for any column (the shape `pac solution import --settings-file` expects), matrix CSV, and snapshots. `deploymentSettings.json` follows the solution filter when one is selected. `Value` is the current value row only: variables with just a default, and all secrets, get an empty `Value`, as with `pac solution create-settings`. CSV cells that a spreadsheet would read as a formula (starting with `=`, `+`, `-`, `@`) are prefixed with `'`.
 
 ## Screenshots
 
@@ -44,16 +44,16 @@ Then in ToolBox: Debug → *Load Local Tool* → select the `tools/envvar-matrix
 ## Usage
 
 1. Pick a primary connection in ToolBox (and a secondary one to compare two live environments). The tool needs at least one connection.
-2. Rows load on open; **Refresh** reloads after changes in the environment.
+2. Rows load on open; **Refresh** reloads after changes in the environment. If one connection fails to load, the other column still loads and the failed column shows the error.
 3. Filter, then select rows and use the bottom bar to copy values from one column into a live column. Every write goes through a preview and a confirm step. A Production target is called out in the preview.
 4. **Export → Snapshot** saves the selected column as JSON; **Load snapshot…** adds it as a column in any later session.
 
 Notes:
 
-- Secrets (type *Secret*) are shown masked, compared by presence only, never written, and stored as `<secret>` in snapshots.
+- Secrets (type *Secret*) are shown masked, compared by presence only, never written, stored as `<secret>` in snapshots, and exported with an empty `Value` in `deploymentSettings.json`.
 - A copy skips rows whose definition does not exist in the target: this tool sets values, it does not move definitions. Ship definitions in a solution.
 - Values written outside a solution land in the environment's unmanaged layer, which is how `deploymentSettings.json` behaves too.
-- Queries are not paged; environments with more than 5 000 environment variables or connection references would be truncated.
+- Queries follow `@odata.nextLink`, so environments with more than 5 000 environment variables or connection references load completely.
 
 ## Privacy
 

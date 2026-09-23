@@ -38,7 +38,9 @@ table.matrix tr.missing td.name { border-left: 3px solid var(--status-bad-fg); }
 table.matrix td.cell { font-family: var(--font-mono); font-size: var(--fs-caption); max-width: 360px; }
 table.matrix td.cell .val { display: block; white-space: pre-wrap; word-break: break-all; color: var(--fg-primary); }
 table.matrix td.cell.absent { background: var(--bg-subtle); color: var(--fg-muted); }
-table.matrix td.cell .meta { display: flex; gap: var(--s-1); align-items: center; margin-top: 2px; }
+table.matrix td.cell.error { background: var(--status-bad-bg); color: var(--fg-muted); }
+table.matrix th.col .col-error { display: flex; flex-direction: column; gap: 2px; margin-top: 2px; text-transform: none; letter-spacing: 0; font-weight: normal; white-space: normal; }
+table.matrix td.cell .meta { display: flex; flex-wrap: wrap; gap: var(--s-1); align-items: center; margin-top: 2px; }
 table.matrix td.cell .btn-icon { opacity: 0; font-size: var(--fs-caption); }
 table.matrix tr:hover td.cell .btn-icon { opacity: 1; }
 table.matrix td.sel { width: 1%; }

@@ -17,7 +17,9 @@ let solutions: SolutionInfo[] = [];
 let scope: Set<string> | null = null;
 
 const columns = (): ColumnData[] => [...live, ...snaps];
-const liveCols = (): ColumnMeta[] => live.map((c) => c.meta);
+/** columns with data (a live column whose load failed has none) */
+const okColumns = (): ColumnData[] => columns().filter((c) => !c.meta.error);
+const liveCols = (): ColumnMeta[] => live.filter((c) => !c.meta.error).map((c) => c.meta);
 
 function colChip(meta: ColumnMeta, removable: boolean): HTMLElement {
   const dot = h("span", { class: "dot" });
@@ -29,6 +31,11 @@ function colChip(meta: ColumnMeta, removable: boolean): HTMLElement {
     h("span", { class: "env" }, meta.name),
     h("span", { class: "kind" }, meta.kind === "live" ? `${meta.target} · ${meta.environment}` : `snapshot${meta.takenAt ? ` · ${meta.takenAt.slice(0, 10)}` : ""}`),
   );
+  if (meta.error) {
+    const b = badge("load failed", "bad");
+    b.title = meta.error;
+    chip.append(b);
+  }
   if (removable) {
     const x = h("button", { class: "btn-icon", type: "button", "aria-label": `Remove ${meta.name}` }, "×");
     x.addEventListener("click", () => {
@@ -69,10 +76,11 @@ function renderHeader(): void {
     sel.replaceChildren(...metas.map((m) => h("option", { value: m.key }, `${m.name} (${m.kind === "live" ? m.target : "snapshot"})`)));
     if (keep && [...sel.options].some((o) => o.value === prev)) sel.value = prev;
   };
-  fill("#export-col", columns().map((c) => c.meta));
-  fill("#copy-from", columns().map((c) => c.meta));
+  fill("#export-col", okColumns().map((c) => c.meta));
+  fill("#copy-from", okColumns().map((c) => c.meta));
   fill("#copy-to", liveCols());
-  if (live.length > 1 && $<HTMLSelectElement>("#copy-to").value === $<HTMLSelectElement>("#copy-from").value) $<HTMLSelectElement>("#copy-to").value = live[1].meta.key;
+  const writable = liveCols();
+  if (writable.length > 1 && $<HTMLSelectElement>("#copy-to").value === $<HTMLSelectElement>("#copy-from").value) $<HTMLSelectElement>("#copy-to").value = writable[1].key;
 
   const solSel = $<HTMLSelectElement>("#filter-solution");
   const prev = solSel.value;
@@ -80,13 +88,25 @@ function renderHeader(): void {
   if ([...solSel.options].some((o) => o.value === prev)) solSel.value = prev;
   solSel.disabled = !live.length;
 
-  const canWrite = live.length > 0;
+  const canWrite = liveCols().length > 0;
   $("#btn-refresh").toggleAttribute("disabled", !inToolbox());
-  for (const id of ["#btn-export-settings", "#btn-export-snap", "#btn-export-csv"]) $(id).toggleAttribute("disabled", !columns().length);
+  for (const id of ["#btn-export-settings", "#btn-export-snap", "#btn-export-csv"]) $(id).toggleAttribute("disabled", !okColumns().length);
   $("#copy-to").toggleAttribute("disabled", !canWrite);
 }
 
 // ---------- tables ----------
+function colHead(c: ColumnMeta): HTMLElement {
+  const th = h("th", { class: "col" }, c.kind === "live" ? c.target! : "snapshot", h("span", { class: "env" }, c.name));
+  if (c.error) {
+    th.title = c.error;
+    th.append(h("span", { class: "col-error" }, badge("load failed", "bad"), h("span", { class: "caption" }, c.error)));
+  }
+  return th;
+}
+
+/** Cell of a live column whose load failed. */
+const errorCell = (c: ColumnMeta): HTMLElement => h("td", { class: "cell error", title: c.error ?? "" }, h("span", { class: "val" }, "—"), h("div", { class: "meta" }, badge("error", "bad")));
+
 function envVarTable(rows: EnvVarRow[]): HTMLElement {
   const cols = matrix.columns;
   const head = h(
@@ -95,7 +115,7 @@ function envVarTable(rows: EnvVarRow[]): HTMLElement {
     h("th", { class: "sel" }, ""),
     h("th", {}, "Variable"),
     h("th", {}, "Type"),
-    ...cols.map((c) => h("th", { class: "col" }, c.kind === "live" ? c.target! : "snapshot", h("span", { class: "env" }, c.name))),
+    ...cols.map(colHead),
   );
   const body = rows.map((r) => {
     const cb = h("input", { type: "checkbox", "aria-label": `Select ${r.schemaName}` }) as HTMLInputElement;
@@ -112,6 +132,7 @@ function envVarTable(rows: EnvVarRow[]): HTMLElement {
       h("td", { class: "name" }, h("span", { class: "mono" }, r.schemaName), h("span", { class: "display" }, r.displayName)),
       h("td", {}, badge(r.type, r.isSecret ? "warn" : "neutral")),
       ...cols.map((c) => {
+        if (c.error) return errorCell(c);
         const cell = r.cells[c.key];
         const td = h("td", { class: `cell ${cell.source}` });
         if (cell.source === "absent") {
@@ -119,7 +140,10 @@ function envVarTable(rows: EnvVarRow[]): HTMLElement {
           return td;
         }
         td.append(h("span", { class: "val" }, r.isSecret ? "••••••" : (cell.effective ?? "")));
-        const meta = h("div", { class: "meta" }, badge(cell.source, cell.source === "value" ? "ok" : cell.source === "default" ? "warn" : "bad"), cell.record?.isManaged ? badge("managed", "neutral") : null);
+        const dupes = cell.record?.valueCount ?? 0;
+        const dupeBadge = dupes > 1 ? badge(`${dupes} value rows`, "bad") : null;
+        if (dupeBadge) dupeBadge.title = "More than one environmentvariablevalue row for this definition; the one shown may not be the one the platform uses. Remove the extras.";
+        const meta = h("div", { class: "meta" }, badge(cell.source, cell.source === "value" ? "ok" : cell.source === "default" ? "warn" : "bad"), cell.record?.isManaged ? badge("managed", "neutral") : null, dupeBadge);
         if (c.kind === "live" && !r.isSecret) {
           const edit = h("button", { class: "btn-icon", type: "button", title: `Set value in ${c.name}`, "aria-label": `Set ${r.schemaName} in ${c.name}` }, "✎");
           edit.addEventListener("click", () => openSetDialog(r, c));
@@ -135,7 +159,7 @@ function envVarTable(rows: EnvVarRow[]): HTMLElement {
 
 function connRefTable(rows: Matrix["connRefs"]): HTMLElement {
   const cols = matrix.columns;
-  const head = h("tr", {}, h("th", {}, "Connection reference"), h("th", {}, "Connector"), ...cols.map((c) => h("th", { class: "col" }, c.kind === "live" ? c.target! : "snapshot", h("span", { class: "env" }, c.name))));
+  const head = h("tr", {}, h("th", {}, "Connection reference"), h("th", {}, "Connector"), ...cols.map(colHead));
   const body = rows.map((r) =>
     h(
       "tr",
@@ -143,11 +167,14 @@ function connRefTable(rows: Matrix["connRefs"]): HTMLElement {
       h("td", { class: "name" }, h("span", { class: "mono" }, r.logicalName), h("span", { class: "display" }, r.displayName)),
       h("td", {}, r.connector ?? "—"),
       ...cols.map((c) => {
+        if (c.error) return errorCell(c);
         const cell = r.cells[c.key];
         const td = h("td", { class: `cell ${cell.state}` });
+        const otherConnector = cell.connector && r.connector && cell.connector.toLowerCase() !== r.connector.toLowerCase() ? badge(cell.connector, "warn") : null;
+        if (otherConnector) otherConnector.title = `Connector differs: ${cell.record?.connectorId ?? cell.connector}`;
         td.append(
           h("span", { class: "val" }, cell.state === "absent" ? "—" : (cell.connectionId ?? "(no connection)")),
-          h("div", { class: "meta" }, badge(cell.state, cell.state === "bound" ? "ok" : cell.state === "unbound" ? "bad" : "neutral"), cell.record?.isManaged ? badge("managed", "neutral") : null),
+          h("div", { class: "meta" }, badge(cell.state, cell.state === "bound" ? "ok" : cell.state === "unbound" ? "bad" : "neutral"), cell.record?.isManaged ? badge("managed", "neutral") : null, otherConnector),
         );
         return td;
       }),
@@ -176,7 +203,7 @@ function renderTable(): void {
 
 function renderBulkbar(): void {
   const bar = $("#bulkbar");
-  bar.hidden = activeTab !== "envvars" || selected.size === 0 || live.length === 0;
+  bar.hidden = activeTab !== "envvars" || selected.size === 0 || liveCols().length === 0;
   $("#sel-count").textContent = String(selected.size);
 }
 
@@ -188,7 +215,27 @@ function rebuild(): void {
 }
 
 // ---------- data loading ----------
-async function refresh(): Promise<void> {
+let refreshing: Promise<void> | null = null;
+let refreshQueued = false;
+
+/** Overlapping calls (connection events, button, post-write) coalesce: one in flight, at most one queued rerun. */
+function refresh(): Promise<void> {
+  if (refreshing) {
+    refreshQueued = true;
+    return refreshing;
+  }
+  refreshing = (async () => {
+    do {
+      refreshQueued = false;
+      await loadLive();
+    } while (refreshQueued);
+  })().finally(() => {
+    refreshing = null;
+  });
+  return refreshing;
+}
+
+async function loadLive(): Promise<void> {
   const api = dataverse();
   const conns = await getConnections();
   if (!api || !conns.length) {
@@ -199,35 +246,34 @@ async function refresh(): Promise<void> {
     return;
   }
   setStatus("Loading…");
-  try {
-    live = await Promise.all(
-      conns.map((c) =>
-        fetchColumn(api, {
-          key: c.target,
-          kind: "live",
-          target: c.target,
-          name: c.conn.name,
-          url: c.conn.url,
-          environment: c.conn.environment,
-          color: c.conn.environmentColor,
-          takenAt: "",
-        }),
-      ),
-    );
-    solutions = await fetchSolutions(api, "primary").catch(() => []);
-    await applySolutionFilter();
-    setStatus(null);
-  } catch (e) {
-    setStatus(null);
-    await notify("Load failed", (e as Error).message, "error");
-  }
+  const metas: ColumnMeta[] = conns.map((c) => ({
+    key: c.target,
+    kind: "live",
+    target: c.target,
+    name: c.conn.name,
+    url: c.conn.url,
+    environment: c.conn.environment,
+    color: c.conn.environmentColor,
+    takenAt: "",
+  }));
+  // allSettled: one failing connection must not blank the other column.
+  const results = await Promise.allSettled(metas.map((m) => fetchColumn(api, m)));
+  live = results.map((r, i) =>
+    r.status === "fulfilled" ? r.value : { meta: { ...metas[i], error: (r.reason as Error)?.message ?? String(r.reason) }, envVars: [], connRefs: [] },
+  );
+  const failed = live.filter((c) => c.meta.error);
+  const primaryOk = live.some((c) => c.meta.target === "primary" && !c.meta.error);
+  solutions = primaryOk ? await fetchSolutions(api, "primary").catch(() => []) : [];
+  await applySolutionFilter();
+  setStatus(null);
+  if (failed.length) await notify("Load failed", failed.map((c) => `${c.meta.name}: ${c.meta.error}`).join("\n"), "error");
   rebuild();
 }
 
 async function applySolutionFilter(): Promise<void> {
   const id = $<HTMLSelectElement>("#filter-solution").value;
   const api = dataverse();
-  const primary = live.find((c) => c.meta.target === "primary");
+  const primary = live.find((c) => c.meta.target === "primary" && !c.meta.error);
   if (!id || !api || !primary) {
     scope = null;
     return;
@@ -267,10 +313,10 @@ function planTable(items: WritePlan["items"]): HTMLElement {
           "tr",
           {},
           h("td", {}, h("span", { class: "mono" }, i.schemaName)),
-          h("td", {}, badge(i.action, i.action === "skip" ? "neutral" : i.action === "create" ? "ok" : "warn")),
+          h("td", {}, badge(i.action, i.action === "skip" ? "neutral" : i.action === "create" ? "ok" : i.action === "invalid" ? "bad" : "warn")),
           h("td", { class: "mono" }, `${i.currentValue ?? "—"} `, badge(i.currentSource, "neutral")),
           h("td", { class: "mono" }, i.action === "skip" ? "—" : (i.newValue ?? "")),
-          h("td", { class: "caption" }, i.reason),
+          h("td", { class: "caption" }, i.reason, i.warning ? h("div", {}, badge("caution", "warn"), " ", i.warning) : null),
         ),
       ),
     ),
@@ -278,13 +324,21 @@ function planTable(items: WritePlan["items"]): HTMLElement {
 }
 
 async function runPlan(plan: WritePlan): Promise<void> {
-  const writes = plan.items.filter((i) => i.action !== "skip");
+  const writes = plan.items.filter((i) => i.action === "create" || i.action === "update");
+  const invalid = plan.items.filter((i) => i.action === "invalid");
+  const cautions = writes.filter((i) => i.warning);
   const isProd = /prod/i.test(plan.target.environment);
   const body = h(
     "div",
     {},
-    h("p", { class: "caption" }, `${writes.length} write${writes.length === 1 ? "" : "s"} to ${plan.target.name} (${plan.target.environment}). ${plan.items.length - writes.length} skipped.`),
+    h(
+      "p",
+      { class: "caption" },
+      `${writes.length} write${writes.length === 1 ? "" : "s"} to ${plan.target.name} (${plan.target.environment}). ${plan.items.length - writes.length - invalid.length} skipped.${invalid.length ? ` ${invalid.length} invalid (not written).` : ""}`,
+    ),
     isProd && writes.length ? h("div", { class: "warnings" }, "Target is a Production environment.") : null,
+    invalid.length ? h("div", { class: "warnings" }, `${invalid.length} value${invalid.length === 1 ? " does" : "s do"} not match the variable type and will not be written.`) : null,
+    cautions.length ? h("div", { class: "warnings" }, `${cautions.length} write${cautions.length === 1 ? "" : "s"} with a caution: see Note.`) : null,
     planTable(plan.items),
   );
   const ok = await showDialog({ title: "Preview changes", target: targetChip(plan.target), body, okLabel: writes.length ? `Apply ${writes.length}` : "", danger: isProd });
@@ -299,7 +353,8 @@ async function runPlan(plan: WritePlan): Promise<void> {
 }
 
 async function showResults(results: WriteResult[], target: ColumnMeta): Promise<void> {
-  const failed = results.filter((r) => !r.ok);
+  const failed = results.filter((r) => !r.ok && r.action !== "invalid");
+  const notWritten = results.filter((r) => r.action === "skip" || r.action === "invalid").length;
   const body = h(
     "table",
     {},
@@ -307,10 +362,10 @@ async function showResults(results: WriteResult[], target: ColumnMeta): Promise<
     h(
       "tbody",
       {},
-      ...results.map((r) => h("tr", {}, h("td", {}, h("span", { class: "mono" }, r.schemaName)), h("td", {}, r.action), h("td", {}, r.action === "skip" ? badge("skipped", "neutral") : r.ok ? badge("ok", "ok") : badge(r.error ?? "failed", "bad")))),
+      ...results.map((r) => h("tr", {}, h("td", {}, h("span", { class: "mono" }, r.schemaName)), h("td", {}, r.action), h("td", {}, r.action === "skip" ? badge("skipped", "neutral") : r.action === "invalid" ? badge("invalid, not written", "bad") : r.ok ? badge("ok", "ok") : badge(r.error ?? "failed", "bad")))),
     ),
   );
-  await notify(failed.length ? "Some writes failed" : "Values written", `${results.length - failed.length - results.filter((r) => r.action === "skip").length} ok, ${failed.length} failed`, failed.length ? "warning" : "success");
+  await notify(failed.length ? "Some writes failed" : "Values written", `${results.length - failed.length - notWritten} ok, ${failed.length} failed`, failed.length ? "warning" : "success");
   await showDialog({ title: "Results", target: targetChip(target), body });
 }
 
@@ -327,7 +382,7 @@ async function openSetDialog(row: EnvVarRow, target: ColumnMeta): Promise<void> 
 async function copySelected(): Promise<void> {
   const fromKey = $<HTMLSelectElement>("#copy-from").value;
   const toKey = $<HTMLSelectElement>("#copy-to").value;
-  const target = live.find((c) => c.meta.key === toKey)?.meta;
+  const target = liveCols().find((m) => m.key === toKey);
   if (!target) return;
   if (fromKey === toKey) {
     await notify("Same column", "Pick a different source and target.", "warning");
@@ -340,7 +395,7 @@ async function copySelected(): Promise<void> {
 // ---------- exports ----------
 function exportCol(): ColumnData | undefined {
   const key = $<HTMLSelectElement>("#export-col").value;
-  return columns().find((c) => c.meta.key === key);
+  return okColumns().find((c) => c.meta.key === key);
 }
 async function exportFile(name: string, content: string, mime = "application/json"): Promise<void> {
   if (await saveText(name, content, mime)) await notify("Exported", name, "success");
@@ -368,7 +423,7 @@ function wire(): void {
   });
   $("#btn-export-settings").addEventListener("click", () => {
     const c = exportCol();
-    if (c) void exportFile(`deploymentSettings.${safeFileName(c.meta.name)}.json`, deploymentSettings(c));
+    if (c) void exportFile(`deploymentSettings.${safeFileName(c.meta.name)}.json`, deploymentSettings(c, scope));
   });
   $("#btn-export-snap").addEventListener("click", () => {
     const c = exportCol();

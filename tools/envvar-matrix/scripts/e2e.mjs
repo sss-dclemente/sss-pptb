@@ -16,7 +16,7 @@ const MOCK = `
 (() => {
   const S = 100000000, SECRET = 100000005, BOOL = 100000002;
   const def = (id, schemaname, type, defaultvalue, ismanaged = false) => ({ environmentvariabledefinitionid: id, schemaname, displayname: schemaname.replace('sss_', '').toUpperCase(), type, defaultvalue, ismanaged });
-  const val = (id, defId, value) => ({ environmentvariablevalueid: id, value, _environmentvariabledefinitionid_value: defId });
+  const val = (id, defId, value, ismanaged = false) => ({ environmentvariablevalueid: id, value, ismanaged, _environmentvariabledefinitionid_value: defId });
   const cr = (id, name, connector, connectionid, ismanaged = true) => ({ connectionreferenceid: id, connectionreferencelogicalname: name, connectionreferencedisplayname: name, connectorid: '/providers/Microsoft.PowerApps/apis/' + connector, connectionid, ismanaged });
   const envs = {
     primary: {
@@ -28,11 +28,19 @@ const MOCK = `
     secondary: {
       conn: { id: 'c2', name: 'SSS Test', url: 'https://sss-test.crm4.dynamics.com', environment: 'Test', environmentColor: '#92400e' },
       defs: [def('t1', 'sss_apiurl', S, 'https://dev.api', true), def('t2', 'sss_apikey', SECRET, null, true), def('t3', 'sss_flag', BOOL, null, true), def('t5', 'sss_onlytest', S, null)],
-      vals: [val('w1', 't1', 'https://test.api'), val('w2', 't2', 'kv-ref'), val('w5', 't5', 't')],
+      vals: [val('w1', 't1', 'https://test.api', true), val('w2', 't2', 'kv-ref'), val('w5', 't5', 't'), val('w6', 't5', 't-dup')],
       crs: [cr('s1', 'sss_office365', 'shared_office365', null), cr('s2', 'sss_sql', 'shared_sql', 'conn-test-9')],
     },
   };
-  window.__mock = { envs, writes: [], saved: [], notes: [], nextOpen: null };
+  window.__mock = { envs, writes: [], saved: [], notes: [], nextOpen: null, queries: [], fail: null };
+  // Server-side paging: 3 rows per page, absolute @odata.nextLink like Dataverse returns.
+  const page = (q, target, rows) => {
+    const m = q.match(/&\\$skiptoken=(\\d+)/);
+    const start = m ? Number(m[1]) : 0;
+    const out = { value: rows.slice(start, start + 3) };
+    if (start + 3 < rows.length) out['@odata.nextLink'] = envs[target].conn.url + '/api/data/v9.2/' + q.replace(/&\\$skiptoken=\\d+/, '') + '&$skiptoken=' + (start + 3);
+    return out;
+  };
   let seq = 100;
   window.toolboxAPI = {
     connections: {
@@ -50,9 +58,12 @@ const MOCK = `
   window.dataverseAPI = {
     queryData: async (q, target = 'primary') => {
       const e = envs[target];
-      if (q.startsWith('environmentvariabledefinitions')) return { value: e.defs };
-      if (q.startsWith('environmentvariablevalues')) return { value: e.vals };
-      if (q.startsWith('connectionreferences')) return { value: e.crs };
+      window.__mock.queries.push({ q, target });
+      await new Promise((r) => setTimeout(r, 15));
+      if (window.__mock.fail === target) throw new Error('503 from ' + target);
+      if (q.startsWith('environmentvariabledefinitions')) return page(q, target, e.defs);
+      if (q.startsWith('environmentvariablevalues')) return page(q, target, e.vals);
+      if (q.startsWith('connectionreferences')) return page(q, target, e.crs);
       if (q.startsWith('solutioncomponents')) return { value: [{ objectid: 'd1', componenttype: 380 }, { objectid: 'r1', componenttype: 371 }] };
       throw new Error('unexpected query ' + q);
     },
@@ -89,6 +100,11 @@ assert(JSON.stringify(names) === JSON.stringify(["sss_apikey", "sss_apiurl", "ss
 const flagRow = await page.$eval("table.matrix tbody tr:nth-child(3)", (tr) => tr.textContent);
 assert(flagRow.includes("yes") && flagRow.includes("default") && flagRow.includes("missing"), "flag: default in Dev, missing in Test");
 assert(await page.$eval("table.matrix tbody tr:nth-child(1)", (tr) => tr.textContent.includes("••••")), "secret masked");
+const q0 = await page.evaluate(() => window.__mock.queries);
+assert(q0.some((x) => x.q.startsWith("environmentvariabledefinitions") && x.q.includes("$skiptoken=3")) && !q0.some((x) => x.q.startsWith("http")), "paging: nextLink followed as relative query");
+assert(q0.some((x) => x.q.startsWith("environmentvariablevalues") && x.q.includes("ismanaged")), "value rows select ismanaged");
+assert(names.includes("sss_onlydev"), "paging: definition on page 2 loaded");
+assert(await page.$eval("table.matrix tbody tr:nth-child(5)", (tr) => tr.textContent.includes("2 value rows")), "duplicate value rows flagged on cell");
 await page.screenshot({ path: resolve(OUT, "01-envvars.png") });
 
 // filters
@@ -131,6 +147,8 @@ await page.click("#btn-copy");
 await page.waitForSelector("dialog[open]");
 const preview = await page.textContent("#dlg-body");
 assert(preview.includes("update") && preview.includes("create") && preview.includes("skip") && preview.includes("does not exist"), "preview: update + create + skip");
+assert(preview.includes("from source default"), "preview labels copy of a source default");
+assert(preview.includes("value row is managed") && preview.includes("caution"), "preview warns on managed value row update");
 await page.screenshot({ path: resolve(OUT, "03-preview.png") });
 await page.click("#dlg-ok");
 await page.waitForFunction(() => document.querySelector("#dlg-title").textContent === "Results");
@@ -141,6 +159,15 @@ assert(writes[1].op === "create" && writes[1].rec["EnvironmentVariableDefinition
 await page.waitForFunction(() => !document.querySelector("table.matrix tbody tr:nth-child(3)")?.textContent.includes("missing"), null, { timeout: 10000 }).catch(() => {});
 const after = await page.$eval("table.matrix tbody tr:nth-child(3)", (tr) => tr.textContent);
 assert(!after.includes("missing") && after.includes("sss_flag"), "flag no longer missing after refresh");
+
+// same copy again: everything already equal → nothing to apply, no pointless rows
+await page.click("#btn-copy");
+await page.waitForSelector("dialog[open]");
+const preview2 = await page.textContent("#dlg-body");
+assert(preview2.includes("0 writes") && (await page.isHidden("#dlg-ok")), "repeat copy: 0 writes, no apply button");
+await page.click("#dlg-cancel");
+assert((await page.evaluate(() => window.__mock.writes.length)) === 2, "repeat copy wrote nothing");
+await page.click("#btn-clear-sel");
 
 // single cell set
 await page.hover("table.matrix tbody tr:nth-child(2)");
@@ -155,6 +182,27 @@ await page.click("#dlg-cancel");
 const writes2 = await page.evaluate(() => window.__mock.writes);
 assert(writes2.length === 3 && writes2[2].rec.value === "https://test.api/v3", "single-cell set written");
 
+// type validation + empty input + default-equal set
+async function previewSet(label, value) {
+  await page.hover("table.matrix tbody tr:nth-child(3)");
+  await page.click(`button[aria-label="${label}"]`);
+  await page.waitForSelector("dialog[open]");
+  if (value != null) await page.fill("dialog textarea", value);
+  await page.click("#dlg-ok");
+  await page.waitForFunction(() => document.querySelector("#dlg-title").textContent === "Preview changes");
+  const text = await page.textContent("#dlg-body");
+  const okHidden = await page.isHidden("#dlg-ok");
+  await page.click("#dlg-cancel");
+  return { text, okHidden };
+}
+let pv = await previewSet("Set sss_flag in SSS Test", "maybe");
+assert(pv.text.includes("invalid") && pv.text.includes('Boolean must be "yes" or "no"') && pv.okHidden, "invalid Boolean blocked in preview");
+pv = await previewSet("Set sss_flag in SSS Test", "   ");
+assert(pv.text.includes("empty input") && pv.okHidden, "empty input skipped, not written as empty string");
+pv = await previewSet("Set sss_flag in SSS Dev", null);
+assert(pv.text.includes("equals target default") && pv.okHidden, "setting the default value again creates no value row");
+assert((await page.evaluate(() => window.__mock.writes.length)) === 3, "no writes from blocked previews");
+
 // exports
 await page.selectOption("#export-col", "secondary");
 await page.click("#btn-export-settings");
@@ -167,6 +215,21 @@ assert(saved[0].name.startsWith("deploymentSettings.") && ds.EnvironmentVariable
 const snap = JSON.parse(saved[1].content);
 assert(snap.kind === "sss-envvar-matrix-snapshot" && snap.environmentVariables.find((e) => e.schemaName === "sss_apikey").value === "<secret>", "snapshot masks secrets");
 assert(saved[2].content.split("\n")[0].startsWith("kind,name,display name"), "csv header");
+assert(ds.EnvironmentVariables.find((e) => e.SchemaName === "sss_apikey").Value === "", "deploymentSettings: secret exported with empty Value");
+
+// deploymentSettings respects solution scope; default-only vars get empty Value
+await page.selectOption("#export-col", "primary");
+await page.selectOption("#filter-solution", "sol1");
+await page.waitForFunction(() => document.querySelectorAll("table.matrix tbody tr").length === 1);
+await page.click("#btn-export-settings");
+await page.selectOption("#filter-solution", "");
+await page.waitForFunction(() => document.querySelectorAll("table.matrix tbody tr").length === 5);
+await page.click("#btn-export-settings");
+const saved2 = await page.evaluate(() => window.__mock.saved);
+const dsScoped = JSON.parse(saved2[3].content);
+assert(JSON.stringify(dsScoped.EnvironmentVariables.map((e) => e.SchemaName)) === '["sss_apiurl"]' && JSON.stringify(dsScoped.ConnectionReferences.map((c) => c.LogicalName)) === '["sss_office365"]', "deploymentSettings scoped to selected solution");
+const dsAll = JSON.parse(saved2[4].content);
+assert(dsAll.EnvironmentVariables.length === 4 && dsAll.EnvironmentVariables.find((e) => e.SchemaName === "sss_flag").Value === "", "deploymentSettings: default-only var → empty Value");
 
 // snapshot round-trip → third column
 await page.evaluate((c) => { window.__mock.nextOpen = c; }, saved[1].content);
@@ -174,10 +237,60 @@ await page.click("#btn-load-snap");
 await page.waitForFunction(() => document.querySelectorAll("#columns .colchip").length === 3);
 assert(true, "snapshot loaded as third column");
 assert((await page.$$eval("table.matrix thead th.col", (els) => els.length)) === 3, "three matrix columns");
+await page.selectOption("#export-col", "snap:1");
+await page.click("#btn-export-settings");
+const dsSnap = JSON.parse((await page.evaluate(() => window.__mock.saved)).at(-1).content);
+assert(dsSnap.EnvironmentVariables.find((e) => e.SchemaName === "sss_apikey").Value === "" && !JSON.stringify(dsSnap).includes("<secret>"), "deploymentSettings from snapshot: never the <secret> placeholder");
 await page.evaluate(() => document.documentElement.setAttribute("data-theme", "dark"));
 await page.screenshot({ path: resolve(OUT, "04-snapshot-dark.png") });
 await page.click('#columns .colchip button[aria-label^="Remove"]');
 await page.waitForFunction(() => document.querySelectorAll("#columns .colchip").length === 2);
 assert(true, "snapshot removed");
+await page.evaluate(() => document.documentElement.setAttribute("data-theme", "light"));
+
+// CSV: formula injection neutralised, \r quoted
+await page.evaluate(() => { window.__mock.envs.secondary.vals.find((v) => v.environmentvariablevalueid === "w6").value = "=1+1\rx"; });
+await page.click("#btn-refresh");
+await page.waitForFunction(() => document.querySelector("#matrix-body").textContent.includes("=1+1"));
+await page.click("#btn-export-csv");
+const csv = (await page.evaluate(() => window.__mock.saved)).at(-1).content;
+assert(csv.includes('"\'=1+1\rx"') && !/,=1\+1/.test(csv), "csv: formula cell prefixed with ' and \\r quoted");
+
+// connection references: different connector id counts as a difference
+await page.evaluate(() => {
+  const e = window.__mock.envs;
+  e.primary.crs[1].connectionid = "conn-dev-2";
+  e.secondary.crs[0].connectionid = "conn-test-1";
+  e.secondary.crs[1].connectorid = "/providers/Microsoft.PowerApps/apis/shared_sqlx";
+});
+await page.click("#btn-refresh");
+await page.click('.tab[data-tab="connrefs"]');
+await page.waitForFunction(() => document.querySelector("#matrix-body").textContent.includes("shared_sqlx"));
+await page.check("#filter-diff");
+names = await rowNames();
+assert(JSON.stringify(names) === '["sss_sql"]', "conn ref differs on connector id (both bound)");
+await page.uncheck("#filter-diff");
+await page.click('.tab[data-tab="envvars"]');
+
+// overlapping refreshes coalesce: one in flight + one queued rerun
+await page.evaluate(() => { window.__mock.queries = []; });
+await page.evaluate(() => { for (let i = 0; i < 4; i++) document.querySelector("#btn-refresh").click(); });
+await page.waitForTimeout(800);
+const defLoads = await page.evaluate(() => window.__mock.queries.filter((x) => x.target === "primary" && x.q.startsWith("environmentvariabledefinitions") && !x.q.includes("skiptoken")).length);
+assert(defLoads === 2, "4 overlapping refreshes → 2 loads (got " + defLoads + ")");
+
+// one failing connection does not blank the other column
+await page.evaluate(() => { window.__mock.fail = "secondary"; });
+await page.click("#btn-refresh");
+await page.waitForFunction(() => document.querySelector("#columns").textContent.includes("load failed"));
+const failText = await page.textContent("#matrix-body");
+assert(failText.includes("https://dev.api/v2") && failText.includes("503 from secondary"), "primary data kept, error shown on failed column");
+assert((await page.$$eval("table.matrix td.cell.error", (els) => els.length)) === 4, "failed column cells marked error (4 primary rows)");
+assert(JSON.stringify(await page.$$eval("#copy-to option", (els) => els.map((e) => e.value))) === '["primary"]', "failed column is not a copy target");
+assert((await page.evaluate(() => window.__mock.notes)).some((n) => /Load failed/.test(n.title) && /503/.test(n.body)), "load failure notified");
+await page.evaluate(() => { window.__mock.fail = null; });
+await page.click("#btn-refresh");
+await page.waitForFunction(() => !document.querySelector("#columns").textContent.includes("load failed"));
+assert(true, "column recovers after refresh");
 
 await finish();
