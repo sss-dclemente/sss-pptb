@@ -77,6 +77,8 @@ export interface Component {
   /** resolved for display (logical name, form or view name); the id when unresolved */
   name?: string;
   table?: string;
+  /** unique name of a managed solution matching the filter that owns this component; null when none (set by diagnose) */
+  filteredOwner?: string | null;
 }
 
 /** A named component, resolved for display. */

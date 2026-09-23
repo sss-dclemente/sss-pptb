@@ -123,11 +123,26 @@ export async function prepare(api: DataverseLike, meta: MetaCache, diagnosis: Di
         if (selfOwned.has(c.objectId)) return { component: c, keep: false, why: "belongs to a managed solution in scope" };
         if (edited.has(c.objectId)) return { component: c, keep: true, why: "edited in this plan" };
         if (prefix && name.startsWith(prefix)) return { component: c, keep: true, why: `your prefix ${prefix}` };
+        // forms, views and charts carry display names: decide by owning solution, keep unless a filtered managed solution owns it
+        if (c.type === CT.Form || c.type === CT.View || c.type === CT.Chart) {
+          if (c.filteredOwner) return { component: c, keep: false, why: `owned by ${c.filteredOwner}` };
+          if (c.filteredOwner === null) return { component: c, keep: true, why: "yours: not owned by a filtered managed solution" };
+        }
         return { component: c, keep: false, why: "not yours" };
       })
       .sort((a, b) => Number(b.keep) - Number(a.keep) || a.component.type - b.component.type || (a.component.name ?? "").localeCompare(b.component.name ?? ""));
     shells.push({ root: { ...root, behavior: 0 }, leaving });
   }
+
+  // a table both converted to a shell (from any finding) and removed: refuse, the order of the two would decide the result
+  const conflicts = selections
+    .filter((x) => x.fix === "remove" && x.finding.dependent.type === CT.Entity)
+    .map((x) => shells.find((sh) => sh.root.id === x.finding.dependent.id))
+    .filter((sh): sh is ShellPlan => !!sh);
+  if (conflicts.length)
+    throw new Error(
+      `Conflicting fixes on table ${conflicts.map((sh) => sh.root.name).join(", ")}: one finding converts it to a shell, another removes it from the solution. Pick one of the two and preview again.`,
+    );
 
   // removes: skip what leaves anyway with a shell conversion
   const shellRootRows = new Set(shells.map((sh) => diagnosis.components.find((c) => c.type === CT.Entity && c.objectId === sh.root.id)?.rowId));
@@ -157,7 +172,15 @@ export function buildOps(p: Prepared): Op[] {
   for (const v of p.views) ops.push({ kind: "update-view", edit: v });
   const tables = [...new Set([...p.forms.map((f) => f.form.table), ...p.views.map((v) => v.view.table)].filter(Boolean))].sort();
   if (tables.length) ops.push({ kind: "publish", tables });
-  return ops;
+  // identical membership ops (table roots included) run once
+  const seen = new Set<string>();
+  return ops.filter((op) => {
+    if (op.kind !== "remove" && op.kind !== "add") return true;
+    const k = `${op.kind}:${op.component.type}:${op.component.id}:${op.kind === "add" ? op.doNotIncludeSubcomponents : ""}`;
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
 }
 
 export function publishXml(tables: string[]): string {

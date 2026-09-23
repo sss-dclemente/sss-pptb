@@ -10,17 +10,17 @@ Built by [Simple Smooth Safe](https://simplesmoothsafe.com).
 - **Filter** — publisher prefixes or solution names, default `msdyn, msdynce, mspp`. Editable, so it works for any ISV.
 - **Target awareness** — with a secondary connection (the target environment), solutions already there are marked "present in target" and hidden by default; any managed solution missing in the target is a blocker. Without one, everything matching the filter is a blocker.
 - **Fix** — per finding, pick a fix:
-  - *Convert table to shell*: a table added with all assets is removed and added back with `DoNotIncludeSubcomponents`. Every subcomponent that would leave is listed; your own (publisher prefix) and the forms/views you edit are re-added, the rest can be ticked back in.
+  - *Convert table to shell*: a table added with all assets is removed and added back with `DoNotIncludeSubcomponents`. Every subcomponent that would leave is listed and can be ticked back in or out. Ticked by default: columns with your publisher prefix, the forms/views you edit, and every form, view and chart not owned by a managed solution matching the filter (these are named by display name, so ownership decides, not the prefix). A table cannot be converted to a shell by one finding and removed by another: the preview refuses the conflict until you pick one.
   - *Remove from solution* for a column, form or view included directly.
   - *Edit form*: remove the cells/controls bound to the msdyn columns (never the primary name or a required column, which are reported instead), drop empty sections.
   - *Edit view*: strip the msdyn attributes, conditions, orders and link-entities from fetchxml and the matching cells from layoutxml.
   - Relationships, sitemap, apps, ribbon, charts, processes, web resources and plugin steps are report only, with a link to the solution in the maker portal.
 - **Preview → backup → confirm** — the preview lists every operation with a before/after XML diff. Confirm stays disabled until the backup (`dependency-cleaner-backup-<solution>-<timestamp>.json`: original form/view XML and the full solution membership) is saved. Then: membership changes → form/view updates → one `PublishXml` for the touched tables → the diagnosis runs again and shows fixed / still present.
-- **Restore** — load a backup, preview, apply: original XML written back, removed components re-added, tables put back to all assets, then published.
+- **Restore** — load a backup, preview, apply: original XML written back, removed components re-added, tables put back to all assets, then published. A backup only restores into the environment it was taken in (its url is recorded in the file).
 - **Offline** — open an exported solution zip and read `solution.xml` `<MissingDependencies>` (the list the import checks), grouped and filtered the same way. No connection needed.
 - **Export** — findings as JSON or CSV (cells a spreadsheet would read as a formula are prefixed with `'`).
 
-Safety: managed solutions are never offered and writes are refused if the solution turns out to be managed when re-checked right before writing; a Production-looking connection needs an explicit tick.
+Safety: managed solutions are never offered and writes are refused if the solution turns out to be managed when re-checked right before writing; a Production-looking connection needs an explicit tick. Changing the connection clears the diagnosis, the preview and the backup tick; Confirm and Restore re-read the current connection and refuse when it is not the one the plan was made on. After a new diagnosis, a picked fix the finding no longer offers is dropped.
 
 ## Install
 

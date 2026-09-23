@@ -22,9 +22,16 @@ const selections = new Map<string, FixKind>();
 let prepared: Prepared | null = null;
 let ops: Op[] = [];
 let backupDone = false;
+/** why the last preview was refused (conflicting fixes, connection mismatch) */
+let previewError: string | null = null;
+/** the primary connection the preview was made on; Confirm refuses when the current one differs */
+let planConn: { id: string; url: string } | null = null;
+/** bumped when the connections change, so a diagnosis started before the change is dropped */
+let connGen = 0;
 let cancelFlag = false;
 let running = false;
-let restore: { backup: Backup; plan: RestorePlan | null } | null = null;
+/** url: the primary connection the restore plan was compared against */
+let restore: { backup: Backup; plan: RestorePlan | null; url: string | null } | null = null;
 
 const api = (): DataverseLike | undefined => dataverse() as unknown as DataverseLike | undefined;
 const primary = (): LiveConnection | undefined => conns.find((c) => c.target === "primary");
@@ -35,6 +42,17 @@ const reqCache = (): Map<string, DependencyRow[]> => {
   let m = reqCaches.get(url);
   if (!m) reqCaches.set(url, (m = new Map()));
   return m;
+};
+const sameUrl = (a: string | null | undefined, b: string | null | undefined): boolean => !!a && !!b && a.replace(/\/+$/, "").toLowerCase() === b.replace(/\/+$/, "").toLowerCase();
+const connKey = (list: LiveConnection[]): string => list.map((c) => `${c.target}:${c.conn.id}:${c.conn.url}`).join("|");
+/** the primary connection as the host reports it now (not the cached one) */
+const currentPrimary = async (): Promise<LiveConnection | undefined> => (await getConnections().catch(() => [] as LiveConnection[])).find((c) => c.target === "primary");
+const clearPlan = (): void => {
+  prepared = null;
+  ops = [];
+  backupDone = false;
+  previewError = null;
+  planConn = null;
 };
 const filter = (): string[] => {
   const f = parseFilter($<HTMLInputElement>("#filter").value);
@@ -62,9 +80,23 @@ function solutionLink(): string {
 
 // ---------- connections ----------
 async function loadConnections(): Promise<void> {
+  const before = connKey(conns);
   conns = await getConnections();
   meta = new MetaCache();
   envId = undefined;
+  if (connKey(conns) !== before) {
+    // everything read or planned belongs to the previous environment
+    connGen++;
+    diagnosis = null;
+    selections.clear();
+    clearPlan();
+    restore = null;
+    $("#fix-results").replaceChildren();
+    $("#restore-results").replaceChildren();
+    $("#restore-file").textContent = "";
+    renderFix();
+    renderRestore();
+  }
   const wrap = $("#conn");
   wrap.replaceChildren();
   const p = primary();
@@ -107,6 +139,7 @@ async function runDiagnosis(): Promise<void> {
   if (!a || !p || !sol || running) return;
   running = true;
   cancelFlag = false;
+  const gen = connGen;
   $("#btn-cancel").hidden = false;
   $<HTMLButtonElement>("#btn-run").disabled = true;
   $("#progress").hidden = false;
@@ -114,7 +147,7 @@ async function runDiagnosis(): Promise<void> {
   try {
     if (envId === undefined) envId = await fetchEnvironmentId(a);
     const s = secondary();
-    diagnosis = await diagnose({
+    const d = await diagnose({
       api: a,
       meta,
       reqCache: reqCache(),
@@ -132,9 +165,12 @@ async function runDiagnosis(): Promise<void> {
       },
       cancelled: () => cancelFlag,
     });
+    if (gen !== connGen) return; // the connection changed while this ran
+    diagnosis = d;
     // links need the diagnosis solution; rebuild them now that it is set
     for (const f of diagnosis.findings) for (const x of f.fixes) if (x.kind === "report") x.link = solutionLink();
-    for (const k of [...selections.keys()]) if (!diagnosis.findings.some((f) => f.key === k)) selections.delete(k);
+    // keep a selection only while its finding still offers that fix (the dropdown shows nothing else)
+    for (const [k, fix] of [...selections]) if (!diagnosis.findings.some((f) => f.key === k && f.fixes.some((x) => x.kind === fix))) selections.delete(k);
   } catch (e) {
     if (e instanceof Cancelled) await notify("Cancelled", "Diagnosis cancelled. Finished calls stay cached.", "info");
     else await notify("Diagnosis failed", (e as Error).message, "error");
@@ -259,7 +295,7 @@ function managedRefused(): boolean {
 
 function updateConfirm(): void {
   const prodOk = !isProd(primary()) || $<HTMLInputElement>("#prod-ack").checked;
-  $<HTMLButtonElement>("#btn-confirm").disabled = !(backupDone && ops.length && prodOk && !managedRefused());
+  $<HTMLButtonElement>("#btn-confirm").disabled = !(backupDone && ops.length && planConn && prodOk && !managedRefused());
   $("#btn-backup").textContent = backupDone ? "1. Backup saved ✓" : "1. Download backup";
 }
 
@@ -269,6 +305,12 @@ function renderFix(): void {
   banners.replaceChildren();
   body.replaceChildren();
   $("#fix-actions").hidden = !prepared;
+  updateConfirm();
+  if (previewError) {
+    banners.append(h("div", { class: "danger-banner", id: "preview-error" }, previewError));
+    body.append(emptyState("Preview refused", "Change the selected fixes in Diagnose, then Preview fixes again."));
+    return;
+  }
   if (!prepared || !diagnosis) {
     body.append(emptyState("Nothing selected", "Pick a fix on one or more findings in Diagnose, then Preview fixes."));
     return;
@@ -320,17 +362,25 @@ function renderOps(): void {
 
 async function toFix(): Promise<void> {
   const a = api();
-  if (!a || !diagnosis) return;
-  const sel = [...selections].map(([k, fix]) => ({ finding: diagnosis!.findings.find((f) => f.key === k)!, fix })).filter((x) => x.finding);
+  const p = primary();
+  if (!a || !p || !diagnosis) return;
+  // only fixes the finding still offers, i.e. what its dropdown shows
+  const sel = [...selections]
+    .map(([k, fix]) => ({ finding: diagnosis!.findings.find((f) => f.key === k)!, fix }))
+    .filter((x) => x.finding && x.finding.fixes.some((f) => f.kind === x.fix));
   setStatus("Preparing preview…");
+  clearPlan();
+  $<HTMLInputElement>("#prod-ack").checked = false;
+  $("#fix-results").replaceChildren();
   try {
+    if (!sameUrl(p.conn.url, diagnosis.environment.url)) throw new Error(`The diagnosis was run on ${diagnosis.environment.url}, the connection is now ${p.conn.url}. Run Diagnose again.`);
     prepared = await prepare(a, meta, diagnosis, sel);
     ops = buildOps(prepared);
-    backupDone = false;
-    $<HTMLInputElement>("#prod-ack").checked = false;
-    $("#fix-results").replaceChildren();
+    planConn = { id: p.conn.id, url: p.conn.url };
   } catch (e) {
-    await notify("Preview failed", (e as Error).message, "error");
+    clearPlan();
+    previewError = (e as Error).message;
+    await notify("Preview failed", previewError, "error");
   } finally {
     setStatus(null);
   }
@@ -360,8 +410,17 @@ function resultsTable(results: OpResult[]): HTMLElement {
 
 async function confirmFix(): Promise<void> {
   const a = api();
-  if (!a || !diagnosis || !prepared || !backupDone || !ops.length) return;
+  if (!a || !diagnosis || !prepared || !backupDone || !ops.length || !planConn) return;
   const sol = diagnosis.solution;
+  // the plan belongs to the connection it was previewed on: re-read the host's current one
+  const now = await currentPrimary();
+  if (!now || now.conn.id !== planConn.id || !sameUrl(now.conn.url, planConn.url)) {
+    const was = planConn.url;
+    clearPlan();
+    renderFix();
+    await notify("Refused", `The plan was made on ${was}, the connection is now ${now?.conn.url ?? "none"}. Nothing was written: run Diagnose and Preview again.`, "error");
+    return;
+  }
   // D7: re-read the managed flag right before writing
   const fresh = await fetchSolutionManaged(a, sol.id).catch(() => null);
   if (!fresh || fresh.isManaged || sol.isManaged) {
@@ -383,10 +442,8 @@ async function confirmFix(): Promise<void> {
   const failed = results.filter((r) => !r.ok && !r.skipped).length;
   await notify(failed ? "Some operations failed" : "Applied", failed ? "Restore from the backup if needed." : `${results.length} operations done. Re-running diagnosis…`, failed ? "error" : "success");
   for (const k of touched) reqCache().delete(k);
-  prepared = null;
-  ops = [];
+  clearPlan();
   selections.clear();
-  backupDone = false;
   renderFix();
   const res = $("#fix-results");
   res.replaceChildren(h("h3", {}, "Results"), resultsTable(results));
@@ -405,7 +462,7 @@ async function loadBackup(): Promise<void> {
   if (!f) return;
   $("#restore-results").replaceChildren();
   try {
-    restore = { backup: parseBackup(f.text), plan: null };
+    restore = { backup: parseBackup(f.text), plan: null, url: null };
     $("#restore-file").textContent = f.name;
   } catch (e) {
     restore = null;
@@ -417,6 +474,7 @@ async function loadBackup(): Promise<void> {
   const p = primary();
   if (a && p) {
     setStatus("Comparing backup to the environment…");
+    restore.url = p.conn.url;
     try {
       restore.plan = await planRestore(a, restore.backup, solutions.length ? solutions : await fetchSolutions(a, "primary"), p.conn.url);
     } catch (e) {
@@ -452,6 +510,13 @@ async function applyRestore(): Promise<void> {
   const a = api();
   if (!a || !restore?.plan) return;
   const plan = restore.plan;
+  const now = await currentPrimary();
+  if (!now || !sameUrl(now.conn.url, restore.url) || !sameUrl(now.conn.url, restore.backup.environment?.url)) {
+    restore.plan = null;
+    renderRestore();
+    await notify("Refused", `The backup is from ${restore.backup.environment?.url ?? "an unknown environment"}, the connection is now ${now?.conn.url ?? "none"}. Nothing was written: load the backup again on the right connection.`, "error");
+    return;
+  }
   const fresh = await fetchSolutionManaged(a, plan.solution.id).catch(() => null);
   if (!fresh || fresh.isManaged) {
     await notify("Refused", `${plan.solution.uniqueName} is managed (or could not be read). Nothing was written.`, "error");
