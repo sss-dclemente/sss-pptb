@@ -385,7 +385,17 @@ function wire(): void {
   });
   $("#cmp-export").addEventListener("click", () => {
     const d = currentDiff();
-    if (d) void exportJson(`${d.a.name}-${d.a.version}_vs_${d.b.version}.diff.json`, d);
+    if (!d) return;
+    // Export what the screen shows: the "hide root-component rows" filter applies to the file too.
+    const hideRoot = $<HTMLInputElement>("#cmp-hide-root").checked;
+    const entries = hideRoot ? d.entries.filter((e) => e.category !== "Root component") : d.entries;
+    const count = (c: string) => entries.filter((e) => e.change === c).length;
+    void exportJson(`${d.a.name}-${d.a.version}_vs_${d.b.name}-${d.b.version}.diff.json`, {
+      ...d,
+      filter: { hideRootComponents: hideRoot },
+      entries,
+      counts: { added: count("added"), removed: count("removed"), changed: count("changed") },
+    });
   });
   $("#risk-export").addEventListener("click", () => {
     const s = selected("#risk-select");

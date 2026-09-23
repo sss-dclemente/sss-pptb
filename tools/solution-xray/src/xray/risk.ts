@@ -1,4 +1,4 @@
-import { isBuiltinSolution } from "./componentTypes";
+import { CONNECTION_REFERENCE, isActiveSolution, isBuiltinSolution } from "./componentTypes";
 import { diffSolutions } from "./diff";
 import type { SolutionInfo } from "./types";
 
@@ -51,8 +51,18 @@ export function scoreRisk(s: SolutionInfo, baseline?: SolutionInfo | null): Risk
   const prefix = s.publisher.prefix;
 
   // 1. Missing dependencies declared by the export
-  const external = s.missingDependencies.filter((d) => !isBuiltinSolution(d.required.solutionName));
-  const builtin = s.missingDependencies.length - external.length;
+  const active = s.missingDependencies.filter((d) => isActiveSolution(d.required.solutionName));
+  const external = s.missingDependencies.filter((d) => !isBuiltinSolution(d.required.solutionName) && !isActiveSolution(d.required.solutionName));
+  const builtin = s.missingDependencies.filter((d) => isBuiltinSolution(d.required.solutionName)).length;
+  add({
+    id: "missing-deps-active",
+    label: "Missing dependencies on unmanaged components (Active)",
+    points: active.length * 15,
+    max: 30,
+    evidence: active.slice(0, 12).map((d) => `${d.required.typeName} ${d.required.schemaName ?? d.required.id ?? "?"}`),
+    advice:
+      "The required component exists only as unmanaged customization in the source environment; add it to the solution or a prerequisite solution. The import fails in any other environment until then.",
+  });
   add({
     id: "missing-deps",
     label: "Missing dependencies on other solutions",
@@ -160,8 +170,10 @@ export function scoreRisk(s: SolutionInfo, baseline?: SolutionInfo | null): Risk
   });
 
   // 9. Prefix hygiene (needs this solution's prefix to judge; an empty prefix flags nothing)
+  // Connection references have org-specific type codes: detect them from the zip content (typeName inferred at parse).
+  const prefixed = (rc: (typeof s.rootComponents)[number]) => [1, 2, 9, 61, 371, 372, 380].includes(rc.type) || rc.typeName === CONNECTION_REFERENCE;
   const foreign = prefix
-    ? s.rootComponents.filter((rc) => rc.schemaName && [1, 2, 9, 61, 380, 371].includes(rc.type) && !isCustom(rc.schemaName, prefix) && hasPublisherPrefix(rc.schemaName))
+    ? s.rootComponents.filter((rc) => rc.schemaName && prefixed(rc) && !isCustom(rc.schemaName, prefix) && hasPublisherPrefix(rc.schemaName))
     : [];
   add({
     id: "prefix",

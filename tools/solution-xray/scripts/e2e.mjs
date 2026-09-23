@@ -2,7 +2,7 @@
 // Generates synthetic Dataverse solution zips, opens dist/index.html in Chromium and drives the UI.
 // Run: npm run build && node scripts/e2e.mjs   (needs playwright + chromium available)
 import { createRequire } from "node:module";
-import { writeFileSync, mkdirSync } from "node:fs";
+import { writeFileSync, mkdirSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { launchPage } from "../../_shared/e2e-loader.mjs";
 
@@ -172,7 +172,40 @@ const solG = await zip({
   "customizations.xml": customizationsXml({}),
 });
 
-const files = { "SolA_1_0_0_0.zip": solA1, "SolA_1_1_0_0_managed.zip": solA2, "SolB_2_0_0_0_managed.zip": solB, "SolC_1_0_0_0_managed.zip": solC, "SolD.zip": solD, "SolE.zip": solE, "SolF.zip": solF, "SolF_copy.zip": solF, "SolG.zip": solG };
+// bug-fix fixtures: SolH v1/v2
+// - MissingDependency on solution "Active" (unmanaged in source env) must be a blocker, not built-in
+// - org-specific component type codes (>= 10000) labelled from zip content; 371 = Connector
+// - empty RibbonDiffXml is not a ribbon customization
+// - same-named business rules on different tables must not collapse in compare
+const RULE_A = "2b000000-0000-4000-8000-00000000000a";
+const RULE_B = "2b000000-0000-4000-8000-00000000000b";
+const ruleWf = (id, name, entityName) => `
+    <Workflow WorkflowId="{${id}}" Name="${name}"><Type>1</Type><Category>2</Category><PrimaryEntity>${entityName}</PrimaryEntity></Workflow>`;
+const emptyRibbon = `<RibbonDiffXml><CustomActions /><Templates><RibbonTemplates Id="Mscrm.Templates" /></Templates><CommandDefinitions /><RuleDefinitions><TabDisplayRules /><DisplayRules /><EnableRules /></RuleDefinitions><LocLabels /></RibbonDiffXml>`;
+const realRibbon = `<RibbonDiffXml><CustomActions><CustomAction Id="sss.btn" Location="Mscrm.Form.sss_ribbonyes.MainTab.Save.Controls._children" /></CustomActions><Templates><RibbonTemplates Id="Mscrm.Templates" /></Templates><CommandDefinitions /><RuleDefinitions><TabDisplayRules /><DisplayRules /><EnableRules /></RuleDefinitions><LocLabels /></RibbonDiffXml>`;
+const withRibbon = (xml, ribbon) => xml.replace("</Entity>", `  ${ribbon}\n    </Entity>`);
+const solHFiles = (version, rules) => ({
+  "solution.xml": solutionXml({
+    name: "SolH", version, managed: 1,
+    roots: [
+      { type: 1, schemaName: "sss_ribbonno" }, { type: 1, schemaName: "sss_ribbonyes" },
+      { type: 10050, schemaName: "abc_sharedsql" }, { type: 10051, schemaName: "sss_DoThing" }, { type: 10001, schemaName: "sss_mystery" },
+      { type: 371, schemaName: "sss_myconnector" }, { type: 29, id: `{${RULE_A}}` }, ...(version === "1.0.0.0" ? [{ type: 29, id: `{${RULE_B}}` }] : [{ type: 61, schemaName: "sss_/new.js" }]),
+    ],
+    missing: [{ type: 61, schemaName: "sss_/unmanaged.js", solution: "Active" }],
+  }),
+  "customizations.xml": customizationsXml({
+    entities: withRibbon(entity("sss_ribbonno", "Ribbon No", [["sss_name", "nvarchar"]]), emptyRibbon) + withRibbon(entity("sss_ribbonyes", "Ribbon Yes", [["sss_name", "nvarchar"]]), realRibbon),
+    workflows: rules.map(([id, e]) => ruleWf(id, "Validate", e)).join(""),
+    extra: `<connectionreferences><connectionreference connectionreferencelogicalname="abc_sharedsql"><connectionreferencedisplayname>SQL</connectionreferencedisplayname><connectorid>/providers/Microsoft.PowerApps/apis/shared_sql</connectorid></connectionreference></connectionreferences>`,
+  }),
+  "customapis/sss_DoThing/customapi.xml": `<customapi uniquename="sss_DoThing"><name>sss_DoThing</name></customapi>`,
+  "[Content_Types].xml": "<Types/>",
+});
+const solH1 = await zip(solHFiles("1.0.0.0", [[RULE_A, "sss_ribbonno"], [RULE_B, "sss_ribbonyes"]]));
+const solH2 = await zip(solHFiles("1.1.0.0", [[RULE_A, "sss_ribbonno"]]));
+
+const files = { "SolA_1_0_0_0.zip": solA1, "SolA_1_1_0_0_managed.zip": solA2, "SolB_2_0_0_0_managed.zip": solB, "SolC_1_0_0_0_managed.zip": solC, "SolD.zip": solD, "SolE.zip": solE, "SolF.zip": solF, "SolF_copy.zip": solF, "SolG.zip": solG, "SolH_1_0.zip": solH1, "SolH_1_1.zip": solH2 };
 for (const [n, b] of Object.entries(files)) writeFileSync(resolve(OUT, n), b);
 
 const { page, assert, finish } = await launchPage(import.meta.url, { width: 1280, height: 900 });
@@ -325,5 +358,55 @@ await page.selectOption("#risk-baseline", { index: 0 });
 sys = await factorText("System tables included");
 assert(sys.includes("contact") && !sys.includes("new_widget"), "empty prefix: only prefix-less system table flagged");
 assert(!(await page.textContent("#risk-body")).includes("different publisher prefix"), "empty prefix: no prefix-hygiene factor");
+
+// ---- bug-fix regressions (SolH) ----
+await page.click("#btn-clear");
+await addOne("SolH_1_0.zip", 1);
+await addOne("SolH_1_1.zip", 2);
+
+// component type labels
+await page.click('.tab[data-tab="inventory"]');
+await page.selectOption("#inv-select", { index: 0 });
+const invH = await page.textContent("#inv-body");
+assert(invH.includes("Connector (371)") && !invH.includes("Connection Reference (371)"), "type 371 labelled Connector");
+assert(invH.includes("Connection Reference (10050)"), "org-specific type inferred as Connection Reference from zip content");
+assert(invH.includes("Custom API (10051)"), "org-specific type inferred as Custom API from customapis/ folder");
+assert(invH.includes("Custom component (type 10001)"), "unknown org-specific type shown as Custom component (type N)");
+
+// ribbon flag
+const tableRows = await page.$$eval("#inv-body tr", (els) => els.map((e) => e.textContent));
+assert(tableRows.some((t) => t.startsWith("sss_ribbonyes") && t.includes("· ribbon")), "real ribbon customization flagged");
+assert(tableRows.some((t) => t.startsWith("sss_ribbonno") && t.includes("Ribbon No") && !t.includes("· ribbon")), "empty RibbonDiffXml not flagged as ribbon");
+
+// Active dependency = blocker; foreign-prefix connection reference detected by content
+await page.click('.tab[data-tab="risk"]');
+await page.selectOption("#risk-select", { index: 0 });
+await page.selectOption("#risk-baseline", { index: 0 });
+const activeF = await factorText("Missing dependencies on unmanaged components");
+assert(activeF.includes("sss_/unmanaged.js") && activeF.includes("exists only as unmanaged customization in the source environment"), "Active dependency scored as blocker: " + activeF);
+assert(!(await factorText("Missing dependencies on System")).includes("unmanaged.js"), "Active dependency not treated as built-in");
+const prefH = await factorText("Custom components with a different publisher prefix");
+assert(prefH.includes("abc_sharedsql"), "prefix hygiene flags foreign-prefix connection reference (org-specific type)");
+await page.click('.tab[data-tab="order"]');
+const orderH = await page.textContent("#order-body");
+assert(orderH.includes("sss_/unmanaged.js") && orderH.includes("unmanaged in source environment"), "Active dependency listed as external in install order");
+
+// same-named business rules on different tables
+await page.click('.tab[data-tab="compare"]');
+await page.selectOption("#cmp-a", { index: 0 });
+await page.selectOption("#cmp-b", { index: 1 });
+const procRows = await page.$$eval("#cmp-body tr", (els) => els.map((e) => e.textContent));
+assert(procRows.some((t) => t.startsWith("removed") && t.includes("Validate") && t.includes("sss_ribbonyes")), "same-named business rule on another table reported as removed: " + procRows.filter((t) => t.includes("Validate")).join(" | "));
+
+// compare export: filename carries both names; respects "hide root" filter
+assert(await page.$eval("#cmp-hide-root", (e) => e.checked), "hide root checked by default");
+const [dlc] = await Promise.all([page.waitForEvent("download"), page.click("#cmp-export")]);
+assert(dlc.suggestedFilename() === "SolH-1.0.0.0_vs_SolH-1.1.0.0.diff.json", "compare export filename: " + dlc.suggestedFilename());
+const diffJson = JSON.parse(readFileSync(await dlc.path(), "utf8"));
+assert(diffJson.entries.length > 0 && !diffJson.entries.some((e) => e.category === "Root component"), "compare export respects hide-root filter");
+await page.click("#cmp-hide-root");
+const [dlc2] = await Promise.all([page.waitForEvent("download"), page.click("#cmp-export")]);
+const diffJson2 = JSON.parse(readFileSync(await dlc2.path(), "utf8"));
+assert(diffJson2.entries.some((e) => e.category === "Root component"), "compare export includes root rows when filter off");
 
 await finish();

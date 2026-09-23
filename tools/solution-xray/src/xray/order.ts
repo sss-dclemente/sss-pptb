@@ -1,4 +1,4 @@
-import { isBuiltinSolution } from "./componentTypes";
+import { isActiveSolution, isBuiltinSolution } from "./componentTypes";
 import { compareVersions } from "./diff";
 import type { RootComponent, SolutionInfo } from "./types";
 
@@ -108,7 +108,9 @@ export function computeInstallOrder(solutions: SolutionInfo[]): InstallOrder {
         addEdge(owner, s.uniqueName, `needs ${comp}`);
         continue;
       }
-      if (!isBuiltinSolution(reqSolution)) external.push({ solution: s.uniqueName, requiredSolution: req.solution ?? "?", component: comp });
+      if (isActiveSolution(reqSolution))
+        external.push({ solution: s.uniqueName, requiredSolution: "Active (unmanaged in source environment; add it to the solution or a prerequisite solution)", component: comp });
+      else if (!isBuiltinSolution(reqSolution)) external.push({ solution: s.uniqueName, requiredSolution: req.solution ?? "?", component: comp });
     }
     for (const rc of s.rootComponents) {
       if (rc.type !== 1 || rc.behavior === 0 || !rc.schemaName) continue;
