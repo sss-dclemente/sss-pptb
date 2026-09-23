@@ -1,15 +1,28 @@
 {
   "name": "@simplesmoothsafe/pptb-access-checker",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "displayName": "SSS Access Checker",
   "description": "Why can (or can't) a user do X on a record? Verdict per access right with the chain that produced it: roles, teams, business unit, ownership, shares, hierarchy, column security.",
   "main": "index.html",
   "icon": "icon.svg",
   "license": "MIT",
-  "keywords": ["powerplatform", "dataverse", "toolbox", "pptb", "security", "security-roles", "sharing", "column-security", "access"],
+  "keywords": [
+    "powerplatform",
+    "dataverse",
+    "toolbox",
+    "pptb",
+    "security",
+    "security-roles",
+    "sharing",
+    "column-security",
+    "access"
+  ],
   "author": "Simple Smooth Safe",
   "contributors": [
-    { "name": "Duarte Clemente", "url": "https://simplesmoothsafe.com" }
+    {
+      "name": "Duarte Clemente",
+      "url": "https://simplesmoothsafe.com"
+    }
   ],
   "homepage": "https://simplesmoothsafe.com",
   "repository": {
@@ -27,7 +40,9 @@
     "connectionRequirement": "required",
     "minAPI": "1.2.0"
   },
-  "engines": { "node": ">=18.0.0" },
+  "engines": {
+    "node": ">=18.0.0"
+  },
   "scripts": {
     "build": "tsc --noEmit && vite build && node scripts/check-dist.mjs",
     "dev-watch": "vite build --mode development --watch",
@@ -41,5 +56,7 @@
     "typescript": "^5.6.0",
     "vite": "^5.4.0"
   },
-  "files": ["dist"]
+  "files": [
+    "dist"
+  ]
 }

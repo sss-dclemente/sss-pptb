@@ -1,15 +1,26 @@
 {
   "name": "@simplesmoothsafe/pptb-envvar-matrix",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "displayName": "SSS EnvVar & ConnRef Matrix",
   "description": "Environment variables and connection references as a matrix across environments: missing values, differences, copy values between environments, deploymentSettings.json export.",
   "main": "index.html",
   "icon": "icon.svg",
   "license": "MIT",
-  "keywords": ["powerplatform", "dataverse", "toolbox", "pptb", "environment-variables", "connection-references", "alm"],
+  "keywords": [
+    "powerplatform",
+    "dataverse",
+    "toolbox",
+    "pptb",
+    "environment-variables",
+    "connection-references",
+    "alm"
+  ],
   "author": "Simple Smooth Safe",
   "contributors": [
-    { "name": "Duarte Clemente", "url": "https://simplesmoothsafe.com" }
+    {
+      "name": "Duarte Clemente",
+      "url": "https://simplesmoothsafe.com"
+    }
   ],
   "homepage": "https://simplesmoothsafe.com",
   "repository": {
@@ -27,7 +38,9 @@
     "connectionRequirement": "required",
     "minAPI": "1.2.0"
   },
-  "engines": { "node": ">=18.0.0" },
+  "engines": {
+    "node": ">=18.0.0"
+  },
   "scripts": {
     "build": "tsc --noEmit && vite build && node scripts/check-dist.mjs",
     "dev-watch": "vite build --mode development --watch",
@@ -41,5 +54,7 @@
     "typescript": "^5.6.0",
     "vite": "^5.4.0"
   },
-  "files": ["dist"]
+  "files": [
+    "dist"
+  ]
 }
