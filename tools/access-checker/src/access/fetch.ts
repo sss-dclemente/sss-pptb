@@ -3,7 +3,7 @@
  * Collections always go through queryData with $filter so results are a { value } array,
  * which is the one shape the host guarantees.
  */
-import { parseAccessMask, parseDepth, privilegeName } from "./privileges";
+import { parseAccessMask, parseDepth, rightOfPrivilegeType, tablePrivilegeName } from "./privileges";
 import { RIGHTS } from "./types";
 import type {
   BusinessUnit,
@@ -19,6 +19,7 @@ import type {
   SecuredColumn,
   ShareEntry,
   TableInfo,
+  TablePrivileges,
   TeamInfo,
   TeamType,
   UserInfo,
@@ -30,6 +31,34 @@ const id = (v: unknown): string => String(v ?? "").toLowerCase();
 /** Guard before a guid is interpolated into an OData path. */
 const GUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const esc = (v: string): string => v.replace(/'/g, "''");
+
+/**
+ * Every page of a collection query. queryData returns the response body unchanged, so a paged result
+ * carries @odata.nextLink (absolute URL, default page size 5 000). queryData prefixes the connection's
+ * Web API root, so pass only what follows /api/data/v9.x/.
+ */
+export async function queryAll(api: DataverseLike, odata: string): Promise<Row[]> {
+  const out: Row[] = [];
+  let next: string | null = odata;
+  for (let page = 0; next && page < 200; page++) {
+    const r = (await api.queryData(next)) as { value: Row[]; "@odata.nextLink"?: string };
+    out.push(...(r.value ?? []));
+    const link = r["@odata.nextLink"];
+    next = link ? link.replace(/^.*?\/api\/data\/v\d+(\.\d+)?\//, "") : null;
+  }
+  return out;
+}
+
+/** Ids per `or` filter: `x eq <guid>` is ~52 chars, so a chunk is ~2 kB of filter, well inside URL length limits however many principals a record is shared with. */
+const OR_CHUNK = 40;
+/** Run `build(filter)` for chunks of an `or` filter over ids and concatenate every page of every chunk. */
+async function queryByIds(api: DataverseLike, ids: string[], field: string, build: (filter: string) => string): Promise<Row[]> {
+  const uniq = [...new Set(ids)];
+  const chunks: string[][] = [];
+  for (let i = 0; i < uniq.length; i += OR_CHUNK) chunks.push(uniq.slice(i, i + OR_CHUNK));
+  const pages = await Promise.all(chunks.map((c) => queryAll(api, build(c.map((x) => `${field} eq ${x}`).join(" or ")))));
+  return pages.flat();
+}
 
 export interface DataverseLike {
   queryData: (odata: string) => Promise<{ value: Row[] }>;
@@ -47,6 +76,9 @@ export class Cache {
    *  From RetrieveUserPrivilegeByPrivilegeName; an absent key means not asked yet. */
   userPrivileges: Record<string, Record<string, Depth | null>> = {};
   hierarchy: boolean | null | undefined = undefined;
+  hierarchyMaxDepth: number | undefined = undefined;
+  /** table logical name → stored privilege name per right, from entity metadata. */
+  tablePrivileges: Record<string, TablePrivileges> = {};
 }
 
 // ---------- users ----------
@@ -76,16 +108,24 @@ export async function fetchUser(api: DataverseLike, userId: string): Promise<Use
 export async function fetchUsersById(api: DataverseLike, ids: string[]): Promise<Map<string, UserInfo>> {
   const out = new Map<string, UserInfo>();
   if (!ids.length) return out;
-  const r = await api.queryData(`systemusers?$select=${USER_SELECT}&$filter=${ids.map((x) => `systemuserid eq ${x}`).join(" or ")}`);
-  for (const row of r.value) out.set(id(row.systemuserid), toUser(row));
+  const rows = await queryByIds(api, ids, "systemuserid", (f) => `systemusers?$select=${USER_SELECT}&$filter=${f}`);
+  for (const row of rows) out.set(id(row.systemuserid), toUser(row));
   return out;
 }
 
 // ---------- roles & teams ----------
-const toRole = (r: Row): RoleRef => ({ id: id(r.roleid), name: s(r.name) ?? id(r.roleid), businessUnitId: r._businessunitid_value ? id(r._businessunitid_value) : null });
+const ROLE_SELECT = "roleid,name,_businessunitid_value,_roletemplateid_value,isinherited";
+const toRole = (r: Row): RoleRef => ({
+  id: id(r.roleid),
+  name: s(r.name) ?? id(r.roleid),
+  businessUnitId: r._businessunitid_value ? id(r._businessunitid_value) : null,
+  templateId: r._roletemplateid_value ? id(r._roletemplateid_value) : null,
+  // 1 (the default) unless the role explicitly says 0 "Team privileges only".
+  isInherited: r.isinherited == null || Number(r.isinherited) !== 0,
+});
 
 export async function fetchDirectRoles(api: DataverseLike, userId: string): Promise<RoleRef[]> {
-  const r = await api.queryData(`systemusers?$select=systemuserid&$filter=systemuserid eq ${userId}&$expand=systemuserroles_association($select=roleid,name,_businessunitid_value)`);
+  const r = await api.queryData(`systemusers?$select=systemuserid&$filter=systemuserid eq ${userId}&$expand=systemuserroles_association($select=${ROLE_SELECT})`);
   const roles = (r.value[0]?.systemuserroles_association as Row[] | undefined) ?? [];
   return roles.map(toRole);
 }
@@ -100,8 +140,8 @@ export async function fetchTeams(api: DataverseLike, userId: string): Promise<Te
     roles: [] as RoleRef[],
   }));
   if (!teams.length) return teams;
-  const tr = await api.queryData(`teams?$select=teamid&$filter=${teams.map((t) => `teamid eq ${t.id}`).join(" or ")}&$expand=teamroles_association($select=roleid,name,_businessunitid_value)`);
-  for (const row of tr.value) {
+  const tr = await queryByIds(api, teams.map((t) => t.id), "teamid", (f) => `teams?$select=teamid&$filter=${f}&$expand=teamroles_association($select=${ROLE_SELECT})`);
+  for (const row of tr) {
     const team = teams.find((t) => t.id === id(row.teamid));
     if (team) team.roles = ((row.teamroles_association as Row[] | undefined) ?? []).map(toRole);
   }
@@ -111,8 +151,8 @@ export async function fetchTeams(api: DataverseLike, userId: string): Promise<Te
 export async function fetchTeamsById(api: DataverseLike, ids: string[]): Promise<Map<string, { id: string; name: string }>> {
   const out = new Map<string, { id: string; name: string }>();
   if (!ids.length) return out;
-  const r = await api.queryData(`teams?$select=teamid,name&$filter=${ids.map((x) => `teamid eq ${x}`).join(" or ")}`);
-  for (const row of r.value) out.set(id(row.teamid), { id: id(row.teamid), name: s(row.name) ?? id(row.teamid) });
+  const rows = await queryByIds(api, ids, "teamid", (f) => `teams?$select=teamid,name&$filter=${f}`);
+  for (const row of rows) out.set(id(row.teamid), { id: id(row.teamid), name: s(row.name) ?? id(row.teamid) });
   return out;
 }
 
@@ -125,8 +165,8 @@ export function heldRoles(direct: RoleRef[], teams: TeamInfo[]): HeldRole[] {
 // ---------- privileges ----------
 export async function fetchPrivilegeDefs(api: DataverseLike, cache: Cache): Promise<PrivilegeDef[]> {
   if (cache.privileges) return cache.privileges;
-  const r = await api.queryData("privileges?$select=privilegeid,name");
-  cache.privileges = r.value.map((p) => ({ id: id(p.privilegeid), name: String(p.name ?? "") }));
+  const rows = await queryAll(api, "privileges?$select=privilegeid,name");
+  cache.privileges = rows.map((p) => ({ id: id(p.privilegeid), name: String(p.name ?? "") }));
   return cache.privileges;
 }
 
@@ -162,6 +202,31 @@ export async function fetchRolePrivileges(api: DataverseLike, cache: Cache, role
 }
 
 /**
+ * Privilege name per right for one table, from EntityDefinitions(LogicalName='x')?$select=Privileges
+ * (PrivilegeType + Name). Names do not follow prv{Right}{Table} everywhere: every activity table
+ * shares prv*Activity, annotation is prv*Note, systemuser is prv*User. Cached per table. On failure
+ * returns {} so callers fall back to the naming convention (not cached, retried next check).
+ */
+export async function fetchTablePrivileges(api: DataverseLike, cache: Cache, tableLogicalName: string): Promise<TablePrivileges> {
+  const hit = cache.tablePrivileges[tableLogicalName];
+  if (hit) return hit;
+  try {
+    // A single-entity read returns the entity itself, not { value }: same cast as RetrieveRolePrivilegesRole.
+    const res = (await api.queryData(`EntityDefinitions(LogicalName='${esc(tableLogicalName)}')?$select=Privileges`)) as unknown as Row;
+    const out: TablePrivileges = {};
+    for (const p of (res.Privileges as Row[] | undefined) ?? []) {
+      const right = rightOfPrivilegeType(p.PrivilegeType);
+      if (right && p.Name) out[right] = String(p.Name);
+    }
+    if (!Object.keys(out).length) return out;
+    cache.tablePrivileges[tableLogicalName] = out;
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+/**
  * Effective depth for the eight rights of one table, as the platform computes it.
  *
  * Not RetrieveUserPrivileges: that one reports privileges inherited through team membership at
@@ -177,13 +242,14 @@ export async function fetchRolePrivileges(api: DataverseLike, cache: Cache, role
  * null if any call fails, so the caller shows no platform column rather than a partial map
  * whose missing entries would read as denials.
  */
-export async function fetchUserPrivileges(api: DataverseLike, cache: Cache, userId: string, tableLogicalName: string): Promise<Record<string, Depth> | null> {
+export async function fetchUserPrivileges(api: DataverseLike, cache: Cache, userId: string, tableLogicalName: string, tp: TablePrivileges): Promise<Record<string, Depth> | null> {
   const defs = await fetchPrivilegeDefs(api, cache);
-  // Privilege names are stored as prv{Right}{SchemaName}; privilegeName() lower-cases, so match
-  // case-insensitively and send back the stored spelling. A right with no privilege for this
+  // Names come from entity metadata (convention only as fallback); maps are keyed lower-case, so
+  // match case-insensitively and send back the stored spelling. A right with no privilege for this
   // table (Assign and Share on an organization-owned table) simply has no def to send.
   const storedByLower = new Map(defs.map((d) => [d.name.toLowerCase(), d.name]));
-  const wanted = RIGHTS.map((r) => privilegeName(r, tableLogicalName))
+  const wanted = RIGHTS.map((r) => tablePrivilegeName(tp, r, tableLogicalName))
+    .filter((lower): lower is string => lower != null)
     .map((lower) => ({ lower, stored: storedByLower.get(lower) }))
     .filter((x): x is { lower: string; stored: string } => x.stored != null);
 
@@ -226,26 +292,37 @@ export async function fetchUserPrivileges(api: DataverseLike, cache: Cache, user
 // ---------- business units, org ----------
 export async function fetchBusinessUnits(api: DataverseLike, cache: Cache): Promise<BusinessUnit[]> {
   if (cache.businessUnits) return cache.businessUnits;
-  const r = await api.queryData("businessunits?$select=businessunitid,name,_parentbusinessunitid_value");
-  cache.businessUnits = r.value.map((b) => ({ id: id(b.businessunitid), name: s(b.name) ?? id(b.businessunitid), parentId: b._parentbusinessunitid_value ? id(b._parentbusinessunitid_value) : null }));
+  const rows = await queryAll(api, "businessunits?$select=businessunitid,name,_parentbusinessunitid_value");
+  cache.businessUnits = rows.map((b) => ({ id: id(b.businessunitid), name: s(b.name) ?? id(b.businessunitid), parentId: b._parentbusinessunitid_value ? id(b._parentbusinessunitid_value) : null }));
   return cache.businessUnits;
 }
 
-/** Attribute name unverified against the current API; null = unknown, hierarchy hint is then skipped. */
-export async function fetchHierarchyEnabled(api: DataverseLike, cache: Cache): Promise<boolean | null> {
-  if (cache.hierarchy !== undefined) return cache.hierarchy;
-  try {
-    const r = await api.queryData("organizations?$select=ishierarchicalsecuritymodelenabled&$top=1");
-    const v = r.value[0]?.ishierarchicalsecuritymodelenabled;
-    cache.hierarchy = typeof v === "boolean" ? v : null;
-  } catch {
-    cache.hierarchy = null;
+/** Default of organization.maxdepthforhierarchicalsecuritymodel. */
+export const DEFAULT_HIERARCHY_DEPTH = 3;
+
+/**
+ * Organization hierarchy settings: ishierarchicalsecuritymodelenabled and
+ * maxdepthforhierarchicalsecuritymodel (both documented on the organization table).
+ * enabled null = unknown, hierarchy hint is then skipped; maxDepth falls back to the default 3.
+ */
+export async function fetchHierarchySettings(api: DataverseLike, cache: Cache): Promise<{ enabled: boolean | null; maxDepth: number }> {
+  if (cache.hierarchy === undefined) {
+    try {
+      const r = await api.queryData("organizations?$select=ishierarchicalsecuritymodelenabled,maxdepthforhierarchicalsecuritymodel&$top=1");
+      const v = r.value[0]?.ishierarchicalsecuritymodelenabled;
+      const m = Number(r.value[0]?.maxdepthforhierarchicalsecuritymodel);
+      cache.hierarchy = typeof v === "boolean" ? v : null;
+      cache.hierarchyMaxDepth = Number.isInteger(m) && m > 0 ? m : DEFAULT_HIERARCHY_DEPTH;
+    } catch {
+      cache.hierarchy = null;
+      cache.hierarchyMaxDepth = DEFAULT_HIERARCHY_DEPTH;
+    }
   }
-  return cache.hierarchy;
+  return { enabled: cache.hierarchy, maxDepth: cache.hierarchyMaxDepth ?? DEFAULT_HIERARCHY_DEPTH };
 }
 
-/** Walk the manager chain above a user (nearest first), at most `max` levels. */
-export async function fetchManagerChain(api: DataverseLike, start: UserInfo, max = 10): Promise<UserInfo[]> {
+/** Walk the manager chain above a user (nearest first), at most `max` levels (the org's hierarchy depth). */
+export async function fetchManagerChain(api: DataverseLike, start: UserInfo, max = DEFAULT_HIERARCHY_DEPTH): Promise<UserInfo[]> {
   const out: UserInfo[] = [];
   let cur = start;
   const seen = new Set<string>([start.id]);
@@ -356,8 +433,8 @@ export async function fetchFieldProfiles(api: DataverseLike, userId: string, tea
   const u = await api.queryData(`systemusers?$select=systemuserid&$filter=systemuserid eq ${userId}&$expand=systemuserprofiles_association($select=fieldsecurityprofileid,name)`);
   for (const p of (u.value[0]?.systemuserprofiles_association as Row[] | undefined) ?? []) out.push({ id: id(p.fieldsecurityprofileid), name: s(p.name) ?? id(p.fieldsecurityprofileid), viaTeam: null });
   if (teams.length) {
-    const tr = await api.queryData(`teams?$select=teamid&$filter=${teams.map((t) => `teamid eq ${t.id}`).join(" or ")}&$expand=teamprofiles_association($select=fieldsecurityprofileid,name)`);
-    for (const row of tr.value) {
+    const tr = await queryByIds(api, teams.map((t) => t.id), "teamid", (f) => `teams?$select=teamid&$filter=${f}&$expand=teamprofiles_association($select=fieldsecurityprofileid,name)`);
+    for (const row of tr) {
       const team = teams.find((t) => t.id === id(row.teamid));
       for (const p of (row.teamprofiles_association as Row[] | undefined) ?? []) out.push({ id: id(p.fieldsecurityprofileid), name: s(p.name) ?? id(p.fieldsecurityprofileid), viaTeam: team ?? null });
     }
@@ -367,9 +444,9 @@ export async function fetchFieldProfiles(api: DataverseLike, userId: string, tea
 
 export async function fetchFieldPermissions(api: DataverseLike, t: TableInfo, profileIds: string[]): Promise<FieldPermission[]> {
   if (!profileIds.length) return [];
-  const r = await api.queryData(`fieldpermissions?$select=attributelogicalname,canread,canupdate,cancreate,_fieldsecurityprofileid_value&$filter=entityname eq '${esc(t.logicalName)}'`);
+  const rows = await queryAll(api, `fieldpermissions?$select=attributelogicalname,canread,canupdate,cancreate,_fieldsecurityprofileid_value&$filter=entityname eq '${esc(t.logicalName)}'`);
   const wanted = new Set(profileIds);
-  return r.value
+  return rows
     .map((p) => ({ profileId: id(p._fieldsecurityprofileid_value), attribute: String(p.attributelogicalname ?? ""), canRead: Number(p.canread) === 4, canUpdate: Number(p.canupdate) === 4, canCreate: Number(p.cancreate) === 4 }))
     .filter((p) => wanted.has(p.profileId));
 }

@@ -20,6 +20,10 @@ export interface EnvVarRecord {
   value: string | null;
   valueId: string | null;
   isManaged: boolean;
+  /** the value row (if any) is part of a managed solution layer */
+  valueIsManaged?: boolean;
+  /** number of environmentvariablevalue rows found for this definition (normally 0 or 1) */
+  valueCount?: number;
 }
 
 export interface ConnRefRecord {
@@ -42,6 +46,8 @@ export interface ColumnMeta {
   environment: string;
   color?: string;
   takenAt: string;
+  /** set when loading this live column failed; its cells are not compared */
+  error?: string;
 }
 
 export interface ColumnData {

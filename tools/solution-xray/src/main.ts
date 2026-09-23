@@ -2,7 +2,7 @@ import { $, badge, card, emptyState, foldCard, h, table, wireTabs } from "../../
 import { filesFromDrop, initTheme, inToolbox, notify, pickZips, saveText } from "./host";
 import { diffSolutions, type SolutionDiff } from "./xray/diff";
 import { buildInventory, managedLabel } from "./xray/inventory";
-import { computeInstallOrder } from "./xray/order";
+import { computeInstallOrder, latestByName } from "./xray/order";
 import { parseSolutionZip } from "./xray/parse";
 import { scoreRisk } from "./xray/risk";
 import type { SolutionInfo } from "./xray/types";
@@ -10,6 +10,20 @@ import type { SolutionInfo } from "./xray/types";
 // ---------- state ----------
 const solutions: SolutionInfo[] = [];
 let activeTab = "inventory";
+/** Stable per-load id used as <option> value, so selections survive loads and removals. */
+const ids = new WeakMap<SolutionInfo, string>();
+let nextId = 1;
+
+function idOf(s: SolutionInfo): string {
+  let id = ids.get(s);
+  if (!id) ids.set(s, (id = `s${nextId++}`));
+  return id;
+}
+
+function selected(selector: string): SolutionInfo | undefined {
+  const v = $<HTMLSelectElement>(selector).value;
+  return v ? solutions.find((s) => idOf(s) === v) : undefined;
+}
 
 function label(s: SolutionInfo): string {
   return `${s.displayName || s.uniqueName} ${s.version ? `v${s.version}` : ""} (${s.managed ? "managed" : "unmanaged"})`;
@@ -22,10 +36,11 @@ function renderSidebar(): void {
   if (!solutions.length) {
     list.append(h("li", { class: "empty" }, "No solutions loaded"));
   }
-  solutions.forEach((s, i) => {
+  solutions.forEach((s) => {
     const remove = h("button", { class: "btn-icon", type: "button", title: "Remove", "aria-label": `Remove ${s.uniqueName}` }, "×");
     remove.addEventListener("click", () => {
-      solutions.splice(i, 1);
+      const i = solutions.indexOf(s);
+      if (i >= 0) solutions.splice(i, 1);
       renderAll();
     });
     list.append(
@@ -51,9 +66,15 @@ function renderSidebar(): void {
     const prev = sel.value;
     sel.replaceChildren();
     if (id === "#risk-baseline") sel.append(h("option", { value: "" }, "none"));
-    solutions.forEach((s, i) => sel.append(h("option", { value: String(i) }, label(s))));
+    solutions.forEach((s) => sel.append(h("option", { value: idOf(s) }, label(s))));
     if ([...sel.options].some((o) => o.value === prev)) sel.value = prev;
-    else if (id === "#cmp-b" && solutions.length > 1) sel.value = "1";
+  }
+  // B defaults to a different solution than A (e.g. after loading zips one at a time)
+  const cmpA = $<HTMLSelectElement>("#cmp-a");
+  const cmpB = $<HTMLSelectElement>("#cmp-b");
+  if (solutions.length > 1 && cmpA.value === cmpB.value) {
+    const other = solutions.find((s) => idOf(s) !== cmpA.value);
+    if (other) cmpB.value = idOf(other);
   }
   $("#btn-clear").toggleAttribute("disabled", !solutions.length);
 }
@@ -62,7 +83,7 @@ function renderSidebar(): void {
 function renderInventory(): void {
   const body = $("#inv-body");
   body.replaceChildren();
-  const s = solutions[Number($<HTMLSelectElement>("#inv-select").value)];
+  const s = selected("#inv-select");
   if (!s) {
     body.append(emptyState("No solution selected", "Add a solution zip to see its component inventory."));
     return;
@@ -127,8 +148,8 @@ function renderInventory(): void {
 
 // ---------- compare ----------
 function currentDiff(): SolutionDiff | null {
-  const a = solutions[Number($<HTMLSelectElement>("#cmp-a").value)];
-  const b = solutions[Number($<HTMLSelectElement>("#cmp-b").value)];
+  const a = selected("#cmp-a");
+  const b = selected("#cmp-b");
   if (!a || !b) return null;
   return diffSolutions(a, b);
 }
@@ -190,13 +211,12 @@ function renderCompare(): void {
 function renderRisk(): void {
   const body = $("#risk-body");
   body.replaceChildren();
-  const s = solutions[Number($<HTMLSelectElement>("#risk-select").value)];
+  const s = selected("#risk-select");
   if (!s) {
     body.append(emptyState("No solution selected", "Add a solution zip to score its upgrade risk."));
     return;
   }
-  const baseIdx = $<HTMLSelectElement>("#risk-baseline").value;
-  const baseline = baseIdx === "" ? null : solutions[Number(baseIdx)];
+  const baseline = selected("#risk-baseline") ?? null;
   const r = scoreRisk(s, baseline === s ? null : baseline);
 
   const kind = r.band === "Low" ? "ok" : r.band === "Medium" ? "warn" : "bad";
@@ -251,8 +271,9 @@ function renderOrder(): void {
     return;
   }
   const o = computeInstallOrder(solutions);
+  const kept = latestByName(solutions);
 
-  if (o.duplicates.length) body.append(h("div", { class: "warnings" }, `Duplicate unique names ignored (first loaded wins): ${o.duplicates.join(", ")}`));
+  if (o.duplicates.length) body.append(h("div", { class: "warnings" }, `Duplicate unique names (highest version kept): ${o.duplicates.join(", ")}`));
 
   if (o.cycle.length) {
     body.append(
@@ -273,7 +294,7 @@ function renderOrder(): void {
       card(
         "Install order",
         h("ol", { class: "order-list" }, ...o.order.map((n) => {
-          const s = solutions.find((x) => x.uniqueName === n)!;
+          const s = kept.get(n)!;
           return h("li", {}, h("span", { class: "name" }, n), h("span", { class: "caption" }, `${s.version} · ${s.managed ? "managed" : "unmanaged"}`));
         })),
         badge(`${o.order.length} solutions`, "ok"),
@@ -359,7 +380,7 @@ function wire(): void {
   $("#risk-baseline").addEventListener("change", renderRisk);
 
   $("#inv-export").addEventListener("click", () => {
-    const s = solutions[Number($<HTMLSelectElement>("#inv-select").value)];
+    const s = selected("#inv-select");
     if (s) void exportJson(`${s.uniqueName}-${s.version || "inventory"}.xray.json`, { solution: s, inventory: buildInventory(s) });
   });
   $("#cmp-export").addEventListener("click", () => {
@@ -367,28 +388,26 @@ function wire(): void {
     if (d) void exportJson(`${d.a.name}-${d.a.version}_vs_${d.b.version}.diff.json`, d);
   });
   $("#risk-export").addEventListener("click", () => {
-    const s = solutions[Number($<HTMLSelectElement>("#risk-select").value)];
-    const baseIdx = $<HTMLSelectElement>("#risk-baseline").value;
-    const baseline = baseIdx === "" ? null : solutions[Number(baseIdx)];
+    const s = selected("#risk-select");
+    const baseline = selected("#risk-baseline") ?? null;
     if (s) void exportJson(`${s.uniqueName}-${s.version}.risk.json`, scoreRisk(s, baseline === s ? null : baseline));
   });
   $("#order-export").addEventListener("click", () => void exportJson("install-order.json", computeInstallOrder(solutions)));
 
-  // Drag & drop: browser-only convenience (unverified inside PPTB's iframe; harmless if unsupported)
+  // Drag & drop: browser-only convenience (unverified inside PPTB's iframe; harmless if unsupported).
+  // Listen on body only: drops on the dropzone bubble up, so one listener = one load per drop.
   const dz = $("#dropzone");
   if (!inToolbox()) dz.hidden = false;
-  for (const target of [dz, document.body]) {
-    target.addEventListener("dragover", (e) => {
-      e.preventDefault();
-      dz.classList.add("is-over");
-    });
-    target.addEventListener("dragleave", () => dz.classList.remove("is-over"));
-    target.addEventListener("drop", async (e) => {
-      e.preventDefault();
-      dz.classList.remove("is-over");
-      if (e.dataTransfer) await addFiles(await filesFromDrop(e.dataTransfer));
-    });
-  }
+  document.body.addEventListener("dragover", (e) => {
+    e.preventDefault();
+    dz.classList.add("is-over");
+  });
+  document.body.addEventListener("dragleave", () => dz.classList.remove("is-over"));
+  document.body.addEventListener("drop", async (e) => {
+    e.preventDefault();
+    dz.classList.remove("is-over");
+    if (e.dataTransfer) await addFiles(await filesFromDrop(e.dataTransfer));
+  });
 
   $("#host-mode").textContent = inToolbox() ? "Running inside Power Platform ToolBox" : "Standalone mode (browser)";
 }

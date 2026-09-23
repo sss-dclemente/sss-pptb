@@ -156,6 +156,46 @@ function parseWorkflow(el: Element): WorkflowInfo {
   };
 }
 
+function parseEnvVar(e: Element): EnvironmentVariableInfo {
+  const typeCode = text(e, ":scope > type");
+  const dn = e.querySelector(":scope > displayname");
+  return {
+    schemaName: attr(e, "schemaname") ?? "",
+    displayName: text(dn) ?? attr(dn, "default") ?? attr(dn?.querySelector(":scope > label"), "description"),
+    type: typeCode ? (ENV_VAR_TYPE[typeCode] ?? typeCode) : null,
+    hasDefault: !!text(e, ":scope > defaultvalue"),
+    hasValue: !!text(e, ":scope > environmentvariablevalues > environmentvariablevalue > value"),
+  };
+}
+
+/** environmentvariablevalues.json: { environmentvariablevalues: { environmentvariablevalue: {...} | [...] } } */
+function envValuesFromJson(json: string): { schemaName: string | null; hasValue: boolean }[] {
+  try {
+    const obj = JSON.parse(json) as { environmentvariablevalues?: { environmentvariablevalue?: unknown } };
+    const raw = obj.environmentvariablevalues?.environmentvariablevalue;
+    const list = (Array.isArray(raw) ? raw : raw ? [raw] : []) as Record<string, unknown>[];
+    return list.map((v) => ({
+      schemaName: typeof v["@schemaname"] === "string" ? (v["@schemaname"] as string) : null,
+      hasValue: v.value != null && String(v.value) !== "",
+    }));
+  } catch {
+    return [];
+  }
+}
+
+/** Merge an env var into the list, deduping by schema name (case-insensitive). */
+function mergeEnvVar(list: EnvironmentVariableInfo[], v: EnvironmentVariableInfo): void {
+  const existing = list.find((x) => x.schemaName.toLowerCase() === v.schemaName.toLowerCase());
+  if (!existing) {
+    list.push(v);
+    return;
+  }
+  existing.displayName ??= v.displayName;
+  existing.type ??= v.type;
+  existing.hasDefault ||= v.hasDefault;
+  existing.hasValue ||= v.hasValue;
+}
+
 function parseCustomizationsXml(doc: Document, info: SolutionInfo): void {
   const root = doc.querySelector("ImportExportXml");
   if (!root) {
@@ -211,19 +251,9 @@ function parseCustomizationsXml(doc: Document, info: SolutionInfo): void {
       }) satisfies ConnectionReferenceInfo,
   );
 
-  info.environmentVariables = children(
-    root.querySelector(":scope > environmentvariabledefinitions"),
-    "environmentvariabledefinition",
-  ).map((e) => {
-    const typeCode = text(e, ":scope > type");
-    return {
-      schemaName: attr(e, "schemaname") ?? "",
-      displayName: text(e, ":scope > displayname"),
-      type: typeCode ? (ENV_VAR_TYPE[typeCode] ?? typeCode) : null,
-      hasDefault: !!text(e, ":scope > defaultvalue"),
-      hasValue: !!text(e, ":scope > environmentvariablevalues > environmentvariablevalue > value"),
-    } satisfies EnvironmentVariableInfo;
-  });
+  for (const e of children(root.querySelector(":scope > environmentvariabledefinitions"), "environmentvariabledefinition")) {
+    mergeEnvVar(info.environmentVariables, parseEnvVar(e));
+  }
 
   info.pluginAssemblies = children(root.querySelector(":scope > SolutionPluginAssemblies"), "PluginAssembly").map((p) => ({
     name: (attr(p, "FullName") ?? "").split(",")[0],
@@ -324,6 +354,23 @@ export async function parseSolutionZip(data: Uint8Array | ArrayBuffer, fileName:
   } else {
     const doc = parseXml(await customizationsXml.async("string"), "customizations.xml", info.warnings);
     if (doc) parseCustomizationsXml(doc, info);
+  }
+
+  // Newer exports: environmentvariabledefinitions/<schemaname>/environmentvariabledefinition.xml (+ environmentvariablevalues.json)
+  const envDefs = files.filter((f) => /^environmentvariabledefinitions\/[^/]+\/environmentvariabledefinition\.xml$/i.test(f.name));
+  for (const ef of envDefs) {
+    const folder = ef.name.slice(0, ef.name.lastIndexOf("/"));
+    const doc = parseXml(await ef.async("string"), ef.name, info.warnings);
+    const el = doc?.documentElement;
+    if (!el || el.tagName !== "environmentvariabledefinition") continue;
+    const v = parseEnvVar(el);
+    if (!v.schemaName) v.schemaName = folder.split("/").pop() ?? "";
+    const valuesJson = find(`${folder}/environmentvariablevalues.json`);
+    if (valuesJson) {
+      const values = envValuesFromJson(await valuesJson.async("string"));
+      v.hasValue ||= values.some((x) => x.hasValue && (!x.schemaName || x.schemaName.toLowerCase() === v.schemaName.toLowerCase()));
+    }
+    mergeEnvVar(info.environmentVariables, v);
   }
 
   // Cloud flow definitions live in Workflows/<Name>-<GUID>.json

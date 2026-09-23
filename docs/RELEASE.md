@@ -68,7 +68,10 @@ Real-env test (one connection, a user with a mix of direct role + team role):
 - [ ] Record check: pick a record owned by another user in a child BU and one in a sibling BU; verdict chips match what the user actually sees (log in as them or use "Check access" in the model-driven app). Any `platform says otherwise` → note the case in `docs/BACKLOG.md`.
 - [ ] Record shared with a team the user belongs to: Shares tab lists it with `via team`; Check tab shows the share as the winning path.
 - [ ] Column security on a table with a secured column: Read / Update / Create match the field security profile UI.
-- [ ] Hierarchy: with hierarchy security on and the user as the owner's manager, the Hierarchy card appears. If the card says "state unknown", the attribute `ishierarchicalsecuritymodelenabled` is wrong: fix `fetchHierarchyEnabled` in `src/access/fetch.ts`.
+- [ ] Hierarchy: with hierarchy security on and the user as the owner's manager, the Hierarchy card appears. If the card says "state unknown", the organization row could not be read: check `fetchHierarchySettings` in `src/access/fetch.ts` (`ishierarchicalsecuritymodelenabled`, `maxdepthforhierarchicalsecuritymodel`, both documented on the organization table). A manager further above the owner than the organization's hierarchy depth gets no card.
+- [ ] Table-level check on an activity table (Task) and on Note: chips agree (names come from entity metadata: `prv*Activity`, `prv*Note`).
+- [ ] Team role with *Member's privilege inheritance* = *Team privileges only* at Basic: a record the user owns is not reached through it; a record owned by that team is.
+- [ ] Record shared with the user for a right they hold no privilege for: the chip is denied and the "why" line says the share has no effect.
 - [ ] Exports: JSON, shares CSV, columns CSV.
 
 Screenshots: `check.png`, `columns-dark.png` (+ optionally `shares.png`, add to README). Remove the synthetic-data line from `README.md`.
@@ -84,6 +87,6 @@ Submit: `@simplesmoothsafe/pptb-access-checker`, categories **Users & Security, 
 - [ ] ToolBox → Debug → *Install from npm* → each package name; smoke test once more from the published build (README, LICENSE, src are stripped at intake, only `package.json` + `dist/` ship).
 - [x] Root `README.md`: change "unpublished" to the published version per tool.
 - [ ] Commit real screenshots + README edits; `readmeUrl` points at `main`, so the marketplace picks them up on the next daily sync.
-- [ ] Version: `0.1.3` is published and fine for listing. Bump to `1.0.0` (Verified badge needs ≥1.0.0) once the real-env checklist passes; registry syncs `latest` daily at 00:00 UTC.
+- [ ] Version: `0.1.6` is published and fine for listing. Bump to `1.0.0` (Verified badge needs ≥1.0.0) once the real-env checklist passes; registry syncs `latest` daily at 00:00 UTC.
 - [ ] Do NOT add a package-root `index.html` either. 0.1.2 generated one; 0.1.3 removed it. `main` resolves inside `dist/`, so it was never needed — the npm-install launch failure was a host bug (PPTB-NOTES §11), not a packaging problem.
 - [ ] Do NOT reintroduce `npm-shrinkwrap.json`. The PPTB samples and publishing docs prescribe it plus a `finalize-package` script, and both were dropped in 0.1.1: npm honours a published shrinkwrap as the full tree including its `dev: true` entries, so `npm install` of a ~25 kB tool pulled ~50 MB of vite/esbuild/typescript/rollup (measured: 50 MB → under 200 KB after the fix). `npm shrinkwrap --omit=dev` does not help. The `dist/` bundles are self-contained, so there is nothing left to lock, and `@pptb/validate` does not check for it. See docs/PORT-PLAN.md.

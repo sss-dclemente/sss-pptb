@@ -32,6 +32,11 @@ function isCustom(schema: string | null, prefix: string): boolean {
   return !!schema && !!prefix && schema.toLowerCase().startsWith(prefix.toLowerCase() + "_");
 }
 
+/** Publisher-style prefix (xxx_) of any publisher: a custom component, not a system one. */
+function hasPublisherPrefix(schema: string | null): boolean {
+  return !!schema && /^[a-z0-9]+_/i.test(schema);
+}
+
 /**
  * Upgrade risk score: 0-100, sum of capped factors. Heuristic, not a verdict.
  * @param s solution being imported
@@ -81,7 +86,7 @@ export function scoreRisk(s: SolutionInfo, baseline?: SolutionInfo | null): Risk
   }
 
   // 3. System tables included with all subcomponents
-  const sysFull = s.rootComponents.filter((rc) => rc.type === 1 && rc.behavior === 0 && !isCustom(rc.schemaName, prefix));
+  const sysFull = s.rootComponents.filter((rc) => rc.type === 1 && rc.behavior === 0 && !!rc.schemaName && !hasPublisherPrefix(rc.schemaName));
   add({
     id: "system-tables-full",
     label: "System tables included with all subcomponents",
@@ -154,8 +159,10 @@ export function scoreRisk(s: SolutionInfo, baseline?: SolutionInfo | null): Risk
     advice: "Large solutions take longer to import and fail late. Consider splitting by area.",
   });
 
-  // 9. Prefix hygiene
-  const foreign = s.rootComponents.filter((rc) => rc.schemaName && [1, 2, 9, 61, 380, 371].includes(rc.type) && !isCustom(rc.schemaName, prefix) && /^[a-z0-9]+_/.test(rc.schemaName));
+  // 9. Prefix hygiene (needs this solution's prefix to judge; an empty prefix flags nothing)
+  const foreign = prefix
+    ? s.rootComponents.filter((rc) => rc.schemaName && [1, 2, 9, 61, 380, 371].includes(rc.type) && !isCustom(rc.schemaName, prefix) && hasPublisherPrefix(rc.schemaName))
+    : [];
   add({
     id: "prefix",
     label: "Custom components with a different publisher prefix",
@@ -196,14 +203,35 @@ export function scoreRisk(s: SolutionInfo, baseline?: SolutionInfo | null): Risk
       advice: "Removed components are deleted on upgrade if nothing else depends on them; otherwise the import fails.",
     });
     if (d.versionOrder !== "upgrade") {
-      add({
-        id: "version",
-        label: d.versionOrder === "same" ? "Version not incremented" : d.versionOrder === "downgrade" ? "Version lower than baseline" : "Version not comparable",
-        points: 10,
-        max: 10,
-        evidence: [`${baseline.version || "?"} → ${s.version || "?"}`],
-        advice: "Dataverse rejects same-or-lower version imports of managed solutions unless it is an update to an unmanaged one.",
-      });
+      const evidence = [`${baseline.version || "?"} → ${s.version || "?"}`];
+      if (d.versionOrder === "downgrade") {
+        add({
+          id: "version",
+          label: "Version lower than baseline",
+          points: 10,
+          max: 10,
+          evidence,
+          advice: "Dataverse rejects importing a managed solution with a lower version than the one installed. Unmanaged imports are not version-gated but overwrite newer customizations.",
+        });
+      } else if (d.versionOrder === "same") {
+        add({
+          id: "version",
+          label: "Version not incremented",
+          points: 3,
+          max: 10,
+          evidence,
+          advice: "Same-version imports are allowed (applied as an update), but deployments cannot be told apart. Bump the version for traceability.",
+        });
+      } else {
+        add({
+          id: "version",
+          label: "Version not comparable",
+          points: 5,
+          max: 10,
+          evidence,
+          advice: "One of the versions is missing or not numeric; confirm the target has a lower version than this import.",
+        });
+      }
     }
     if (baseline.managed !== s.managed) {
       add({
