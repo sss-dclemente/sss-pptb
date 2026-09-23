@@ -9,13 +9,14 @@ import {
   fetchDirectRoles,
   fetchFieldPermissions,
   fetchFieldProfiles,
-  fetchHierarchyEnabled,
+  fetchHierarchySettings,
   fetchManagerChain,
   fetchPrincipalAccess,
   fetchRecord,
   fetchRolePrivileges,
   fetchSecuredColumns,
   fetchShares,
+  fetchTablePrivileges,
   fetchTables,
   fetchTeams,
   fetchUser,
@@ -26,7 +27,7 @@ import {
   searchUsers,
   type DataverseLike,
 } from "./access/fetch";
-import { depthLabel, privilegeName } from "./access/privileges";
+import { depthLabel, isSystemAdminRole, tablePrivilegeName } from "./access/privileges";
 import { RIGHTS, TEAM_TYPE_LABEL, type CheckData, type ColumnAccess, type Explanation, type RecordInfo, type ShareEntry, type TableInfo, type UserInfo } from "./access/types";
 
 // ---------- state ----------
@@ -134,7 +135,7 @@ async function runCheck(): Promise<void> {
     const fresh = (await fetchUser(a, user.id)) ?? user;
     user = fresh;
     renderUserSel();
-    const [direct, teams, bus] = await Promise.all([fetchDirectRoles(a, fresh.id), fetchTeams(a, fresh.id), fetchBusinessUnits(a, cache)]);
+    const [direct, teams, bus, tablePrivileges] = await Promise.all([fetchDirectRoles(a, fresh.id), fetchTeams(a, fresh.id), fetchBusinessUnits(a, cache), fetchTablePrivileges(a, cache, t.logicalName)]);
     const held = heldRoles(direct, teams);
     const rolePrivileges = await fetchRolePrivileges(a, cache, held.map((x) => x.role));
     let rec: RecordInfo | null = null;
@@ -148,6 +149,7 @@ async function runCheck(): Promise<void> {
     let platformRights: ReturnType<typeof explain>["verdicts"][number]["right"][] | null = null;
     let platformDepths: CheckData["platformDepths"] = null;
     let hierarchyEnabled: boolean | null = null;
+    let hierarchyMaxDepth = 3;
     let ownerManagers: UserInfo[] = [];
     if (rec) {
       const [sh, pa, hier] = await Promise.all([
@@ -156,16 +158,17 @@ async function runCheck(): Promise<void> {
           return null;
         }),
         fetchPrincipalAccess(a, fresh.id, t, rec.id),
-        fetchHierarchyEnabled(a, cache),
+        fetchHierarchySettings(a, cache),
       ]);
       shares = sh;
       platformRights = pa;
-      hierarchyEnabled = hier;
-      if (hier && rec.ownerType === "systemuser" && rec.ownerId && rec.ownerId !== fresh.id) {
+      hierarchyEnabled = hier.enabled;
+      hierarchyMaxDepth = hier.maxDepth;
+      if (hier.enabled && rec.ownerType === "systemuser" && rec.ownerId && rec.ownerId !== fresh.id) {
         const owner = (await fetchUsersById(a, [rec.ownerId])).get(rec.ownerId);
-        if (owner) ownerManagers = await fetchManagerChain(a, owner);
+        if (owner) ownerManagers = await fetchManagerChain(a, owner, hier.maxDepth);
       }
-    } else platformDepths = await fetchUserPrivileges(a, cache, fresh.id, t.logicalName);
+    } else platformDepths = await fetchUserPrivileges(a, cache, fresh.id, t.logicalName, tablePrivileges);
 
     data = {
       user: fresh,
@@ -175,11 +178,13 @@ async function runCheck(): Promise<void> {
       teams,
       rolePrivileges,
       table: t,
+      tablePrivileges,
       record: rec,
       shares,
       platformRights,
       platformDepths,
       hierarchyEnabled,
+      hierarchyMaxDepth,
       ownerManagers,
     };
     expl = explain(data);
@@ -188,7 +193,7 @@ async function runCheck(): Promise<void> {
     $<HTMLButtonElement>("#btn-export-json").disabled = false;
 
     setStatus("Loading column security…");
-    const isAdmin = held.some((x) => x.role.name.trim().toLowerCase() === "system administrator");
+    const isAdmin = held.some((x) => isSystemAdminRole(x.role));
     const [cols, profiles] = await Promise.all([fetchSecuredColumns(a, t), fetchFieldProfiles(a, fresh.id, teams)]);
     const perms = await fetchFieldPermissions(a, t, [...new Set(profiles.map((p) => p.id))]);
     colRows = columnAccess(cols, profiles, perms, isAdmin);
@@ -244,8 +249,8 @@ function renderCheck(): void {
               { class: "detail" },
               v.paths.length
                 ? h("ul", {}, ...v.paths.map((p) => h("li", { class: `path ${p.reaches === false ? "is-miss" : "is-ok"}` }, `${p.role.name}${p.viaTeam ? ` via team ${p.viaTeam.name}` : " (direct)"} · ${depthLabel(p.depth)}${x.mode === "record" ? ` · ${p.reason}` : ""}`)))
-                : h("p", { class: "caption" }, `No role grants ${privilegeName(v.right, d.table.logicalName)}.`),
-              v.sharePaths.length ? h("ul", {}, ...v.sharePaths.map((s) => h("li", { class: "path is-ok" }, `Share: ${s}`))) : null,
+                : h("p", { class: "caption" }, `No role grants ${d.tablePrivileges[v.right] ?? tablePrivilegeName(d.tablePrivileges, v.right, d.table.logicalName) ?? v.right}.`),
+              v.sharePaths.length ? h("ul", {}, ...v.sharePaths.map((s) => h("li", { class: `path ${v.sharesEffective ? "is-ok" : "is-miss"}` }, `Share: ${s}${v.sharesEffective ? "" : " (no effect: the user holds no role with this privilege)"}`))) : null,
               v.hierarchyHint ? h("p", { class: "caption" }, v.hierarchyHint) : null,
               x.mode === "table" && v.platformDepth != null ? h("p", { class: "caption" }, `Platform effective depth: ${depthLabel(v.platformDepth)}`) : null,
             ),
@@ -259,8 +264,11 @@ function renderCheck(): void {
         ["Role", "Held", ...RIGHTS],
         d.heldRoles.map((hr) => [
           hr.role.name,
-          hr.viaTeam ? `via team ${hr.viaTeam.name} (${TEAM_TYPE_LABEL[hr.viaTeam.type] ?? "team"})` : "direct",
-          ...RIGHTS.map((r) => depthLabel(d.rolePrivileges[hr.role.id]?.[privilegeName(r, d.table.logicalName)] ?? null)),
+          hr.viaTeam ? `via team ${hr.viaTeam.name} (${TEAM_TYPE_LABEL[hr.viaTeam.type] ?? "team"})${hr.role.isInherited ? "" : " · team privileges only"}` : "direct",
+          ...RIGHTS.map((r) => {
+            const prv = tablePrivilegeName(d.tablePrivileges, r, d.table.logicalName);
+            return depthLabel(prv ? (d.rolePrivileges[hr.role.id]?.[prv] ?? null) : null);
+          }),
         ]),
         undefined,
         "roles",
@@ -471,7 +479,10 @@ function wire(): void {
     cache.businessUnits = null;
     cache.privileges = null;
     cache.rolePrivileges = {};
+    cache.userPrivileges = {};
     cache.hierarchy = undefined;
+    cache.hierarchyMaxDepth = undefined;
+    cache.tablePrivileges = {};
     void renderConnection();
     void loadTables().then(updateCheckButton);
   });

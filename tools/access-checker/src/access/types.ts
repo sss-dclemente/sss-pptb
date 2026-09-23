@@ -26,8 +26,22 @@ export interface BusinessUnit {
 export interface RoleRef {
   id: string;
   name: string;
+  /** BU the role belongs to. With record ownership across BUs (modernized BUs) a user can hold a role
+   *  from a BU other than their own; Local/Deep depth is then evaluated against this BU. */
   businessUnitId: string | null;
+  /** roletemplateid: identical across the per-BU copies of a system role (System Administrator etc.). */
+  templateId: string | null;
+  /** role.isinherited, "Member's privilege inheritance". true = 1 "Direct User (Basic) access level and
+   *  Team privileges" (the default); false = 0 "Team privileges only". Only matters for team roles. */
+  isInherited: boolean;
 }
+
+/** roletemplateid of System Administrator, the same in every environment and BU. */
+export const SYSADMIN_TEMPLATE_ID = "627090ff-40a3-4053-8790-584edc5be201";
+
+/** Stored privilege name per right for one table, from EntityDefinitions(...).Privileges. A right the
+ *  table has no privilege for (Assign/Share on an organization-owned table) is absent. */
+export type TablePrivileges = Partial<Record<Right, string>>;
 
 export type TeamType = 0 | 1 | 2 | 3; // owner, access, AAD security group, AAD office group
 export const TEAM_TYPE_LABEL: Record<TeamType, string> = { 0: "owner team", 1: "access team", 2: "Entra security group team", 3: "Entra office group team" };
@@ -110,6 +124,8 @@ export interface CheckData {
   teams: TeamInfo[];
   rolePrivileges: RolePrivilegeMap;
   table: TableInfo;
+  /** Privilege names of the checked table from entity metadata (prvReadActivity for task, prvReadNote for annotation …). */
+  tablePrivileges: TablePrivileges;
   record: RecordInfo | null;
   shares: ShareEntry[] | null;
   /** Rights the platform reports for the user on the record (RetrievePrincipalAccess). null when unavailable. */
@@ -118,7 +134,9 @@ export interface CheckData {
    *  for the rights of the checked table only. null when unavailable. */
   platformDepths: Record<string, Depth> | null;
   hierarchyEnabled: boolean | null;
-  /** Manager chain above the record owner (nearest first), only when the owner is a user and hierarchy is on. */
+  /** organization.maxdepthforhierarchicalsecuritymodel (default 3): how many manager levels hierarchy security reaches. */
+  hierarchyMaxDepth: number;
+  /** Manager chain above the record owner (nearest first, at most hierarchyMaxDepth levels), only when the owner is a user and hierarchy is on. */
   ownerManagers: UserInfo[];
 }
 
@@ -128,7 +146,7 @@ export interface PrivilegePath {
   role: RoleRef;
   viaTeam: TeamInfo | null;
   depth: Depth;
-  /** BU the depth is evaluated against (user BU for direct roles, team BU for team roles). */
+  /** BU the depth is evaluated against (the role's BU for direct roles, team BU for team roles). */
   baseBuId: string | null;
   reaches: boolean | null; // null when no record
   reason: string;
@@ -145,6 +163,8 @@ export interface RightVerdict {
   bestDepth: Depth | null;
   paths: PrivilegePath[];
   sharePaths: string[];
+  /** false when a share grants the right but the user holds no role with the privilege: the platform ignores such a share. */
+  sharesEffective: boolean;
   hierarchyHint: string | null;
   /** One-line summary of why. */
   summary: string;
