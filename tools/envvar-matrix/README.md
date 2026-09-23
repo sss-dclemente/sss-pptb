@@ -15,7 +15,7 @@ Built by [Simple Smooth Safe](https://simplesmoothsafe.com).
 
 ## Screenshots
 
-Synthetic sample data. Replace with real captures before publishing.
+Rendered from the tool against a mocked host with fictional sample data (Contoso Dev / UAT sandboxes). Regenerate with `npm run build && npm run screenshots`.
 
 ![Environment variables matrix](https://raw.githubusercontent.com/sss-dclemente/sss-pptb/main/tools/envvar-matrix/docs/img/envvars.png)
 

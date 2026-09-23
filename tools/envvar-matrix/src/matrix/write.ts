@@ -54,11 +54,12 @@ function planOne(row: EnvVarRow, targetKey: string, src: PlanSource): PlannedWri
   const warnings: string[] = [];
   if (rec?.valueId && rec.valueIsManaged) warnings.push("value row is managed; updating it adds an unmanaged layer on top");
   if ((rec?.valueCount ?? 0) > 1) warnings.push(`target has ${rec!.valueCount} value rows for this definition; only one is updated`);
+  const mask = (v: string | null | undefined): string | null => (v == null ? null : row.isSecret ? "••••••" : v);
   const base = {
     schemaName: row.schemaName,
-    currentValue: cell?.effective ?? null,
+    currentValue: mask(cell?.effective),
     currentSource: cell?.source ?? "absent",
-    newValue,
+    newValue: row.isSecret ? mask(newValue) : newValue,
     definitionId: rec?.definitionId ?? null,
     valueId: rec?.valueId ?? null,
   };
