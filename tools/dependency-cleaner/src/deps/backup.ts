@@ -81,8 +81,10 @@ export async function planRestore(api: DataverseLike, b: Backup, solutions: Solu
   if (!sol) throw new Error(`solution ${b.solution.uniqueName} is not in this environment`);
   if (sol.isManaged) throw new Error(`solution ${sol.uniqueName} is managed: writes are refused`);
   const notes: string[] = [];
-  if (b.environment.url && envUrl && b.environment.url.replace(/\/+$/, "").toLowerCase() !== envUrl.replace(/\/+$/, "").toLowerCase())
-    notes.push(`Backup was taken in ${b.environment.name} (${b.environment.url}), not this environment.`);
+  // a backup restores only into the environment it was taken in
+  const norm = (u: string | undefined) => (u ?? "").replace(/\/+$/, "").toLowerCase();
+  if (!norm(b.environment?.url)) throw new Error("backup does not record its environment url");
+  if (norm(b.environment.url) !== norm(envUrl)) throw new Error(`backup was taken in ${b.environment.name} (${b.environment.url}), not this environment (${envUrl}): restore refused`);
 
   const current = await fetchComponents(api, sol.id);
   const key = (type: number, id: string) => `${type}:${id}`;

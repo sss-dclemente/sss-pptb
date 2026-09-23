@@ -59,7 +59,7 @@ const MOCK = `
   const PUB = { sss: g(11), ms: g(12), sys: g(13) };
   const E = { acc: g(101), wo: g(102), common: g(103) };
   const A = { name: g(201), woid: g(202), st: g(203), sss: g(204) };
-  const FORM_A = g(301), FORM_B = g(302), VIEW = g(401);
+  const FORM_A = g(301), FORM_B = g(302), VIEW = g(401), FORM_FS = g(303), CHART = g(501);
   const FORM_A_XML = '<form><tabs><tab name="general"><labels><label description="General" languagecode="1033"/></labels><columns><column width="100%"><sections>'
     + '<section name="s1"><labels><label description="Summary" languagecode="1033"/></labels><rows>'
     + '<row><cell id="{c1}"><labels><label description="Name" languagecode="1033"/></labels><control id="name" classid="{4273EDBD-AC1D-40d3-9FB2-095C621B552D}" datafieldname="name"/></cell></row>'
@@ -80,6 +80,11 @@ const MOCK = `
     [FORM_A]: { type: 60, table: 'account', owners: [SOL.sys] },
     [FORM_B]: { type: 60, table: 'account', owners: [] },
     [VIEW]: { type: 26, table: 'account', owners: [] },
+  };
+  // extra subcomponents a test can add to account: a Field Service form and your own chart (both named by display name)
+  const extra = {
+    [FORM_FS]: { type: 60, table: 'account', owners: [SOL.fs] },
+    [CHART]: { type: 59, table: 'account', owners: [] },
   };
   const owners = { [E.acc]: [SOL.sys], [E.wo]: [SOL.fs], [E.common]: [SOL.common] };
   let seq = 1000;
@@ -112,7 +117,9 @@ const MOCK = `
     { publisherid: PUB.ms, uniquename: 'microsoftdynamics', customizationprefix: 'msdyn' },
     { publisherid: PUB.sys, uniquename: 'MicrosoftCorporation', customizationprefix: 'none' },
   ];
-  const forms = { [FORM_A]: { formid: FORM_A, name: 'Account', objecttypecode: 'account', formxml: FORM_A_XML }, [FORM_B]: { formid: FORM_B, name: '=Quick Create', objecttypecode: 'account', formxml: FORM_B_XML } };
+  const forms = { [FORM_A]: { formid: FORM_A, name: 'Account', objecttypecode: 'account', formxml: FORM_A_XML }, [FORM_B]: { formid: FORM_B, name: '=Quick Create', objecttypecode: 'account', formxml: FORM_B_XML },
+    [FORM_FS]: { formid: FORM_FS, name: 'Work Order Summary', objecttypecode: 'account', formxml: '<form><tabs><tab name="t"><columns><column width="100%"><sections><section name="s"><rows><row><cell id="{f1}"><control id="name" classid="{4273EDBD-AC1D-40d3-9FB2-095C621B552D}" datafieldname="name"/></cell></row></rows></section></sections></column></columns></tab></tabs></form>' } };
+  const charts = { [CHART]: { savedqueryvisualizationid: CHART, name: 'Accounts by Industry', primaryentitytypecode: 'account' } };
   const views = { [VIEW]: { savedqueryid: VIEW, name: 'Accounts with work orders', returnedtypecode: 'account', fetchxml: VIEW_FETCH, layoutxml: VIEW_LAYOUT } };
   const attrs = { account: [
     { LogicalName: 'name', MetadataId: A.name, RequiredLevel: { Value: 'ApplicationRequired' } },
@@ -123,6 +130,7 @@ const MOCK = `
   const attrByName = Object.fromEntries(attrs.account.map((a) => [a.LogicalName, a.MetadataId]));
   const dep = (id, type, parent) => ({ '@odata.type': '#Microsoft.Dynamics.CRM.dependency', requiredcomponentobjectid: id, requiredcomponenttype: type, requiredcomponentparentid: parent ?? null, dependencytype: 1 });
   function required(id, type) {
+    if (M.extraReq[id]) return M.extraReq[id].map(([i, t, p]) => dep(i, t, p));
     if (type === 60) {
       const xml = forms[id]?.formxml ?? '';
       const out = [dep(E.acc, 1)];
@@ -135,7 +143,10 @@ const MOCK = `
     return [];
   }
 
-  const M = window.__mock = { envs, members, forms, views, queries: [], executes: [], updates: [], log: [], saved: [], notes: [], rrc: 0, managedFlip: false, nextText: null, nextBinary: null, FORM_A_XML, VIEW_FETCH, VIEW_LAYOUT, ids: { FORM_A, FORM_B, VIEW, A, E, SOL } };
+  const M = window.__mock = { envs, members, forms, views, queries: [], executes: [], updates: [], log: [], saved: [], notes: [], rrc: 0, managedFlip: false, nextText: null, nextBinary: null, FORM_A_XML, VIEW_FETCH, VIEW_LAYOUT, ids: { FORM_A, FORM_B, VIEW, FORM_FS, CHART, A, E, SOL },
+    listeners: [], extraReq: {}, attrFail: false };
+  M.emit = (event) => { for (const cb of M.listeners) cb(null, { event }); };
+  M.addExtra = () => { for (const [id, c] of Object.entries(extra)) { catalog[id] = c; members.push(row(id, c.type, null, accRow.solutioncomponentid)); } };
 
   const page = (q, target, rows) => {
     const m = q.match(/&\\$skiptoken=(\\d+)/);
@@ -150,7 +161,7 @@ const MOCK = `
   window.toolboxAPI = {
     connections: { getActiveConnection: async () => envs.primary.conn, getSecondaryConnection: async () => envs.secondary.conn },
     utils: { getCurrentTheme: async () => 'light', showNotification: async (o) => { M.notes.push(o); } },
-    events: { on() {} },
+    events: { on(cb) { M.listeners.push(cb); } },
     fileSystem: {
       saveFile: async (name, content) => { M.saved.push({ name, content }); return '/tmp/' + name; },
       selectPath: async () => (M.nextText != null ? '/tmp/backup.json' : M.nextBinary ? '/tmp/SssCore.zip' : null),
@@ -165,7 +176,10 @@ const MOCK = `
       { LogicalName: 'msdyn_workorder', MetadataId: E.wo, PrimaryNameAttribute: 'msdyn_name' },
       { LogicalName: 'msdyn_common', MetadataId: E.common, PrimaryNameAttribute: 'msdyn_name' },
     ] }),
-    getEntityRelatedMetadata: async (table) => ({ value: attrs[table] ?? [] }),
+    getEntityRelatedMetadata: async (table) => {
+      if (M.attrFail) throw new Error('mock: attribute metadata unavailable');
+      return { value: attrs[table] ?? [] };
+    },
     queryData: async (q, target = 'primary') => {
       M.queries.push({ q, target });
       await new Promise((r) => setTimeout(r, 10));
@@ -196,6 +210,7 @@ const MOCK = `
         return { value: out };
       }
       if (q.startsWith('systemforms?')) return { value: idsIn(q, 'formid').filter((id) => forms[id]).map((id) => ({ ...forms[id] })) };
+      if (q.startsWith('savedqueryvisualizations?')) return { value: idsIn(q, 'savedqueryvisualizationid').filter((id) => charts[id]).map((id) => ({ ...charts[id] })) };
       if (q.startsWith('savedqueries?')) return { value: idsIn(q, 'savedqueryid').filter((id) => views[id]).map((id) => ({ ...views[id] })) };
       throw new Error('mock: unexpected query ' + q);
     },
@@ -303,13 +318,15 @@ await sel(`26:${ids.VIEW}`, "edit-view");
 assert((await page.textContent("#sel-count")) === "4 selected", "4 fixes selected");
 await page.click("#btn-to-fix");
 await page.waitForSelector("#ops li");
+// the quick create form is yours (unmanaged) and kept by default (see B1); this run lets it leave with the shell
+await page.uncheck('input[aria-label="Keep =Quick Create"]');
 const opsText = await page.$$eval("#ops > li", (els) => els.map((e) => e.querySelector(".mono").textContent));
 assert(opsText[0] === "RemoveSolutionComponent Table account" && opsText[1] === "AddSolutionComponent Table account (DoNotIncludeSubcomponents)", "shell: remove, then add with DoNotIncludeSubcomponents");
 assert(opsText.includes("AddSolutionComponent Column sss_custom") && opsText.some((t) => t.startsWith("AddSolutionComponent Form Account")) && opsText.some((t) => t.startsWith("AddSolutionComponent View")), "re-adds own-prefix column and edited form/view");
 assert(!opsText.some((t) => t.includes("msdyn_workorderid") || t.includes("msdyn_serviceterritory") || t.includes("Quick")), "msdyn columns and unedited quick create form leave");
 assert(opsText.at(-1) === "PublishXml account", "PublishXml last, with touched tables");
 const leaving = await page.textContent("#fix-body");
-assert(leaving.includes("Shell conversion: account") && leaving.includes("3 leave"), "preview lists subcomponents leaving");
+assert(leaving.includes("Shell conversion: account") && leaving.includes("msdyn_serviceterritory"), "preview lists subcomponents leaving");
 assert(leaving.includes("=Quick Create (nothing to strip: kept msdyn_serviceterritory"), "required column kept on quick create form (reported, not stripped)");
 const diff = await page.$eval('pre[aria-label="formxml diff Account"]', (e) => ({ del: [...e.querySelectorAll(".del")].map((x) => x.textContent).join("\n"), add: e.querySelectorAll(".add").length }));
 assert(diff.del.includes('datafieldname="msdyn_workorderid"') && !diff.del.includes('datafieldname="name"'), "form diff shows the msdyn control removed, name kept");
@@ -403,5 +420,137 @@ const offCards = await page.$$eval("#offline-body .finding", (els) => els.map((e
 assert(JSON.stringify(offCards.sort()) === "[1,2]", "offline: grouped by dependent (form has 2 required)");
 await page.evaluate(() => document.documentElement.setAttribute("data-theme", "dark"));
 await page.screenshot({ path: resolve(OUT, "04-offline-dark.png"), fullPage: true });
+
+// ---- regression cases (fresh page each: the init script resets the mock) ----
+const fresh = async () => {
+  await page.reload();
+  await page.waitForFunction(() => document.querySelectorAll("#solution option[value]:not([value=''])").length > 0);
+};
+const diagnoseNow = async () => {
+  await page.click('.tab[data-tab="diagnose"]');
+  await page.evaluate(() => document.querySelector("#diag-summary").replaceChildren());
+  await page.click("#btn-run");
+  await page.waitForSelector("#diag-summary .summary");
+};
+const previewNow = async () => {
+  await page.evaluate(() => document.querySelector("#fix-body").replaceChildren());
+  await page.click("#btn-to-fix");
+  await page.waitForFunction(() => document.querySelector("#preview-error") || document.querySelector("#ops-wrap h3"));
+};
+const selD = async (key, fix) => {
+  await page.click('.tab[data-tab="diagnose"]');
+  await sel(key, fix);
+};
+const opLabels = () => page.$$eval("#ops > li .mono", (els) => els.map((e) => e.textContent));
+const keepBox = (name) => page.isChecked(`input[aria-label="Keep ${name}"]`);
+
+// ---- B1: shell conversion keeps your forms / views / charts by ownership, not by name prefix ----
+await fresh();
+await M(() => window.__mock.addExtra());
+await diagnoseNow();
+await selD(`2:${ids.A.woid}`, "shell");
+await previewNow();
+const keep = {
+  quick: await keepBox("=Quick Create"),
+  mainForm: await keepBox("Account"),
+  view: await keepBox("Accounts with work orders"),
+  chart: await keepBox("Accounts by Industry"),
+  fsForm: await keepBox("Work Order Summary"),
+  msdynCol: await keepBox("msdyn_workorderid"),
+  ownCol: await keepBox("sss_custom"),
+};
+assert(keep.quick && keep.mainForm && keep.view && keep.chart, "B1: unmanaged / non-filtered forms, views and charts are kept by default: " + JSON.stringify(keep));
+assert(!keep.fsForm && !keep.msdynCol && keep.ownCol, "B1: form owned by filtered FieldService and msdyn column leave; own-prefix column kept: " + JSON.stringify(keep));
+const b1ops = await opLabels();
+assert(b1ops.some((t) => t.startsWith("AddSolutionComponent Chart Accounts by Industry")) && b1ops.some((t) => t.startsWith("AddSolutionComponent Form =Quick Create")) && !b1ops.some((t) => t.includes("Work Order Summary")), "B1: re-add ops for kept chart and quick create form, none for the Field Service form");
+
+// ---- B2: shell on a column + remove on its table conflict; identical ops are deduped ----
+await fresh();
+await M(() => { const m = window.__mock; m.extraReq[m.ids.E.acc] = [[m.ids.E.wo, 1]]; });
+await diagnoseNow();
+await selD(`1:${ids.E.acc}`, "remove");
+await selD(`2:${ids.A.woid}`, "shell");
+await previewNow();
+const b2 = { err: await page.$eval("#preview-error", (e) => e.textContent).catch(() => ""), removes: (await opLabels()).filter((t) => t === "RemoveSolutionComponent Table account").length };
+assert(/conflict/i.test(b2.err) && b2.err.includes("account") && b2.removes === 0 && (await page.isDisabled("#btn-confirm")), "B2: shell + remove on the same table refused in preview: " + JSON.stringify(b2));
+await selD(`1:${ids.E.acc}`, "shell");
+await previewNow();
+const b2ops = await opLabels();
+assert(b2ops.filter((t) => t.startsWith("RemoveSolutionComponent Table account")).length === 1 && b2ops.filter((t) => t.startsWith("AddSolutionComponent Table account")).length === 1, "B2: table shell selected twice → one remove + one add: " + b2ops.join(" | "));
+
+// ---- B3: a selection no longer offered after re-diagnosis is dropped ----
+await fresh();
+await M(() => { window.__mock.members[0].rootcomponentbehavior = 1; });
+await diagnoseNow();
+await selD(`60:${ids.FORM_B}`, "remove");
+assert((await page.textContent("#sel-count")) === "1 selected", "B3: remove picked while the table is not all assets");
+await M(() => { window.__mock.members[0].rootcomponentbehavior = 0; });
+await diagnoseNow();
+const b3 = { value: await page.$eval(`.finding[data-key="60:${ids.FORM_B}"] select`, (e) => e.value), count: await page.textContent("#sel-count") };
+assert(b3.value === "" && b3.count === "0 selected", "B3: stale 'remove' pruned after re-diagnosis: " + JSON.stringify(b3));
+await selD(`26:${ids.VIEW}`, "edit-view");
+await previewNow();
+assert(!(await opLabels()).some((t) => t.includes("Quick Create")), "B3: preview does not apply the stale remove");
+
+// ---- B4: connection change ----
+const planToConfirm = async () => {
+  await diagnoseNow();
+  await selD(`26:${ids.VIEW}`, "edit-view");
+  await previewNow();
+  await page.click("#btn-backup");
+  await page.waitForFunction(() => !document.querySelector("#btn-confirm").disabled);
+};
+const OTHER = { id: "c3", name: "SSS Other", url: "https://sss-other.crm4.dynamics.com", environment: "Dev", environmentColor: "#1d4ed8" };
+// a: the host switches connection without an event → Confirm re-checks and refuses
+await fresh();
+await planToConfirm();
+let w0 = await M(() => window.__mock.log.length);
+await page.evaluate((c) => { window.__mock.envs.primary.conn = c; }, OTHER);
+await page.click("#btn-confirm");
+await page.waitForFunction(() => window.__mock.notes.some((n) => ["Refused", "Applied", "Some operations failed"].includes(n.title)));
+const b4a = await M(() => ({ writes: window.__mock.log.length, note: window.__mock.notes.find((n) => n.title === "Refused")?.body ?? "" }));
+assert(b4a.writes === w0 && /connection/i.test(b4a.note), "B4: Confirm refuses a plan made on another connection: " + JSON.stringify(b4a) + " " + w0);
+// b: connection change event clears diagnosis, preview and backup flag
+await fresh();
+await planToConfirm();
+w0 = await M(() => window.__mock.log.length);
+await page.evaluate((c) => { window.__mock.envs.primary.conn = c; window.__mock.emit("connection:updated"); }, OTHER);
+await page.waitForFunction(() => document.querySelector("#conn").textContent.includes("SSS Other"));
+await page.waitForTimeout(100);
+await page.evaluate(() => document.querySelector("#btn-confirm").click());
+await page.waitForTimeout(300);
+const b4b = { confirmDisabled: await page.isDisabled("#btn-confirm"), findings: await page.$$eval("#findings .finding", (e) => e.length), ops: await page.$$eval("#ops li", (e) => e.length), writes: await M(() => window.__mock.log.length) };
+assert(b4b.confirmDisabled && b4b.findings === 0 && b4b.ops === 0 && b4b.writes === w0, "B4: connection change clears diagnosis / preview / backup; nothing written: " + JSON.stringify(b4b));
+// c: restore refuses a backup taken in another environment
+await fresh();
+await page.click('.tab[data-tab="restore"]');
+await page.evaluate((t) => { window.__mock.nextText = t; }, JSON.stringify({ ...bk, environment: { name: "SSS Prod", url: "https://sss-prod.crm4.dynamics.com" } }));
+await page.click("#btn-load-backup");
+await page.waitForFunction(() => document.querySelector("#restore-error") || !document.querySelector("#restore-actions").hidden);
+assert(/environment/i.test((await page.textContent("#restore-error").catch(() => "")) ?? "") && (await page.isHidden("#restore-actions")), "B4: restore refuses a backup from another environment");
+// d: restore apply re-checks the connection
+await fresh();
+await M(() => { const m = window.__mock; m.forms[m.ids.FORM_A].formxml = m.FORM_A_XML.replace("Work Order", "WO"); });
+await page.click('.tab[data-tab="restore"]');
+await page.evaluate((t) => { window.__mock.nextText = t; }, backup.content);
+await page.click("#btn-load-backup");
+await page.waitForSelector("#restore-ops li");
+w0 = await M(() => window.__mock.log.length);
+await page.evaluate((c) => { window.__mock.envs.primary.conn = c; }, OTHER);
+await page.click("#btn-restore-apply");
+await page.waitForFunction(() => document.querySelector("dialog[open]") || window.__mock.notes.some((n) => n.title === "Refused"));
+if (await page.$("dialog[open]")) await page.click("#dlg-ok");
+await page.waitForTimeout(300);
+const b4d = await M(() => ({ writes: window.__mock.log.length, refused: window.__mock.notes.some((n) => n.title === "Refused" && /connection|environment/i.test(n.body)) }));
+assert(b4d.writes === w0 && b4d.refused, "B4: restore apply refuses after the connection changed: " + JSON.stringify(b4d));
+
+// ---- B5: column metadata unavailable → required columns never stripped from a form ----
+await fresh();
+await M(() => { window.__mock.attrFail = true; });
+await diagnoseNow();
+await selD(`60:${ids.FORM_B}`, "edit-form");
+await previewNow();
+const b5 = await opLabels();
+assert(!b5.some((t) => t.startsWith("Update form =Quick Create")), "B5: quick create form (required msdyn column) not edited when column metadata fails: " + b5.join(" | "));
 
 await finish();

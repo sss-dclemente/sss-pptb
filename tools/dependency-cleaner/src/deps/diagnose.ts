@@ -70,6 +70,10 @@ export async function diagnose(i: DiagnoseInput): Promise<Diagnosis> {
   const owning = requiredIds.length ? await fetchOwningSolutions(i.api, requiredIds) : new Map<string, string[]>();
   const solById = new Map(i.allSolutions.map((s) => [s.id, s]));
   const asReq = (s: SolutionInfo): RequiredSolution => ({ uniqueName: s.uniqueName, friendlyName: s.friendlyName, prefix: s.prefix, isManaged: s.isManaged });
+  const managedOwners = (id: string): SolutionInfo[] =>
+    (owning.get(id) ?? [])
+      .map((sid) => solById.get(sid))
+      .filter((s): s is SolutionInfo => !!s && s.isManaged && s.id !== i.solution.id && !SYSTEM_BUCKETS.has(s.uniqueName.toLowerCase()));
 
   // 3. names (all solution components, for display and the shell preview; required components)
   const nameReqs: NameRequest[] = components.map((c) => {
@@ -83,6 +87,8 @@ export async function diagnose(i: DiagnoseInput): Promise<Diagnosis> {
     const n = named(c.type, c.objectId);
     c.name = n.name;
     c.table = n.table;
+    // ownership for the shell preview: forms, views and charts are named by display name, so a prefix says nothing
+    c.filteredOwner = managedOwners(c.objectId).find((s) => matchesFilter(i.filter, s, n.name))?.uniqueName ?? null;
   }
 
   // 4. filter + target → findings grouped by dependent
@@ -99,9 +105,7 @@ export async function diagnose(i: DiagnoseInput): Promise<Diagnosis> {
       if (seen.has(k)) continue;
       seen.add(k);
       const n = named(r.requiredType, r.requiredId);
-      const managed = (owning.get(r.requiredId) ?? [])
-        .map((sid) => solById.get(sid))
-        .filter((s): s is SolutionInfo => !!s && s.isManaged && s.id !== i.solution.id && !SYSTEM_BUCKETS.has(s.uniqueName.toLowerCase()));
+      const managed = managedOwners(r.requiredId);
       // a component that ships in this solution and no managed solution owns is ours
       if (!managed.length && inSolution.has(r.requiredId)) continue;
       if (r === self && !managed.length) continue;
