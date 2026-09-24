@@ -13,11 +13,13 @@ import {
   fetchSolutionFlowIds,
   markDependents,
   mergeBackupFileName,
+  offFlows,
   parseMergeBackup,
   planCleanup,
   planMerge,
   planRestore,
   solutionFit,
+  turnOnFlows,
   unusedConnRefs,
   usageByConnRef,
   type DeleteResult,
@@ -60,6 +62,8 @@ const keepBy = new Map<string, string>();
 const mergeSel = new Set<string>();
 /** lowercase logical names of unused references selected for delete */
 const cleanupSel = new Set<string>();
+/** flow ids selected to turn on */
+const turnOnSel = new Set<string>();
 /** flow ids of the selected solution (solution fit check), stamped with solution + org */
 let fitCache: { solutionId: string; url: string; flowIds: Set<string> } | null = null;
 let fitLoading: Promise<void> | null = null;
@@ -317,6 +321,7 @@ function scanFlows(): Promise<void> {
         keepBy.clear();
         mergeSel.clear();
         cleanupSel.clear();
+        turnOnSel.clear();
       }
       flowCache = { key: col.meta.key, url: col.meta.url, flows };
     } catch (e) {
@@ -451,6 +456,7 @@ function renderConsolidate(body: HTMLElement, f: Filters): void {
     wrap.append(card(`${g.connector} · ${g.refs.length} references`, table, all));
   }
   wrap.append(cleanupCard(col, unusedConnRefs(refs, usage)));
+  wrap.append(offFlowsCard(col, flows, t));
   body.append(wrap);
 }
 
@@ -510,6 +516,72 @@ async function previewCleanup(col: ColumnData): Promise<void> {
   setStatus(null);
   await runMergePlan(col, plan, `${cleanupSummary(plan.deletes.filter((d) => d.action === "delete").length)} in ${col.meta.name}. A backup is saved first; Restore from backup recreates them.`);
   cleanupSel.clear();
+}
+
+function offFlowsCard(col: ColumnData, flows: FlowRecord[], text: string): HTMLElement {
+  const all = offFlows(flows, col.connRefs).filter((f) => !text || f.name.toLowerCase().includes(text) || f.refs.some((r) => r.toLowerCase().includes(text)));
+  const title = `Flows that are off · ${all.length}`;
+  if (!all.length) return card(title, emptyState("None", "Every solution cloud flow is on (within the current filters)."));
+  const ready = all.filter((f) => f.ready);
+  const rows = all.map((f) => {
+    const cb = h("input", { type: "checkbox", "aria-label": `Turn on ${f.name}` }) as HTMLInputElement;
+    cb.checked = f.ready && turnOnSel.has(f.flowId);
+    cb.disabled = !f.ready;
+    cb.addEventListener("change", () => {
+      if (cb.checked) turnOnSel.add(f.flowId);
+      else turnOnSel.delete(f.flowId);
+      renderTable();
+    });
+    return h(
+      "tr",
+      { class: cb.checked ? "keep" : undefined },
+      h("td", { class: "pick" }, cb),
+      h("td", {}, f.name, f.isManaged ? h("span", {}, " ", badge("managed", "neutral")) : null),
+      h("td", { class: "changes" }, f.refs.join(", ") || "—"),
+      h("td", {}, badge(f.ready ? "ready" : "blocked", f.ready ? "ok" : "bad"), " ", h("span", { class: "caption" }, f.reason)),
+    );
+  });
+  const n = ready.filter((f) => turnOnSel.has(f.flowId)).length;
+  const actions = h("span", { style: "display:inline-flex; gap: var(--s-2); margin-left:auto" });
+  const selAll = h("button", { class: "btn btn-ghost btn-sm", type: "button" }, "Select all ready");
+  selAll.toggleAttribute("disabled", !ready.length);
+  selAll.addEventListener("click", () => {
+    for (const f of ready) turnOnSel.add(f.flowId);
+    renderTable();
+  });
+  const go = h("button", { class: "btn btn-primary btn-sm", type: "button", id: "btn-turnon-preview", style: "flex:none" }, `Turn on (${n})…`);
+  go.toggleAttribute("disabled", !n);
+  go.addEventListener("click", () => void previewTurnOn(col, ready.filter((f) => turnOnSel.has(f.flowId))));
+  actions.append(selAll, go);
+  const table = h(
+    "table",
+    {},
+    h("thead", {}, h("tr", {}, h("th", {}, "On"), h("th", {}, "Flow"), h("th", {}, "Connection references"), h("th", {}, "State"))),
+    h("tbody", {}, ...rows),
+  );
+  return card(title, table, actions);
+}
+
+async function previewTurnOn(col: ColumnData, picked: { flowId: string; name: string; refs: string[] }[]): Promise<void> {
+  const api = dataverse();
+  if (!api || !picked.length) return;
+  const isProd = /prod/i.test(col.meta.environment);
+  const body = h(
+    "div",
+    {},
+    h("p", { class: "caption" }, `${picked.length} flow${picked.length === 1 ? "" : "s"} to turn on in ${col.meta.name}. Every connection reference they use is bound.`),
+    h("div", { class: "warnings" }, "Turned-on flows start running on their triggers (schedules, Dataverse and connector events). Turn on only flows that are meant to run in this environment."),
+    isProd ? h("div", { class: "warnings" }, "Target is a Production environment.") : null,
+    h("ul", {}, ...picked.map((f) => h("li", {}, f.name, h("span", { class: "caption" }, ` — ${f.refs.join(", ") || "no connection references"}`)))),
+  );
+  const ok = await showDialog({ title: "Turn on flows", target: targetChip(col.meta), body, okLabel: `Turn on ${picked.length}`, danger: isProd });
+  if (!ok) return;
+  const res = await turnOnFlows(api, col.meta, stampOf(col.meta), picked, currentConnection, (m) => setStatus(m || null));
+  setStatus(null);
+  await showMergeResults("Flows turned on", col.meta, res, { label: "", rows: [] });
+  turnOnSel.clear();
+  flowCache = null;
+  await refresh();
 }
 
 /** Solution of the fit check: the solution filter, when it is set and the view works on the primary. */

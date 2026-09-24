@@ -17,6 +17,7 @@ Per tool, from `tools/<tool>`:
 npm install && npm run build      # dist/ + CSP guard
 npm run e2e                        # needs playwright + chromium (npm i -g playwright && npx playwright install chromium)
 npm run validate                   # @pptb/validate 1.0.2, live HEAD on readmeUrl
+npm test                           # envvar-matrix only: unit tests, no browser
 ```
 
 ToolBox: Settings → *Show Debug Menu* → Debug → *Load Local Tool* → pick `tools/<tool>`. Light and dark (Settings → theme) both.
@@ -57,6 +58,8 @@ Note: 1.2.0 was published to npm on 2026-09-24, before the checks below had run 
 - [ ] Load a real `pac solution create-settings` file via Load snapshot…: values show as a column; copy one value into Dev through the preview.
 - [ ] Bind from that settings file: one unbound reference used by an active flow. Preview → Bind: connection set in maker portal, flow restarted and runs. Snapshot from another env as source: refused.
 - [ ] Pick connections (1.3.0, experimental; published to npm 2026-09-24 before the probe, fixes go in 1.3.1): first run the probe in `docs/PP-API-SPIKE.md` §6. Connection with Power Platform API enabled: Pick connections… lists the env's connections, each dropdown only that connector's; bind one, flow restarted and runs. Connection without it: "Connections unavailable" with the reason. If the probe shows other field names, fix `normalizeConnection` in `src/matrix/ppconnections.ts`.
+- [ ] Turn on flows (1.4.0): after importing a solution with flows, bind their references, open Consolidate: flows listed as ready / blocked with reasons; turn on one ready flow, it runs on its trigger; a flow whose reference is unbound cannot be selected.
+- [ ] Unit test fixture (1.4.0): export a real solution flow's `clientdata` with two keys on one connector (e.g. `shared_office365`, `shared_office365_1`) and add it next to `scripts/fixtures/flow-clientdata.json` (synthetic, modelled on the export shape); `npm test` must stay green.
 - [ ] Snapshot export from Dev, reload as third column, matrix compares.
 - [ ] Connection references tab: bound / unbound / absent correct.
 
@@ -64,7 +67,7 @@ Screenshots: `envvars.png`, `preview.png`, `connrefs.png`, `snapshot-dark.png`. 
 
 Publish:
 ```bash
-cd tools/envvar-matrix && npm run build && npm run validate && npm publish --access public
+cd tools/envvar-matrix && npm run build && npm test && npm run validate && npm publish --access public
 ```
 Submit: `@simplesmoothsafe/pptb-envvar-matrix`, categories **Environments, Migration, Comparisons**.
 
