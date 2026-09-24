@@ -7,11 +7,13 @@
 
 export type Target = "primary" | "secondary";
 export type Theme = "light" | "dark";
-type W = { toolboxAPI?: ToolBoxAPI.API; dataverseAPI?: DataverseAPI.API };
+type W = { toolboxAPI?: ToolBoxAPI.API; dataverseAPI?: DataverseAPI.API; powerplatformAPI?: PowerPlatformAPI.API };
 
 const w = (): W => window as unknown as W;
 export const toolbox = (): ToolBoxAPI.API | undefined => w().toolboxAPI;
 export const dataverse = (): DataverseAPI.API | undefined => w().dataverseAPI;
+/** Power Platform API bridge (ToolBox ≥ 1.2.6); undefined on older hosts. */
+export const powerplatform = (): PowerPlatformAPI.API | undefined => w().powerplatformAPI;
 /** True when the host injected the file-system API (desktop ToolBox). */
 export const hasFileApi = (): boolean => !!toolbox()?.fileSystem?.selectPath;
 /** True when connections + dataverse bridge are present. */

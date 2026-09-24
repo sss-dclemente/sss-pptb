@@ -1,5 +1,5 @@
 import { $, badge, card, emptyState, h, showDialog, wireTabs } from "../../_shared/dom";
-import { dataverse, getConnections, initTheme, inToolbox, notify, onConnectionChange, openText, saveText } from "./host";
+import { dataverse, getConnections, initTheme, inToolbox, notify, onConnectionChange, openText, powerplatform, saveText } from "./host";
 import { deploymentSettings, matrixCsv, safeFileName, snapshot } from "./matrix/export";
 import { fetchColumn, fetchSolutionScope, fetchSolutions, type SolutionInfo } from "./matrix/fetch";
 import { buildMatrix, filterConnRefs, filterEnvVars } from "./matrix/matrix";
@@ -28,6 +28,7 @@ import {
   type PlannedFlow,
 } from "./matrix/consolidate";
 import { applyBind, planBind, type BindPlan } from "./matrix/bind";
+import { connectionsFor, environmentId, explainPpError, listConnections, rowConnector, type PpConnection } from "./matrix/ppconnections";
 import { isDeploymentSettings, parseDeploymentSettings } from "./matrix/settings";
 import { parseSnapshot } from "./matrix/snapshot";
 import type { ColumnData, ColumnMeta, ConnRefRecord, EnvVarRow, Filters, Matrix, Target } from "./matrix/types";
@@ -275,6 +276,7 @@ function renderBulkbar(): void {
   $("#sel-count").textContent = String(n);
   $("#btn-copy").textContent = bind ? "Preview bind…" : "Preview copy…";
   $("#bind-restart-wrap").hidden = !bind;
+  $("#btn-pick").hidden = !bind;
   const cons = $("#btn-consolidate");
   cons.hidden = activeTab !== "connrefs";
   cons.textContent = consolidating ? "Back to matrix" : "Consolidate…";
@@ -974,6 +976,111 @@ async function copySelected(): Promise<void> {
   await runPlan(planCopy(rows, fromKey, target));
 }
 
+/** Environment ids per org url (RetrieveCurrentOrganization), for Power Platform API paths. */
+const envIds = new Map<string, string>();
+
+/** Bind by picking connections listed through the Power Platform API (experimental). */
+async function pickConnections(): Promise<void> {
+  const toKey = $<HTMLSelectElement>("#copy-to").value;
+  const target = liveCols().find((m) => m.key === toKey);
+  const api = dataverse();
+  const pp = powerplatform();
+  if (!target?.target || !api) return;
+  const rows = matrix.connRefs.filter((r) => crSelected.has(r.key) && r.cells[target.key]?.record);
+  if (!rows.length) {
+    await notify("Nothing to bind", `None of the selected references exist in ${target.name}.`, "warning");
+    return;
+  }
+  const fail = (reason: string) =>
+    showDialog({
+      title: "Connections unavailable",
+      target: targetChip(target),
+      body: h(
+        "div",
+        {},
+        h("div", { class: "warnings" }, reason),
+        h(
+          "p",
+          { class: "caption" },
+          "Listing connections uses the Power Platform API: ToolBox 1.2.6 or later, and a connection with the Power Platform API enabled (Edit connection → custom Client ID with delegated Connectivity.Connections.Read). Without it, bind from a deploymentSettings.json: Load snapshot…, then Preview bind.",
+        ),
+      ),
+    });
+  if (!pp?.Connectivity) {
+    await fail("This ToolBox version does not expose the Power Platform API.");
+    return;
+  }
+  let conns: PpConnection[];
+  setStatus(`Reading connections in ${target.name}…`);
+  try {
+    const url = target.url.toLowerCase();
+    let envId = envIds.get(url);
+    if (!envId) {
+      envId = await environmentId(api, target.target);
+      envIds.set(url, envId);
+    }
+    conns = await listConnections(pp.Connectivity, envId, target.target);
+  } catch (e) {
+    setStatus(null);
+    await fail(explainPpError(e));
+    return;
+  } finally {
+    setStatus(null);
+  }
+  const unknown = conns.filter((c) => !c.connector).length;
+  const picks = new Map<string, HTMLSelectElement>();
+  const body = h(
+    "div",
+    {},
+    h(
+      "p",
+      { class: "caption" },
+      `${conns.length} connection${conns.length === 1 ? "" : "s"} in ${target.name}; only those of each reference's connector are offered. Experimental: the list comes from the Power Platform API as the signed-in user sees it; a connection the flow owner cannot use makes turning the flow on fail (reported, flow left off).${unknown ? ` ${unknown} connection${unknown === 1 ? " has" : "s have"} no readable connector and ${unknown === 1 ? "is" : "are"} not offered.` : ""}`,
+    ),
+    h(
+      "table",
+      {},
+      h("thead", {}, h("tr", {}, h("th", {}, "Connection reference"), h("th", {}, "Connector"), h("th", {}, "Current"), h("th", {}, "Bind to"))),
+      h(
+        "tbody",
+        {},
+        ...rows.map((r) => {
+          const connector = rowConnector(r, target.key);
+          const current = r.cells[target.key]?.connectionId ?? null;
+          const options = connectionsFor(conns, connector);
+          const sel = h("select", { "aria-label": `Connection for ${r.logicalName}` }) as HTMLSelectElement;
+          sel.append(h("option", { value: "" }, options.length ? "— keep current —" : "— no connection of this connector —"));
+          for (const c of options)
+            sel.append(h("option", { value: c.id }, `${c.displayName}${c.account ? ` · ${c.account}` : ""}${c.status ? ` · ${c.status}` : ""}${c.broken ? " ⚠" : ""}${current && c.id.toLowerCase() === current.toLowerCase() ? " (current)" : ""}`));
+          sel.disabled = !options.length;
+          picks.set(r.key, sel);
+          return h("tr", {}, h("td", { class: "mono" }, r.logicalName), h("td", {}, connector ?? "—"), h("td", { class: "mono" }, current ?? "—"), h("td", {}, sel));
+        }),
+      ),
+    ),
+  );
+  const ok = await showDialog({ title: "Pick connections", target: targetChip(target), body, okLabel: "Preview bind" });
+  if (!ok) return;
+  // Picks become a synthetic source column of the target's own org, so planBind's checks apply unchanged.
+  const source: ColumnMeta = { key: "picker", kind: "snapshot", name: "Picked connections", url: target.url, environment: target.environment, takenAt: "" };
+  const picked = rows
+    .map((r) => ({ r, id: picks.get(r.key)?.value ?? "" }))
+    .filter((x) => x.id)
+    .map(({ r, id }) => {
+      const rec = r.cells[target.key]!.record!;
+      return { ...r, cells: { ...r.cells, picker: { state: "bound" as const, connector: rec.connector, connectionId: id, record: { ...rec, connectionId: id } } } };
+    });
+  if (!picked.length) {
+    await notify("Nothing picked", "Every reference was left on its current binding.", "info");
+    return;
+  }
+  const broken = picked.filter((x) => conns.find((c) => c.id === x.cells.picker.connectionId)?.broken).map((x) => x.logicalName);
+  const plan = planBind(picked, source, target);
+  for (const i of plan.items)
+    if (broken.includes(i.logicalName) && i.action === "update") i.warning = [i.warning, "the picked connection reports an error status; fix it in the maker portal first"].filter(Boolean).join("; ");
+  await runBind(plan);
+}
+
 async function runBind(plan: BindPlan): Promise<void> {
   const api = dataverse();
   if (!api) return;
@@ -989,6 +1096,7 @@ async function runBind(plan: BindPlan): Promise<void> {
       { class: "caption" },
       `${writes.length} binding${writes.length === 1 ? "" : "s"} from ${plan.source.name} into ${plan.target.name}. ${plan.items.length - writes.length - invalid.length} skipped.${invalid.length ? ` ${invalid.length} invalid (not written).` : ""}${restart && writes.length ? " Flows that are on and use a rebound reference are turned off and on afterwards." : ""}`,
     ),
+    plan.source.key === "picker" ? h("p", { class: "caption" }, "Connections picked from the Power Platform API list.") : null,
     !plan.source.url ? h("p", { class: "caption" }, "Settings file: connection ids are taken as written for this environment. Check the file targets it.") : null,
     isProd && writes.length ? h("div", { class: "warnings" }, "Target is a Production environment.") : null,
     h(
@@ -1064,6 +1172,7 @@ function wire(): void {
   $("#btn-refresh").addEventListener("click", () => void refresh());
   $("#btn-load-snap").addEventListener("click", () => void loadSnapshot());
   $("#btn-copy").addEventListener("click", () => void copySelected());
+  $("#btn-pick").addEventListener("click", () => void pickConnections());
   $("#btn-clear-sel").addEventListener("click", () => {
     if (activeTab === "connrefs") crSelected.clear();
     else selected.clear();
