@@ -412,6 +412,21 @@ export async function updateFlow(api: WriterLike, target: Target, f: { flowId: s
   return { ...out, ok: true };
 }
 
+/** Turn a flow that is on off and on again (picks up a changed connection reference binding). */
+export async function updateFlowState(api: WriterLike | Pick<WriterLike, "update">, target: Target, flowId: string, name: string): Promise<FlowResult> {
+  try {
+    await api.update("workflow", flowId, { statecode: 0, statuscode: 1 }, target);
+  } catch (e) {
+    return { flowId, name, ok: false, error: `turning it off failed: ${errMsg(e)}` };
+  }
+  try {
+    await api.update("workflow", flowId, { statecode: 1, statuscode: 2 }, target);
+  } catch (e) {
+    return { flowId, name, ok: false, leftOff: true, error: `turning it back on failed: ${errMsg(e)}` };
+  }
+  return { flowId, name, ok: true };
+}
+
 export interface ApplyDeps {
   api: DataverseLike & WriterLike;
   currentConnection: (t: Target) => Promise<ConnectionStamp | null>;

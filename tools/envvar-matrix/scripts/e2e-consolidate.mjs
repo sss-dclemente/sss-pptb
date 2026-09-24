@@ -95,6 +95,12 @@ const MOCK = `
     },
     update: async (entity, id, rec) => {
       window.__mock.writes.push({ op: 'update', entity, id, rec });
+      if (entity === 'connectionreference') {
+        const c = env.crs.find((x) => x.connectionreferenceid === id);
+        if (!c) throw new Error('no such reference ' + id);
+        Object.assign(c, rec);
+        return;
+      }
       if (entity !== 'workflow') throw new Error('unexpected update ' + entity);
       const f = flow(id);
       if (rec.statecode === 1 && window.__mock.failActivate === id) throw new Error('connection not bound');
@@ -255,5 +261,71 @@ await page.waitForFunction(() => document.querySelector("#dlg-title").textConten
   assert(saved2.length === 1 && JSON.parse(saved2[0].content).connectionReferences.some((c) => c.logicalName === "sss_unused"), "cleanup backup holds the deleted reference");
 }
 await page.click("#dlg-cancel");
+
+// ---- bind connection ids from a deploymentSettings.json ----
+await page.click("#btn-consolidate"); // back to matrix
+await page.waitForSelector("table.matrix");
+await page.evaluate(() => {
+  const f3 = window.__mock.env.flows.find((f) => f.workflowid === "f3");
+  f3.statecode = 1; f3.statuscode = 2;
+  window.__mock.writes = [];
+  window.__mock.nextOpen = JSON.stringify({
+    EnvironmentVariables: [],
+    ConnectionReferences: [
+      { LogicalName: "sss_o365_c", ConnectionId: "conn-new", ConnectorId: "/providers/Microsoft.PowerApps/apis/shared_office365" },
+      { LogicalName: "sss_o365_a", ConnectionId: "conn-1", ConnectorId: "/providers/Microsoft.PowerApps/apis/shared_office365" },
+      { LogicalName: "sss_sql", ConnectionId: "conn-x", ConnectorId: "/providers/Microsoft.PowerApps/apis/shared_teams" },
+      { LogicalName: "sss_dv_2", ConnectionId: "", ConnectorId: "/providers/Microsoft.PowerApps/apis/shared_commondataserviceforapps" },
+    ],
+  });
+});
+await page.click("#btn-load-snap");
+await page.waitForFunction(() => document.querySelectorAll("#columns .colchip").length === 2);
+for (const n of ["sss_o365_c", "sss_o365_a", "sss_sql", "sss_dv_2"]) await page.check(`input[aria-label="Select ${n}"]`);
+assert(!(await page.isHidden("#bulkbar")) && (await page.textContent("#btn-copy")) === "Preview bind…" && (await page.isVisible("#bind-restart")), "bind bar on connection references tab");
+await page.selectOption("#copy-from", "settings:1");
+await page.selectOption("#copy-to", "primary");
+await page.click("#btn-copy");
+await page.waitForSelector("dialog[open]");
+{
+  const pv = await page.textContent("#dlg-body");
+  assert(pv.includes("1 binding from"), "bind preview: 1 binding");
+  assert(pv.includes("binding an unbound reference") && pv.includes("conn-new"), "bind preview: unbound reference gets the file's id");
+  assert(pv.includes("already bound to this connection"), "bind preview: same id skipped");
+  assert(pv.includes("connector differs"), "bind preview: connector mismatch invalid");
+  assert(pv.includes("source has no connection id"), "bind preview: empty id skipped");
+  assert(pv.includes("Settings file"), "bind preview: settings-file note");
+}
+await page.screenshot({ path: resolve(TOOL, "scripts/.e2e-out/12-bind-preview.png") });
+await page.click("#dlg-ok");
+await page.waitForFunction(() => document.querySelector("#dlg-title").textContent === "Results" && document.querySelector("dialog").open, null, { timeout: 10000 });
+{
+  const w = await page.evaluate(() => window.__mock.writes);
+  const cr = w.filter((x) => x.entity === "connectionreference");
+  assert(cr.length === 1 && cr[0].id === "new-sss_o365_c" && cr[0].rec.connectionid === "conn-new", "bind: connectionid written");
+  const f3 = w.filter((x) => x.id === "f3").map((x) => x.rec.statecode);
+  assert(f3.join() === "0,1", "bind: flow that is on and uses the rebound reference restarted (" + f3.join() + ")");
+  assert(!w.some((x) => x.entity === "workflow" && x.id !== "f3"), "bind: no other flow touched");
+}
+await page.click("#dlg-cancel");
+await page.click('#columns .colchip button[aria-label^="Remove"]');
+
+// snapshot of another org: connection ids refused
+await page.evaluate(() => {
+  window.__mock.writes = [];
+  window.__mock.nextOpen = JSON.stringify({ kind: "sss-envvar-matrix-snapshot", version: 1, environment: { name: "Other", url: "https://other.crm4.dynamics.com", environment: "Test" }, environmentVariables: [], connectionReferences: [{ logicalName: "sss_o365_c", connectorId: "/providers/Microsoft.PowerApps/apis/shared_office365", connectionId: "conn-other" }] });
+});
+await page.click("#btn-load-snap");
+await page.waitForFunction(() => document.querySelectorAll("#columns .colchip").length === 2);
+if (await page.isHidden("#bulkbar")) await page.check('input[aria-label="Select sss_o365_c"]');
+await page.selectOption("#copy-from", "snap:1");
+await page.click("#btn-copy");
+await page.waitForSelector("dialog[open]");
+{
+  const pv = await page.textContent("#dlg-body");
+  assert(pv.includes("connection ids belong to one environment") && (await page.isHidden("#dlg-ok")), "bind from another org's snapshot refused");
+}
+await page.click("#dlg-cancel");
+assert((await page.evaluate(() => window.__mock.writes.length)) === 0, "nothing written from another org");
 
 await finish();

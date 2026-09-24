@@ -288,7 +288,7 @@ await page.evaluate(() => {
 });
 await page.click("#btn-load-snap");
 await page.waitForFunction(() => document.querySelectorAll("#columns .colchip").length === 3);
-assert((await page.textContent("#columns")).includes("snapshot") && (await page.$$eval("table.matrix thead th.col", (els) => els.at(-1).textContent)).includes("snapshot.json".replace(".json", "")), "settings file loaded as a column");
+assert((await page.textContent("#columns")).includes("settings") && (await page.$$eval("table.matrix thead th.col", (els) => els.at(-1).textContent)).startsWith("settings"), "settings file loaded as a column labelled settings");
 {
   const flagRow = await page.$eval('tr:has(input[aria-label="Select sss_flag"])', (tr) => tr.textContent);
   assert(flagRow.includes("no") && flagRow.includes("value"), "settings value shown in its column");

@@ -27,6 +27,7 @@ import {
   type MergeSpec,
   type PlannedFlow,
 } from "./matrix/consolidate";
+import { applyBind, planBind, type BindPlan } from "./matrix/bind";
 import { isDeploymentSettings, parseDeploymentSettings } from "./matrix/settings";
 import { parseSnapshot } from "./matrix/snapshot";
 import type { ColumnData, ColumnMeta, ConnRefRecord, EnvVarRow, Filters, Matrix, Target } from "./matrix/types";
@@ -38,6 +39,8 @@ const snaps: ColumnData[] = [];
 let matrix: Matrix = { columns: [], envVars: [], connRefs: [] };
 let activeTab: "envvars" | "connrefs" = "envvars";
 const selected = new Set<string>();
+/** selected connection reference rows (lowercase logical names) on the matrix tab */
+const crSelected = new Set<string>();
 let solutions: SolutionInfo[] = [];
 /** selected solution id ("" = all). Source of truth for the dropdown; `scope` is always derived from it. */
 let selectedSolution = "";
@@ -61,6 +64,8 @@ let fitCache: { solutionId: string; url: string; flowIds: Set<string> } | null =
 let fitLoading: Promise<void> | null = null;
 
 const columns = (): ColumnData[] => [...live, ...snaps];
+/** label of a non-live column: deploymentSettings file or snapshot */
+const fileKind = (m: ColumnMeta): string => (m.key.startsWith("settings:") ? "settings" : "snapshot");
 /** columns with data (a live column whose load failed has none) */
 const okColumns = (): ColumnData[] => columns().filter((c) => !c.meta.error);
 const liveCols = (): ColumnMeta[] => live.filter((c) => !c.meta.error).map((c) => c.meta);
@@ -73,7 +78,7 @@ function colChip(meta: ColumnMeta, removable: boolean): HTMLElement {
     { class: "colchip", title: meta.url },
     dot,
     h("span", { class: "env" }, meta.name),
-    h("span", { class: "kind" }, meta.kind === "live" ? `${meta.target} · ${meta.environment}` : `snapshot${meta.takenAt ? ` · ${meta.takenAt.slice(0, 10)}` : ""}`),
+    h("span", { class: "kind" }, meta.kind === "live" ? `${meta.target} · ${meta.environment}` : `${fileKind(meta)}${meta.takenAt ? ` · ${meta.takenAt.slice(0, 10)}` : ""}`),
   );
   if (meta.error) {
     const b = badge("load failed", "bad");
@@ -117,7 +122,7 @@ function renderHeader(): void {
   const fill = (id: string, metas: ColumnMeta[], keep = true) => {
     const sel = $<HTMLSelectElement>(id);
     const prev = sel.value;
-    sel.replaceChildren(...metas.map((m) => h("option", { value: m.key }, `${m.name} (${m.kind === "live" ? m.target : "snapshot"})`)));
+    sel.replaceChildren(...metas.map((m) => h("option", { value: m.key }, `${m.name} (${m.kind === "live" ? m.target : fileKind(m)})`)));
     if (keep && [...sel.options].some((o) => o.value === prev)) sel.value = prev;
   };
   fill("#export-col", okColumns().map((c) => c.meta));
@@ -144,7 +149,7 @@ function renderHeader(): void {
 
 // ---------- tables ----------
 function colHead(c: ColumnMeta): HTMLElement {
-  const th = h("th", { class: "col" }, c.kind === "live" ? c.target! : "snapshot", h("span", { class: "env" }, c.name));
+  const th = h("th", { class: "col" }, c.kind === "live" ? c.target! : fileKind(c), h("span", { class: "env" }, c.name));
   if (c.error) {
     th.title = c.error;
     th.append(h("span", { class: "col-error" }, badge("load failed", "bad"), h("span", { class: "caption" }, c.error)));
@@ -207,11 +212,19 @@ function envVarTable(rows: EnvVarRow[]): HTMLElement {
 
 function connRefTable(rows: Matrix["connRefs"]): HTMLElement {
   const cols = matrix.columns;
-  const head = h("tr", {}, h("th", {}, "Connection reference"), h("th", {}, "Connector"), ...cols.map(colHead));
-  const body = rows.map((r) =>
-    h(
+  const head = h("tr", {}, h("th", { class: "sel" }, ""), h("th", {}, "Connection reference"), h("th", {}, "Connector"), ...cols.map(colHead));
+  const body = rows.map((r) => {
+    const cb = h("input", { type: "checkbox", "aria-label": `Select ${r.logicalName}` }) as HTMLInputElement;
+    cb.checked = crSelected.has(r.key);
+    cb.addEventListener("change", () => {
+      if (cb.checked) crSelected.add(r.key);
+      else crSelected.delete(r.key);
+      renderBulkbar();
+    });
+    return h(
       "tr",
       { class: r.anyUnbound || r.anyAbsent ? "missing" : r.differs ? "differs" : undefined },
+      h("td", { class: "sel" }, cb),
       h("td", { class: "name" }, h("span", { class: "mono" }, r.logicalName), h("span", { class: "display" }, r.displayName)),
       h("td", {}, r.connector ?? "—"),
       ...cols.map((c) => {
@@ -226,8 +239,8 @@ function connRefTable(rows: Matrix["connRefs"]): HTMLElement {
         );
         return td;
       }),
-    ),
-  );
+    );
+  });
   return h("table", { class: "matrix" }, h("thead", {}, head), h("tbody", {}, ...body));
 }
 
@@ -256,8 +269,12 @@ function renderTable(): void {
 
 function renderBulkbar(): void {
   const bar = $("#bulkbar");
-  bar.hidden = activeTab !== "envvars" || selected.size === 0 || liveCols().length === 0;
-  $("#sel-count").textContent = String(selected.size);
+  const bind = activeTab === "connrefs";
+  const n = bind ? crSelected.size : selected.size;
+  bar.hidden = (bind && consolidating) || n === 0 || liveCols().length === 0;
+  $("#sel-count").textContent = String(n);
+  $("#btn-copy").textContent = bind ? "Preview bind…" : "Preview copy…";
+  $("#bind-restart-wrap").hidden = !bind;
   const cons = $("#btn-consolidate");
   cons.hidden = activeTab !== "connrefs";
   cons.textContent = consolidating ? "Back to matrix" : "Consolidate…";
@@ -268,6 +285,7 @@ function renderBulkbar(): void {
 function rebuild(): void {
   matrix = buildMatrix(columns());
   for (const k of [...selected]) if (!matrix.envVars.some((r) => r.key === k)) selected.delete(k);
+  for (const k of [...crSelected]) if (!matrix.connRefs.some((r) => r.key === k)) crSelected.delete(k);
   renderHeader();
   renderTable();
 }
@@ -618,12 +636,14 @@ async function showMergeResults(title: string, target: ColumnMeta, flows: FlowRe
   const body = h(
     "div",
     {},
-    h(
-      "table",
-      {},
-      h("thead", {}, h("tr", {}, h("th", {}, "Flow"), h("th", {}, "Result"))),
-      h("tbody", {}, ...flows.map((f) => h("tr", {}, h("td", {}, f.name), h("td", {}, resultBadge(f))))),
-    ),
+    flows.length
+      ? h(
+          "table",
+          {},
+          h("thead", {}, h("tr", {}, h("th", {}, "Flow"), h("th", {}, "Result"))),
+          h("tbody", {}, ...flows.map((f) => h("tr", {}, h("td", {}, f.name), h("td", {}, resultBadge(f))))),
+        )
+      : null,
     others.rows.length
       ? h(
           "table",
@@ -633,7 +653,8 @@ async function showMergeResults(title: string, target: ColumnMeta, flows: FlowRe
         )
       : null,
   );
-  await notify(failed ? `${title}: some steps failed` : title, `${flows.filter((f) => f.ok).length} flow${flows.length === 1 ? "" : "s"} ok, ${failed} failed`, failed ? "warning" : "success");
+  const okCount = flows.filter((f) => f.ok).length + others.rows.filter((d) => d.ok && !d.skipped).length;
+  await notify(failed ? `${title}: some steps failed` : title, `${okCount} ok, ${failed} failed`, failed ? "warning" : "success");
   await showDialog({ title: "Results", target: targetChip(target), body });
 }
 
@@ -944,8 +965,66 @@ async function copySelected(): Promise<void> {
     await notify("Same column", "Pick a different source and target.", "warning");
     return;
   }
+  if (activeTab === "connrefs") {
+    const source = okColumns().find((c) => c.meta.key === fromKey)?.meta;
+    if (source) await runBind(planBind(matrix.connRefs.filter((r) => crSelected.has(r.key)), source, target));
+    return;
+  }
   const rows = matrix.envVars.filter((r) => selected.has(r.key));
   await runPlan(planCopy(rows, fromKey, target));
+}
+
+async function runBind(plan: BindPlan): Promise<void> {
+  const api = dataverse();
+  if (!api) return;
+  const writes = plan.items.filter((i) => i.action === "update");
+  const invalid = plan.items.filter((i) => i.action === "invalid");
+  const restart = $<HTMLInputElement>("#bind-restart").checked;
+  const isProd = /prod/i.test(plan.target.environment);
+  const body = h(
+    "div",
+    {},
+    h(
+      "p",
+      { class: "caption" },
+      `${writes.length} binding${writes.length === 1 ? "" : "s"} from ${plan.source.name} into ${plan.target.name}. ${plan.items.length - writes.length - invalid.length} skipped.${invalid.length ? ` ${invalid.length} invalid (not written).` : ""}${restart && writes.length ? " Flows that are on and use a rebound reference are turned off and on afterwards." : ""}`,
+    ),
+    !plan.source.url ? h("p", { class: "caption" }, "Settings file: connection ids are taken as written for this environment. Check the file targets it.") : null,
+    isProd && writes.length ? h("div", { class: "warnings" }, "Target is a Production environment.") : null,
+    h(
+      "table",
+      {},
+      h("thead", {}, h("tr", {}, h("th", {}, "Connection reference"), h("th", {}, "Action"), h("th", {}, "Current"), h("th", {}, "New"), h("th", {}, "Note"))),
+      h(
+        "tbody",
+        {},
+        ...plan.items.map((i) =>
+          h(
+            "tr",
+            {},
+            h("td", { class: "mono" }, i.logicalName),
+            h("td", {}, badge(i.action, i.action === "update" ? "warn" : i.action === "invalid" ? "bad" : "neutral")),
+            h("td", { class: "mono" }, i.current ?? "—"),
+            h("td", { class: "mono" }, i.action === "skip" ? "—" : (i.next ?? "")),
+            h("td", { class: "caption" }, i.reason, i.warning ? h("div", {}, badge("caution", "warn"), " ", i.warning) : null),
+          ),
+        ),
+      ),
+    ),
+  );
+  const ok = await showDialog({ title: "Preview bind", target: targetChip(plan.target), body, okLabel: writes.length ? `Bind ${writes.length}` : "", danger: isProd });
+  if (!ok || !writes.length) return;
+  const cur = await currentConnection(plan.target.target!).catch(() => null);
+  if (!sameConnection(plan.stamp, cur)) {
+    await notify("Connection changed", `The preview was built for ${plan.target.name} (${plan.target.url}). Nothing written; refresh and preview again.`, "error");
+    await refresh();
+    return;
+  }
+  const res = await applyBind(api, plan, currentConnection, restart, (m) => setStatus(m || null));
+  setStatus(null);
+  await showMergeResults("Bindings written", plan.target, res.flows, { label: "Connection reference", rows: res.refs });
+  flowCache = null;
+  await refresh();
 }
 
 // ---------- exports ----------
@@ -986,7 +1065,8 @@ function wire(): void {
   $("#btn-load-snap").addEventListener("click", () => void loadSnapshot());
   $("#btn-copy").addEventListener("click", () => void copySelected());
   $("#btn-clear-sel").addEventListener("click", () => {
-    selected.clear();
+    if (activeTab === "connrefs") crSelected.clear();
+    else selected.clear();
     renderTable();
   });
   $("#btn-export-settings").addEventListener("click", () => {
