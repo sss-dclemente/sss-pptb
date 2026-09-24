@@ -281,6 +281,38 @@ await page.screenshot({ path: resolve(OUT, "04-snapshot-dark.png") });
 await page.click('#columns .colchip button[aria-label^="Remove"]');
 await page.waitForFunction(() => document.querySelectorAll("#columns .colchip").length === 2);
 assert(true, "snapshot removed");
+
+// deploymentSettings.json loaded as a column; copy from it goes through the normal preview
+await page.evaluate(() => {
+  window.__mock.nextOpen = JSON.stringify({ EnvironmentVariables: [{ SchemaName: "sss_flag", Value: "no" }, { SchemaName: "sss_apiurl", Value: "" }], ConnectionReferences: [{ LogicalName: "sss_sql", ConnectionId: "conn-file-1", ConnectorId: "/providers/Microsoft.PowerApps/apis/shared_sql" }] });
+});
+await page.click("#btn-load-snap");
+await page.waitForFunction(() => document.querySelectorAll("#columns .colchip").length === 3);
+assert((await page.textContent("#columns")).includes("settings") && (await page.$$eval("table.matrix thead th.col", (els) => els.at(-1).textContent)).startsWith("settings"), "settings file loaded as a column labelled settings");
+{
+  const flagRow = await page.$eval('tr:has(input[aria-label="Select sss_flag"])', (tr) => tr.textContent);
+  assert(flagRow.includes("no") && flagRow.includes("value"), "settings value shown in its column");
+  const apiRow = await page.$eval('tr:has(input[aria-label="Select sss_apiurl"])', (tr) => tr.lastElementChild.textContent);
+  assert(apiRow.includes("missing"), "empty Value in settings = not set");
+}
+if (!(await page.isHidden("#bulkbar"))) await page.click("#btn-clear-sel");
+await page.check('input[aria-label="Select sss_flag"]');
+await page.check('input[aria-label="Select sss_apiurl"]');
+await page.selectOption("#copy-from", "settings:1");
+await page.selectOption("#copy-to", "primary");
+await page.click("#btn-copy");
+await page.waitForSelector("dialog[open]");
+{
+  const pv = await page.textContent("#dlg-body");
+  assert(pv.includes("create") && pv.includes("only default set") && pv.includes("source has no value"), "copy from settings: flag planned, empty value skipped");
+}
+await page.click("#dlg-cancel");
+await page.click("#btn-clear-sel");
+await page.click('.tab[data-tab="connrefs"]');
+assert((await page.textContent("#matrix-body")).includes("conn-file-1"), "settings connection ids shown on connection references tab");
+await page.click('.tab[data-tab="envvars"]');
+await page.click('#columns .colchip button[aria-label^="Remove"]');
+await page.waitForFunction(() => document.querySelectorAll("#columns .colchip").length === 2);
 await page.evaluate(() => document.documentElement.setAttribute("data-theme", "light"));
 
 // CSV: formula injection neutralised, \r quoted

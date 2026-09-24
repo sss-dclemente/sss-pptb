@@ -1,11 +1,37 @@
-import { $, badge, emptyState, h, showDialog, wireTabs } from "../../_shared/dom";
+import { $, badge, card, emptyState, h, showDialog, wireTabs } from "../../_shared/dom";
 import { dataverse, getConnections, initTheme, inToolbox, notify, onConnectionChange, openText, saveText } from "./host";
 import { deploymentSettings, matrixCsv, safeFileName, snapshot } from "./matrix/export";
 import { fetchColumn, fetchSolutionScope, fetchSolutions, type SolutionInfo } from "./matrix/fetch";
 import { buildMatrix, filterConnRefs, filterEnvVars } from "./matrix/matrix";
+import {
+  applyMerge,
+  addRefsToSolution,
+  applyRestore,
+  buildMergeBackup,
+  connectorGroups,
+  fetchFlows,
+  fetchSolutionFlowIds,
+  markDependents,
+  mergeBackupFileName,
+  parseMergeBackup,
+  planCleanup,
+  planMerge,
+  planRestore,
+  solutionFit,
+  unusedConnRefs,
+  usageByConnRef,
+  type DeleteResult,
+  type FlowRecord,
+  type FlowResult,
+  type MergePlan,
+  type MergeSpec,
+  type PlannedFlow,
+} from "./matrix/consolidate";
+import { applyBind, planBind, type BindPlan } from "./matrix/bind";
+import { isDeploymentSettings, parseDeploymentSettings } from "./matrix/settings";
 import { parseSnapshot } from "./matrix/snapshot";
-import type { ColumnData, ColumnMeta, EnvVarRow, Filters, Matrix, Target } from "./matrix/types";
-import { applyPlan, connectionChangedMessage, planCopy, planSet, sameConnection, type ConnectionStamp, type WritePlan, type WriteResult } from "./matrix/write";
+import type { ColumnData, ColumnMeta, ConnRefRecord, EnvVarRow, Filters, Matrix, Target } from "./matrix/types";
+import { applyPlan, connectionChangedMessage, planCopy, planSet, sameConnection, stampOf, type ConnectionStamp, type WritePlan, type WriteResult } from "./matrix/write";
 
 // ---------- state ----------
 let live: ColumnData[] = [];
@@ -13,12 +39,33 @@ const snaps: ColumnData[] = [];
 let matrix: Matrix = { columns: [], envVars: [], connRefs: [] };
 let activeTab: "envvars" | "connrefs" = "envvars";
 const selected = new Set<string>();
+/** selected connection reference rows (lowercase logical names) on the matrix tab */
+const crSelected = new Set<string>();
 let solutions: SolutionInfo[] = [];
 /** selected solution id ("" = all). Source of truth for the dropdown; `scope` is always derived from it. */
 let selectedSolution = "";
 let scope: Set<string> | null = null;
+/** connection references tab: consolidate view instead of the matrix */
+let consolidating = false;
+/** live column the consolidate view works on */
+let consKey = "primary";
+/** flows of `consKey`, stamped with the org they were read from */
+let flowCache: { key: string; url: string; flows: FlowRecord[] } | null = null;
+let flowError: string | null = null;
+let scanning: Promise<void> | null = null;
+/** lowercase connector id → logical name kept */
+const keepBy = new Map<string, string>();
+/** lowercase logical names selected to merge into their group's keep target */
+const mergeSel = new Set<string>();
+/** lowercase logical names of unused references selected for delete */
+const cleanupSel = new Set<string>();
+/** flow ids of the selected solution (solution fit check), stamped with solution + org */
+let fitCache: { solutionId: string; url: string; flowIds: Set<string> } | null = null;
+let fitLoading: Promise<void> | null = null;
 
 const columns = (): ColumnData[] => [...live, ...snaps];
+/** label of a non-live column: deploymentSettings file or snapshot */
+const fileKind = (m: ColumnMeta): string => (m.key.startsWith("settings:") ? "settings" : "snapshot");
 /** columns with data (a live column whose load failed has none) */
 const okColumns = (): ColumnData[] => columns().filter((c) => !c.meta.error);
 const liveCols = (): ColumnMeta[] => live.filter((c) => !c.meta.error).map((c) => c.meta);
@@ -31,7 +78,7 @@ function colChip(meta: ColumnMeta, removable: boolean): HTMLElement {
     { class: "colchip", title: meta.url },
     dot,
     h("span", { class: "env" }, meta.name),
-    h("span", { class: "kind" }, meta.kind === "live" ? `${meta.target} · ${meta.environment}` : `snapshot${meta.takenAt ? ` · ${meta.takenAt.slice(0, 10)}` : ""}`),
+    h("span", { class: "kind" }, meta.kind === "live" ? `${meta.target} · ${meta.environment}` : `${fileKind(meta)}${meta.takenAt ? ` · ${meta.takenAt.slice(0, 10)}` : ""}`),
   );
   if (meta.error) {
     const b = badge("load failed", "bad");
@@ -75,7 +122,7 @@ function renderHeader(): void {
   const fill = (id: string, metas: ColumnMeta[], keep = true) => {
     const sel = $<HTMLSelectElement>(id);
     const prev = sel.value;
-    sel.replaceChildren(...metas.map((m) => h("option", { value: m.key }, `${m.name} (${m.kind === "live" ? m.target : "snapshot"})`)));
+    sel.replaceChildren(...metas.map((m) => h("option", { value: m.key }, `${m.name} (${m.kind === "live" ? m.target : fileKind(m)})`)));
     if (keep && [...sel.options].some((o) => o.value === prev)) sel.value = prev;
   };
   fill("#export-col", okColumns().map((c) => c.meta));
@@ -102,7 +149,7 @@ function renderHeader(): void {
 
 // ---------- tables ----------
 function colHead(c: ColumnMeta): HTMLElement {
-  const th = h("th", { class: "col" }, c.kind === "live" ? c.target! : "snapshot", h("span", { class: "env" }, c.name));
+  const th = h("th", { class: "col" }, c.kind === "live" ? c.target! : fileKind(c), h("span", { class: "env" }, c.name));
   if (c.error) {
     th.title = c.error;
     th.append(h("span", { class: "col-error" }, badge("load failed", "bad"), h("span", { class: "caption" }, c.error)));
@@ -165,11 +212,19 @@ function envVarTable(rows: EnvVarRow[]): HTMLElement {
 
 function connRefTable(rows: Matrix["connRefs"]): HTMLElement {
   const cols = matrix.columns;
-  const head = h("tr", {}, h("th", {}, "Connection reference"), h("th", {}, "Connector"), ...cols.map(colHead));
-  const body = rows.map((r) =>
-    h(
+  const head = h("tr", {}, h("th", { class: "sel" }, ""), h("th", {}, "Connection reference"), h("th", {}, "Connector"), ...cols.map(colHead));
+  const body = rows.map((r) => {
+    const cb = h("input", { type: "checkbox", "aria-label": `Select ${r.logicalName}` }) as HTMLInputElement;
+    cb.checked = crSelected.has(r.key);
+    cb.addEventListener("change", () => {
+      if (cb.checked) crSelected.add(r.key);
+      else crSelected.delete(r.key);
+      renderBulkbar();
+    });
+    return h(
       "tr",
       { class: r.anyUnbound || r.anyAbsent ? "missing" : r.differs ? "differs" : undefined },
+      h("td", { class: "sel" }, cb),
       h("td", { class: "name" }, h("span", { class: "mono" }, r.logicalName), h("span", { class: "display" }, r.displayName)),
       h("td", {}, r.connector ?? "—"),
       ...cols.map((c) => {
@@ -184,8 +239,8 @@ function connRefTable(rows: Matrix["connRefs"]): HTMLElement {
         );
         return td;
       }),
-    ),
-  );
+    );
+  });
   return h("table", { class: "matrix" }, h("thead", {}, head), h("tbody", {}, ...body));
 }
 
@@ -197,6 +252,11 @@ function renderTable(): void {
     return;
   }
   const f = filters();
+  if (activeTab === "connrefs" && consolidating) {
+    renderConsolidate(body, f);
+    renderBulkbar();
+    return;
+  }
   if (activeTab === "envvars") {
     const rows = filterEnvVars(matrix.envVars, f);
     body.append(rows.length ? envVarTable(rows) : emptyState("No environment variables match", "Adjust the filters."));
@@ -209,15 +269,489 @@ function renderTable(): void {
 
 function renderBulkbar(): void {
   const bar = $("#bulkbar");
-  bar.hidden = activeTab !== "envvars" || selected.size === 0 || liveCols().length === 0;
-  $("#sel-count").textContent = String(selected.size);
+  const bind = activeTab === "connrefs";
+  const n = bind ? crSelected.size : selected.size;
+  bar.hidden = (bind && consolidating) || n === 0 || liveCols().length === 0;
+  $("#sel-count").textContent = String(n);
+  $("#btn-copy").textContent = bind ? "Preview bind…" : "Preview copy…";
+  $("#bind-restart-wrap").hidden = !bind;
+  const cons = $("#btn-consolidate");
+  cons.hidden = activeTab !== "connrefs";
+  cons.textContent = consolidating ? "Back to matrix" : "Consolidate…";
+  cons.toggleAttribute("disabled", !consolidating && !liveCols().length);
+  renderMergebar();
 }
 
 function rebuild(): void {
   matrix = buildMatrix(columns());
   for (const k of [...selected]) if (!matrix.envVars.some((r) => r.key === k)) selected.delete(k);
+  for (const k of [...crSelected]) if (!matrix.connRefs.some((r) => r.key === k)) crSelected.delete(k);
   renderHeader();
   renderTable();
+}
+
+// ---------- consolidate ----------
+const consColumn = (): ColumnData | undefined => live.find((c) => c.meta.key === consKey && !c.meta.error) ?? live.find((c) => !c.meta.error);
+const lcase = (v: string): string => v.toLowerCase();
+
+function consFlows(): FlowRecord[] | null {
+  const col = consColumn();
+  return col && flowCache && flowCache.key === col.meta.key && flowCache.url === col.meta.url ? flowCache.flows : null;
+}
+
+/** Reads the flows of the consolidate column. Coalesces overlapping calls. */
+function scanFlows(): Promise<void> {
+  if (scanning) return scanning;
+  scanning = (async () => {
+    const api = dataverse();
+    const col = consColumn();
+    if (!api || !col?.meta.target) return;
+    flowError = null;
+    setStatus(`Reading cloud flows in ${col.meta.name}…`);
+    try {
+      const flows = await fetchFlows(api, col.meta.target);
+      // Selections name references of the org they were made in: a different org starts clean.
+      if (flowCache && (flowCache.key !== col.meta.key || flowCache.url !== col.meta.url)) {
+        keepBy.clear();
+        mergeSel.clear();
+        cleanupSel.clear();
+      }
+      flowCache = { key: col.meta.key, url: col.meta.url, flows };
+    } catch (e) {
+      flowCache = null;
+      flowError = (e as Error).message;
+    }
+    setStatus(null);
+  })().finally(() => {
+    scanning = null;
+    renderTable();
+  });
+  return scanning;
+}
+
+/** Selected merges, one spec per connector group with at least one source. */
+function mergeSpecs(refs: ConnRefRecord[]): MergeSpec[] {
+  const flows = consFlows();
+  if (!flows) return [];
+  const specs: MergeSpec[] = [];
+  for (const g of connectorGroups(refs, usageByConnRef(flows))) {
+    const keep = keepBy.get(lcase(g.connectorId)) ?? g.suggested;
+    const sources = g.refs.filter((r) => lcase(r.logicalName) !== lcase(keep) && mergeSel.has(lcase(r.logicalName))).map((r) => r.logicalName);
+    if (sources.length) specs.push({ target: keep, sources });
+  }
+  return specs;
+}
+
+function renderMergebar(): void {
+  const bar = $("#mergebar");
+  const col = consColumn();
+  const specs = activeTab === "connrefs" && consolidating && col ? mergeSpecs(col.connRefs) : [];
+  const n = specs.reduce((a, s) => a + s.sources.length, 0);
+  bar.hidden = !n;
+  $("#merge-count").textContent = `${n} reference${n === 1 ? "" : "s"} → ${specs.length} target${specs.length === 1 ? "" : "s"}`;
+}
+
+function renderConsolidate(body: HTMLElement, f: Filters): void {
+  const col = consColumn();
+  const head = h("div", { class: "cons-head" });
+  const sel = h("select", { id: "cons-col", "aria-label": "Environment" }) as HTMLSelectElement;
+  sel.replaceChildren(...liveCols().map((m) => h("option", { value: m.key }, `${m.name} (${m.target})`)));
+  if (col) sel.value = col.meta.key;
+  sel.addEventListener("change", () => {
+    consKey = sel.value;
+    keepBy.clear();
+    mergeSel.clear();
+    renderTable();
+    if (!consFlows()) void scanFlows();
+  });
+  const rescan = h("button", { class: "btn btn-sm", type: "button" }, "Rescan flows");
+  rescan.addEventListener("click", () => void scanFlows());
+  const restore = h("button", { class: "btn btn-ghost btn-sm", type: "button" }, "Restore from backup…");
+  restore.addEventListener("click", () => void restoreFromBackup());
+  head.append(h("label", {}, "Environment ", sel), rescan, h("span", { class: "spacer" }), restore);
+  body.append(head);
+  if (!col) {
+    body.append(emptyState("No live connection", "Consolidation writes to a live environment. Pick a connection in ToolBox."));
+    return;
+  }
+  const flows = consFlows();
+  if (!flows) {
+    if (flowError) body.append(emptyState("Could not read cloud flows", flowError));
+    else {
+      body.append(emptyState("Reading cloud flows…", "Usage per connection reference comes from each flow's definition."));
+      if (!scanning) void scanFlows();
+    }
+    return;
+  }
+  const usage = usageByConnRef(flows);
+  const t = f.text.trim().toLowerCase();
+  const refs = col.connRefs.filter((r) => (!f.scope || f.scope.has(lcase(r.logicalName))) && (!t || lcase(r.logicalName).includes(t) || lcase(r.displayName).includes(t) || lcase(r.connector ?? "").includes(t)));
+  const groups = connectorGroups(refs, usage);
+  const bad = flows.filter((x) => x.parseError).length;
+  const total = col.connRefs.length;
+  const reducible = groups.reduce((a, g) => a + g.refs.length - 1, 0);
+  body.append(
+    h(
+      "p",
+      { class: "caption", style: "padding: var(--s-2) var(--s-5) 0" },
+      `${flows.length} cloud flow${flows.length === 1 ? "" : "s"} scanned, ${total} connection reference${total === 1 ? "" : "s"}. ${groups.length} connector${groups.length === 1 ? "" : "s"} with more than one reference: up to ${reducible} can be merged away.${bad ? ` ${bad} flow${bad === 1 ? "" : "s"} with unreadable clientdata (skipped).` : ""}`,
+    ),
+  );
+  const wrap = h("div", { class: "cons-groups" });
+  const fit = fitCard(col, flows);
+  if (fit) wrap.append(fit);
+  if (!groups.length) wrap.append(emptyState("Nothing to consolidate", "Every connector has at most one connection reference (within the current filters)."));
+  for (const g of groups) {
+    const gk = lcase(g.connectorId);
+    const keep = keepBy.get(gk) ?? g.suggested;
+    const rows = g.refs.map((r) => {
+      const name = lcase(r.logicalName);
+      const isKeep = name === lcase(keep);
+      const radio = h("input", { type: "radio", name: `keep-${gk}`, "aria-label": `Keep ${r.logicalName}` }) as HTMLInputElement;
+      radio.checked = isKeep;
+      radio.addEventListener("change", () => {
+        keepBy.set(gk, r.logicalName);
+        mergeSel.delete(name);
+        renderTable();
+      });
+      const cb = h("input", { type: "checkbox", "aria-label": `Merge ${r.logicalName}` }) as HTMLInputElement;
+      cb.checked = !isKeep && mergeSel.has(name);
+      cb.disabled = isKeep;
+      cb.addEventListener("change", () => {
+        if (cb.checked) mergeSel.add(name);
+        else mergeSel.delete(name);
+        renderTable();
+      });
+      const users = usage.get(name) ?? [];
+      const count = badge(`${users.length} flow${users.length === 1 ? "" : "s"}`, users.length ? "neutral" : "warn");
+      count.title = users.map((u) => u.name).join("\n") || "not used by any cloud flow";
+      return h(
+        "tr",
+        { class: isKeep ? "keep" : cb.checked ? "merge" : undefined },
+        h("td", { class: "pick" }, radio),
+        h("td", { class: "pick" }, cb),
+        h("td", { class: "name" }, h("span", { class: "mono" }, r.logicalName), h("span", { class: "display" }, r.displayName)),
+        h("td", { class: "mono" }, r.connectionId ?? "", " ", badge(r.connectionId ? "bound" : "unbound", r.connectionId ? "ok" : "bad")),
+        h("td", {}, count, " ", r.isManaged ? badge("managed", "neutral") : null, isKeep && lcase(g.suggested) === name ? badge("suggested", "ok") : null),
+      );
+    });
+    const all = h("button", { class: "btn btn-ghost btn-sm", type: "button" }, "Merge all into kept");
+    all.addEventListener("click", () => {
+      for (const r of g.refs) if (lcase(r.logicalName) !== lcase(keep)) mergeSel.add(lcase(r.logicalName));
+      renderTable();
+    });
+    const table = h(
+      "table",
+      {},
+      h("thead", {}, h("tr", {}, h("th", {}, "Keep"), h("th", {}, "Merge"), h("th", {}, "Connection reference"), h("th", {}, "Connection"), h("th", {}, "Usage"))),
+      h("tbody", {}, ...rows),
+    );
+    wrap.append(card(`${g.connector} · ${g.refs.length} references`, table, all));
+  }
+  wrap.append(cleanupCard(col, unusedConnRefs(refs, usage)));
+  body.append(wrap);
+}
+
+function cleanupCard(col: ColumnData, unused: ConnRefRecord[]): HTMLElement {
+  if (!unused.length) return card("Unused connection references", emptyState("None", "Every connection reference is used by at least one cloud flow (within the current filters)."));
+  const deletable = unused.filter((r) => !r.isManaged);
+  const rows = unused.map((r) => {
+    const name = lcase(r.logicalName);
+    const cb = h("input", { type: "checkbox", "aria-label": `Delete ${r.logicalName}` }) as HTMLInputElement;
+    cb.checked = cleanupSel.has(name);
+    cb.disabled = r.isManaged;
+    cb.addEventListener("change", () => {
+      if (cb.checked) cleanupSel.add(name);
+      else cleanupSel.delete(name);
+      renderTable();
+    });
+    return h(
+      "tr",
+      { class: cb.checked ? "merge" : undefined },
+      h("td", { class: "pick" }, cb),
+      h("td", { class: "name" }, h("span", { class: "mono" }, r.logicalName), h("span", { class: "display" }, r.displayName)),
+      h("td", {}, r.connector ?? "—"),
+      h("td", {}, badge(r.connectionId ? "bound" : "unbound", r.connectionId ? "ok" : "bad"), " ", r.isManaged ? badge("managed", "neutral") : null),
+    );
+  });
+  const n = unused.filter((r) => cleanupSel.has(lcase(r.logicalName)) && !r.isManaged).length;
+  const actions = h("span", { style: "display:inline-flex; gap: var(--s-2); margin-left:auto" });
+  const all = h("button", { class: "btn btn-ghost btn-sm", type: "button" }, "Select all unmanaged");
+  all.addEventListener("click", () => {
+    for (const r of deletable) cleanupSel.add(lcase(r.logicalName));
+    renderTable();
+  });
+  const go = h("button", { class: "btn btn-primary btn-sm", type: "button", id: "btn-cleanup-preview", style: "flex:none" }, `Preview delete (${n})…`);
+  go.toggleAttribute("disabled", !n);
+  go.addEventListener("click", () => void previewCleanup(col));
+  actions.append(all, go);
+  const table = h(
+    "table",
+    {},
+    h("thead", {}, h("tr", {}, h("th", {}, "Delete"), h("th", {}, "Connection reference"), h("th", {}, "Connector"), h("th", {}, "State"))),
+    h("tbody", {}, ...rows),
+  );
+  return card(`Unused connection references · ${unused.length}`, table, actions);
+}
+
+const cleanupSummary = (n: number): string => `${n} unused reference${n === 1 ? "" : "s"} to delete`;
+
+async function previewCleanup(col: ColumnData): Promise<void> {
+  const flows = consFlows();
+  const api = dataverse();
+  if (!flows || !api) return;
+  const names = col.connRefs.filter((r) => cleanupSel.has(lcase(r.logicalName))).map((r) => r.logicalName);
+  if (!names.length) return;
+  const plan = planCleanup(col.meta, col.connRefs, flows, names);
+  setStatus("Checking dependencies…");
+  await markDependents(api, plan);
+  setStatus(null);
+  await runMergePlan(col, plan, `${cleanupSummary(plan.deletes.filter((d) => d.action === "delete").length)} in ${col.meta.name}. A backup is saved first; Restore from backup recreates them.`);
+  cleanupSel.clear();
+}
+
+/** Solution of the fit check: the solution filter, when it is set and the view works on the primary. */
+function fitSolution(col: ColumnData): SolutionInfo | null {
+  if (!selectedSolution || !scope || col.meta.target !== "primary") return null;
+  return solutions.find((x) => x.id === selectedSolution) ?? null;
+}
+
+function loadFit(col: ColumnData, sol: SolutionInfo): void {
+  const api = dataverse();
+  if (!api || fitLoading) return;
+  fitLoading = (async () => {
+    try {
+      const flowIds = await fetchSolutionFlowIds(api, "primary", sol.id);
+      fitCache = { solutionId: sol.id, url: col.meta.url, flowIds };
+    } catch (e) {
+      fitCache = null;
+      await notify("Solution check failed", (e as Error).message, "warning");
+    }
+  })().finally(() => {
+    fitLoading = null;
+    renderTable();
+  });
+}
+
+function fitCard(col: ColumnData, flows: FlowRecord[]): HTMLElement | null {
+  const sol = fitSolution(col);
+  if (!sol) return null;
+  if (!fitCache || fitCache.solutionId !== sol.id || fitCache.url !== col.meta.url) {
+    loadFit(col, sol);
+    return card(`Solution check · ${sol.friendlyName}`, h("p", { class: "caption" }, "Reading the solution's cloud flows…"));
+  }
+  const issues = solutionFit(flows, fitCache.flowIds, col.connRefs, scope!);
+  const title = `Solution check · ${sol.friendlyName}`;
+  if (!issues.length)
+    return card(title, h("p", { class: "caption" }, `All connection references used by the solution's ${fitCache.flowIds.size} cloud flow${fitCache.flowIds.size === 1 ? "" : "s"} are in the solution.`));
+  const addable = issues.filter((i) => i.ref).map((i) => i.ref!);
+  const table = h(
+    "table",
+    {},
+    h("thead", {}, h("tr", {}, h("th", {}, "Connection reference"), h("th", {}, "Used by (in solution)"), h("th", {}, "Note"))),
+    h(
+      "tbody",
+      {},
+      ...issues.map((i) =>
+        h(
+          "tr",
+          { class: i.ref ? "merge" : undefined },
+          h("td", { class: "mono" }, i.logicalName),
+          h("td", {}, i.flows.join(", ")),
+          h("td", { class: "caption" }, i.ref ? "not in the solution: an export would miss it" : h("span", {}, badge("missing", "bad"), " does not exist in this environment: the flow is broken")),
+        ),
+      ),
+    ),
+  );
+  let extra: HTMLElement | undefined;
+  if (sol.isManaged) extra = h("span", { class: "caption" }, "managed solution: fix it in the source environment");
+  else if (addable.length) {
+    extra = h("button", { class: "btn btn-primary btn-sm", type: "button", id: "btn-fit-add", style: "flex:none" }, `Add ${addable.length} to solution…`);
+    extra.addEventListener("click", () => void addToSolution(col, sol, addable));
+  }
+  return card(title, table, extra);
+}
+
+async function addToSolution(col: ColumnData, sol: SolutionInfo, refs: ConnRefRecord[]): Promise<void> {
+  const api = dataverse();
+  if (!api) return;
+  const body = h(
+    "div",
+    {},
+    h("p", { class: "caption" }, `AddSolutionComponent into ${sol.friendlyName} (${sol.uniqueName}), without required components:`),
+    h("ul", {}, ...refs.map((r) => h("li", { class: "mono" }, r.logicalName))),
+  );
+  const ok = await showDialog({ title: "Add to solution", target: targetChip(col.meta), body, okLabel: `Add ${refs.length}` });
+  if (!ok) return;
+  setStatus("Adding to solution…");
+  let res: DeleteResult[];
+  try {
+    res = await addRefsToSolution(api, col.meta, stampOf(col.meta), sol.uniqueName, refs, currentConnection);
+  } catch (e) {
+    setStatus(null);
+    await notify("Add to solution failed", (e as Error).message, "error");
+    return;
+  }
+  setStatus(null);
+  await showMergeResults("Added to solution", col.meta, [], { label: "Connection reference", rows: res });
+  fitCache = null;
+  await refresh();
+}
+
+function flowPlanTable(items: PlannedFlow[]): HTMLElement {
+  return h(
+    "table",
+    {},
+    h("thead", {}, h("tr", {}, h("th", {}, "Flow"), h("th", {}, "State"), h("th", {}, "Action"), h("th", {}, "Changes"), h("th", {}, "Note"))),
+    h(
+      "tbody",
+      {},
+      ...items.map((i) =>
+        h(
+          "tr",
+          {},
+          h("td", {}, i.name, i.isManaged ? h("span", {}, " ", badge("managed", "neutral")) : null),
+          h("td", {}, badge(i.wasOn ? "on" : "off", i.wasOn ? "ok" : "neutral")),
+          h("td", {}, badge(i.action, i.action === "update" ? "warn" : "neutral")),
+          h(
+            "td",
+            { class: "changes" },
+            ...i.changes.map((c) => h("div", {}, `${c.key}: ${c.from} → ${c.to}`)),
+            ...(i.collapsed ?? []).map((c) => h("div", {}, `key ${c.drop} → ${c.into} (${c.uses} use${c.uses === 1 ? "" : "s"})`)),
+          ),
+          h("td", { class: "caption" }, i.reason, i.warning ? h("div", {}, badge("caution", "warn"), " ", i.warning) : null),
+        ),
+      ),
+    ),
+  );
+}
+
+const resultBadge = (r: { ok: boolean; skipped?: boolean; leftOff?: boolean; error?: string }): HTMLElement => {
+  const b = r.skipped ? badge("skipped", "neutral") : r.ok ? badge("ok", "ok") : badge(r.leftOff ? "left off" : "failed", "bad");
+  return r.error ? h("span", {}, b, " ", h("span", { class: "caption" }, r.error)) : b;
+};
+
+async function showMergeResults(title: string, target: ColumnMeta, flows: FlowResult[], others: { label: string; rows: DeleteResult[] }): Promise<void> {
+  const failed = flows.filter((f) => !f.ok).length + others.rows.filter((d) => !d.ok).length;
+  const body = h(
+    "div",
+    {},
+    flows.length
+      ? h(
+          "table",
+          {},
+          h("thead", {}, h("tr", {}, h("th", {}, "Flow"), h("th", {}, "Result"))),
+          h("tbody", {}, ...flows.map((f) => h("tr", {}, h("td", {}, f.name), h("td", {}, resultBadge(f))))),
+        )
+      : null,
+    others.rows.length
+      ? h(
+          "table",
+          {},
+          h("thead", {}, h("tr", {}, h("th", {}, others.label), h("th", {}, "Result"))),
+          h("tbody", {}, ...others.rows.map((d) => h("tr", {}, h("td", { class: "mono" }, d.logicalName), h("td", {}, resultBadge(d))))),
+        )
+      : null,
+  );
+  const okCount = flows.filter((f) => f.ok).length + others.rows.filter((d) => d.ok && !d.skipped).length;
+  await notify(failed ? `${title}: some steps failed` : title, `${okCount} ok, ${failed} failed`, failed ? "warning" : "success");
+  await showDialog({ title: "Results", target: targetChip(target), body });
+}
+
+async function previewMerge(): Promise<void> {
+  const col = consColumn();
+  const flows = consFlows();
+  const api = dataverse();
+  if (!col || !flows || !api) return;
+  const specs = mergeSpecs(col.connRefs);
+  if (!specs.length) return;
+  const plan: MergePlan = planMerge(col.meta, col.connRefs, flows, specs, { deleteSources: $<HTMLInputElement>("#merge-delete").checked, collapseKeys: $<HTMLInputElement>("#merge-collapse").checked });
+  const summary = `${specs.map((s) => `${s.sources.join(", ")} → ${s.target}`).join(" · ")}. ${plan.flows.filter((f) => f.action === "update").length} flows to update in ${col.meta.name}; ${plan.deletes.filter((d) => d.action === "delete").length} references to delete. A backup of every touched flow is saved first.`;
+  await runMergePlan(col, plan, summary);
+  mergeSel.clear();
+}
+
+/** Preview → backup → apply → results for a merge or cleanup plan. */
+async function runMergePlan(col: ColumnData, plan: MergePlan, summary: string): Promise<void> {
+  const api = dataverse();
+  if (!api) return;
+  const updates = plan.flows.filter((f) => f.action === "update");
+  const dels = plan.deletes.filter((d) => d.action === "delete");
+  const isProd = /prod/i.test(col.meta.environment);
+  const body = h(
+    "div",
+    {},
+    h("p", { class: "caption" }, summary),
+    isProd ? h("div", { class: "warnings" }, "Target is a Production environment.") : null,
+    ...plan.errors.map((e) => h("div", { class: "warnings" }, badge("blocked", "bad"), " ", e)),
+    ...plan.warnings.map((w) => h("div", { class: "warnings" }, badge("caution", "warn"), " ", w)),
+    updates.some((u) => u.wasOn) ? h("p", { class: "caption" }, "Flows that are on are turned off, updated and turned back on. Turning on re-validates the connection; a flow that fails is reported and left off.") : null,
+    plan.flows.length ? flowPlanTable(plan.flows) : plan.specs.length ? h("p", { class: "caption" }, "No cloud flow uses the selected references.") : null,
+    plan.deletes.length
+      ? h(
+          "table",
+          {},
+          h("thead", {}, h("tr", {}, h("th", {}, "Connection reference"), h("th", {}, "Action"), h("th", {}, "Note"))),
+          h("tbody", {}, ...plan.deletes.map((d) => h("tr", {}, h("td", { class: "mono" }, d.logicalName), h("td", {}, badge(d.action, d.action === "delete" ? "bad" : "neutral")), h("td", { class: "caption" }, d.reason)))),
+        )
+      : null,
+  );
+  const n = updates.length + dels.length;
+  const ok = await showDialog({ title: plan.specs.length ? "Preview merge" : "Preview delete", target: targetChip(col.meta), body, okLabel: !plan.errors.length && n ? `Save backup & apply` : "", danger: isProd || dels.length > 0 });
+  if (!ok || plan.errors.length || !n) return;
+  const cur = await currentConnection(col.meta.target!).catch(() => null);
+  if (!sameConnection(plan.stamp, cur)) {
+    await notify("Connection changed", `The preview was built for ${col.meta.name} (${col.meta.url}). Nothing written; refresh and preview again.`, "error");
+    await refresh();
+    return;
+  }
+  const backup = buildMergeBackup(plan, col.connRefs);
+  if (!(await saveText(mergeBackupFileName(col.meta.name), JSON.stringify(backup, null, 2)))) {
+    await notify("Backup not saved", "Nothing written: the backup must be saved before the merge runs.", "warning");
+    return;
+  }
+  const res = await applyMerge(plan, { api, currentConnection, onStep: (m) => setStatus(m || null) });
+  setStatus(null);
+  await showMergeResults(plan.specs.length ? "Merge applied" : "Cleanup applied", col.meta, res.flows, { label: "Deleted reference", rows: res.deletes });
+  flowCache = null;
+  await refresh();
+}
+
+async function restoreFromBackup(): Promise<void> {
+  const col = consColumn();
+  const api = dataverse();
+  if (!col || !api) return;
+  const file = await openText({ title: "Open connection reference merge backup", extensions: ["json"] });
+  if (!file) return;
+  let plan;
+  try {
+    const b = parseMergeBackup(file.text);
+    setStatus("Reading cloud flows…");
+    const flows = await fetchFlows(api, col.meta.target!);
+    plan = planRestore(col.meta, b, col.connRefs, flows);
+  } catch (e) {
+    await notify("Backup rejected", `${file.name}: ${(e as Error).message}`, "error");
+    return;
+  } finally {
+    setStatus(null);
+  }
+  const updates = plan.flows.filter((f) => f.action === "update");
+  const body = h(
+    "div",
+    {},
+    ...plan.errors.map((e) => h("div", { class: "warnings" }, badge("blocked", "bad"), " ", e)),
+    plan.recreate.length ? h("p", { class: "caption" }, `Recreated first: ${plan.recreate.map((r) => r.logicalName).join(", ")}.`) : null,
+    plan.missing.length ? h("div", { class: "warnings" }, `Flows in the backup that no longer exist (not restored): ${plan.missing.join(", ")}`) : null,
+    plan.flows.length ? flowPlanTable(plan.flows) : null,
+  );
+  const n = updates.length + plan.recreate.length;
+  const ok = await showDialog({ title: "Preview restore", target: targetChip(col.meta), body, okLabel: !plan.errors.length && n ? `Restore ${n}` : "", danger: true });
+  if (!ok || plan.errors.length || !n) return;
+  const res = await applyRestore(plan, { api, currentConnection, onStep: (m) => setStatus(m || null) });
+  setStatus(null);
+  await showMergeResults("Restore applied", col.meta, res.flows, { label: "Recreated reference", rows: res.created });
+  flowCache = null;
+  await refresh();
 }
 
 // ---------- data loading ----------
@@ -321,7 +855,13 @@ async function loadSnapshot(): Promise<void> {
   const f = await openText({ title: "Open matrix snapshot", extensions: ["json"] });
   if (!f) return;
   try {
-    snaps.push(parseSnapshot(f.text, f.name));
+    let parsed: unknown = null;
+    try {
+      parsed = JSON.parse(f.text);
+    } catch {
+      /* parseSnapshot reports it */
+    }
+    snaps.push(isDeploymentSettings(parsed) ? parseDeploymentSettings(f.text, f.name) : parseSnapshot(f.text, f.name));
     rebuild();
   } catch (e) {
     await notify("Snapshot rejected", `${f.name}: ${(e as Error).message}`, "error");
@@ -425,8 +965,66 @@ async function copySelected(): Promise<void> {
     await notify("Same column", "Pick a different source and target.", "warning");
     return;
   }
+  if (activeTab === "connrefs") {
+    const source = okColumns().find((c) => c.meta.key === fromKey)?.meta;
+    if (source) await runBind(planBind(matrix.connRefs.filter((r) => crSelected.has(r.key)), source, target));
+    return;
+  }
   const rows = matrix.envVars.filter((r) => selected.has(r.key));
   await runPlan(planCopy(rows, fromKey, target));
+}
+
+async function runBind(plan: BindPlan): Promise<void> {
+  const api = dataverse();
+  if (!api) return;
+  const writes = plan.items.filter((i) => i.action === "update");
+  const invalid = plan.items.filter((i) => i.action === "invalid");
+  const restart = $<HTMLInputElement>("#bind-restart").checked;
+  const isProd = /prod/i.test(plan.target.environment);
+  const body = h(
+    "div",
+    {},
+    h(
+      "p",
+      { class: "caption" },
+      `${writes.length} binding${writes.length === 1 ? "" : "s"} from ${plan.source.name} into ${plan.target.name}. ${plan.items.length - writes.length - invalid.length} skipped.${invalid.length ? ` ${invalid.length} invalid (not written).` : ""}${restart && writes.length ? " Flows that are on and use a rebound reference are turned off and on afterwards." : ""}`,
+    ),
+    !plan.source.url ? h("p", { class: "caption" }, "Settings file: connection ids are taken as written for this environment. Check the file targets it.") : null,
+    isProd && writes.length ? h("div", { class: "warnings" }, "Target is a Production environment.") : null,
+    h(
+      "table",
+      {},
+      h("thead", {}, h("tr", {}, h("th", {}, "Connection reference"), h("th", {}, "Action"), h("th", {}, "Current"), h("th", {}, "New"), h("th", {}, "Note"))),
+      h(
+        "tbody",
+        {},
+        ...plan.items.map((i) =>
+          h(
+            "tr",
+            {},
+            h("td", { class: "mono" }, i.logicalName),
+            h("td", {}, badge(i.action, i.action === "update" ? "warn" : i.action === "invalid" ? "bad" : "neutral")),
+            h("td", { class: "mono" }, i.current ?? "—"),
+            h("td", { class: "mono" }, i.action === "skip" ? "—" : (i.next ?? "")),
+            h("td", { class: "caption" }, i.reason, i.warning ? h("div", {}, badge("caution", "warn"), " ", i.warning) : null),
+          ),
+        ),
+      ),
+    ),
+  );
+  const ok = await showDialog({ title: "Preview bind", target: targetChip(plan.target), body, okLabel: writes.length ? `Bind ${writes.length}` : "", danger: isProd });
+  if (!ok || !writes.length) return;
+  const cur = await currentConnection(plan.target.target!).catch(() => null);
+  if (!sameConnection(plan.stamp, cur)) {
+    await notify("Connection changed", `The preview was built for ${plan.target.name} (${plan.target.url}). Nothing written; refresh and preview again.`, "error");
+    await refresh();
+    return;
+  }
+  const res = await applyBind(api, plan, currentConnection, restart, (m) => setStatus(m || null));
+  setStatus(null);
+  await showMergeResults("Bindings written", plan.target, res.flows, { label: "Connection reference", rows: res.refs });
+  flowCache = null;
+  await refresh();
 }
 
 // ---------- exports ----------
@@ -444,6 +1042,15 @@ function wire(): void {
     activeTab = name as typeof activeTab;
     renderTable();
   });
+  $("#btn-consolidate").addEventListener("click", () => {
+    consolidating = !consolidating;
+    renderTable();
+  });
+  $("#btn-merge-preview").addEventListener("click", () => void previewMerge());
+  $("#btn-merge-clear").addEventListener("click", () => {
+    mergeSel.clear();
+    renderTable();
+  });
   for (const id of ["#filter-text", "#filter-diff", "#filter-missing"]) $(id).addEventListener("input", renderTable);
   $("#filter-solution").addEventListener("change", async () => {
     selectedSolution = $<HTMLSelectElement>("#filter-solution").value;
@@ -458,7 +1065,8 @@ function wire(): void {
   $("#btn-load-snap").addEventListener("click", () => void loadSnapshot());
   $("#btn-copy").addEventListener("click", () => void copySelected());
   $("#btn-clear-sel").addEventListener("click", () => {
-    selected.clear();
+    if (activeTab === "connrefs") crSelected.clear();
+    else selected.clear();
     renderTable();
   });
   $("#btn-export-settings").addEventListener("click", () => {

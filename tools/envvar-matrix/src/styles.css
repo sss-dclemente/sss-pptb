@@ -69,3 +69,16 @@ dialog textarea, dialog input[type="text"] {
 .btn-danger:hover { filter: brightness(0.9); }
 .btn:disabled { opacity: 0.5; cursor: not-allowed; }
 .status { padding: var(--s-2) var(--s-5); font-size: var(--fs-caption); color: var(--fg-muted); }
+
+/* ---- consolidate view ---- */
+.cons-head { display: flex; flex-wrap: wrap; gap: var(--s-2); align-items: center; padding: var(--s-2) var(--s-5); border-bottom: 1px solid var(--border-subtle); }
+.cons-head .spacer { flex: 1; }
+.cons-groups { display: flex; flex-direction: column; gap: var(--s-3); padding: var(--s-3) var(--s-5); }
+.cons-groups .card-head { display: flex; align-items: center; gap: var(--s-2); }
+.cons-groups table { width: 100%; }
+.cons-groups td.pick { width: 1%; white-space: nowrap; text-align: center; }
+.cons-groups tr.keep td { background: var(--status-ok-bg); }
+.cons-groups tr.merge td { background: var(--status-warn-bg); }
+.cons-groups input { accent-color: var(--accent); }
+.changes { font-family: var(--font-mono); font-size: var(--fs-micro); }
+.cons-groups td.name .display { display: block; font-size: var(--fs-micro); color: var(--fg-muted); }

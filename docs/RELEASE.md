@@ -48,6 +48,11 @@ Real-env test (primary + secondary connection, Dev + Test):
 - [ ] Set single cell on a boolean and a JSON variable.
 - [ ] Secret rows masked, never written, skipped in preview.
 - [ ] Export deploymentSettings.json for Test; feed it to `pac solution import --settings-file` on a throwaway solution.
+- [ ] Consolidate (1.1.0), throwaway Dev env: two solution flows on two different Office 365 references (same connection), one flow On. Merge one into the other: backup saved, preview key-by-key, flow turned off/on and still runs, designer shows the kept reference, merged reference deleted. Repeat with the kept reference unbound: flow reported "left off". Reference used by a canvas app: delete skipped with dependency reason. Restore from backup puts both back.
+- [ ] Unused cleanup (1.2.0): one unused unmanaged reference + one used only by a canvas app. Preview: first "delete", second "keep" with dependency reason. Apply deletes the first only.
+- [ ] Solution check (1.2.0): solution with a flow whose reference lives outside it. Filter to the solution in Consolidate: listed; Add to solution; export the solution, the reference is in it.
+- [ ] Load a real `pac solution create-settings` file via Load snapshot…: values show as a column; copy one value into Dev through the preview.
+- [ ] Bind from that settings file: one unbound reference used by an active flow. Preview → Bind: connection set in maker portal, flow restarted and runs. Snapshot from another env as source: refused.
 - [ ] Snapshot export from Dev, reload as third column, matrix compares.
 - [ ] Connection references tab: bound / unbound / absent correct.
 
