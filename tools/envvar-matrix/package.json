@@ -1,8 +1,8 @@
 {
   "name": "@simplesmoothsafe/pptb-envvar-matrix",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "displayName": "SSS EnvVar & ConnRef Matrix",
-  "description": "Environment variables and connection references as a matrix across environments: missing values, differences, copy values between environments, deploymentSettings.json export.",
+  "description": "Environment variables and connection references as a matrix across environments: missing values, differences, copy values between environments, consolidate connection references across cloud flows, deploymentSettings.json export.",
   "main": "index.html",
   "icon": "icon.svg",
   "license": "MIT",
@@ -13,6 +13,7 @@
     "pptb",
     "environment-variables",
     "connection-references",
+    "cloud-flows",
     "alm"
   ],
   "author": "Simple Smooth Safe",
@@ -46,7 +47,7 @@
     "dev-watch": "vite build --mode development --watch",
     "typecheck": "tsc --noEmit",
     "validate": "node node_modules/@pptb/validate/dist/cli.js",
-    "e2e": "node scripts/e2e.mjs",
+    "e2e": "node scripts/e2e.mjs && node scripts/e2e-consolidate.mjs",
     "screenshots": "node scripts/screenshots.mjs"
   },
   "devDependencies": {

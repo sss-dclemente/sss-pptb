@@ -48,6 +48,7 @@ Real-env test (primary + secondary connection, Dev + Test):
 - [ ] Set single cell on a boolean and a JSON variable.
 - [ ] Secret rows masked, never written, skipped in preview.
 - [ ] Export deploymentSettings.json for Test; feed it to `pac solution import --settings-file` on a throwaway solution.
+- [ ] Consolidate (1.1.0), throwaway Dev env: two solution flows on two different Office 365 references (same connection), one flow On. Merge one into the other: backup saved, preview key-by-key, flow turned off/on and still runs, designer shows the kept reference, merged reference deleted. Repeat with the kept reference unbound: flow reported "left off". Reference used by a canvas app: delete skipped with dependency reason. Restore from backup puts both back.
 - [ ] Snapshot export from Dev, reload as third column, matrix compares.
 - [ ] Connection references tab: bound / unbound / absent correct.
 
