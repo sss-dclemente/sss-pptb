@@ -29,6 +29,8 @@ const MOCK = `
       cr('r5', 'sss_sql', 'shared_sql', 'conn-9'),
       cr('r6', 'sss_dv_1', 'shared_commondataserviceforapps', 'conn-5'),
       cr('r7', 'sss_dv_2', 'shared_commondataserviceforapps', 'conn-5'),
+      cr('r8', 'sss_unused', 'shared_teams', null),
+      cr('r9', 'sss_canvas', 'shared_sharepointonline', 'conn-7'),
     ],
     flows: [
       wf('f1', 'Flow One', 1, [['shared_office365', 'sss_o365_a', 'shared_office365'], ['shared_sql', 'sss_sql', 'shared_sql']]),
@@ -37,9 +39,12 @@ const MOCK = `
       wf('f7', 'Flow Odd Key', 0, [['shared_office365', 'sss_o365_a', 'shared_office365'], ['shared_office365_1', 'sss_o365_b', 'shared_office365']], false, f7def),
       wf('f4', 'Flow Managed', 1, [['shared_office365', 'sss_o365_m', 'shared_office365']], true),
       wf('f5', 'Flow DV', 1, [['shared_commondataserviceforapps', 'sss_dv_2', 'shared_commondataserviceforapps']]),
+      wf('f8', 'Flow Ghost', 0, [['shared_teams', 'sss_ghost', 'shared_teams']]),
       { workflowid: 'f6', name: 'Flow Broken', statecode: 0, statuscode: 1, ismanaged: false, clientdata: '{not json' },
     ],
-    deps: { r7: 1 },
+    deps: { r7: 1, r9: 2 },
+    sols: [{ solutionid: 'sol1', uniquename: 'SolA', friendlyname: 'Sol A', version: '1.0.0.0', ismanaged: false, isvisible: true }],
+    comps: [{ solutionid: 'sol1', objectid: 'f1', componenttype: 29 }, { solutionid: 'sol1', objectid: 'f2', componenttype: 29 }, { solutionid: 'sol1', objectid: 'f8', componenttype: 29 }, { solutionid: 'sol1', objectid: 'r1', componenttype: 10097 }],
   };
   window.__mock = { env, writes: [], saved: [], notes: [], nextOpen: null, failActivate: null };
   const flow = (id) => env.flows.find((f) => f.workflowid === id);
@@ -63,13 +68,25 @@ const MOCK = `
         return { value: env.flows.map((x) => ({ ...x })) };
       }
       if (q.startsWith("EntityDefinitions(LogicalName='connectionreference')")) return { ObjectTypeCode: 10097 };
+      if (q.startsWith('solutioncomponents')) {
+        const sol = (q.match(/_solutionid_value eq ([^ &)]+)/) || [])[1];
+        const types = [...q.matchAll(/componenttype eq (\\d+)/g)].map((m) => Number(m[1]));
+        return { value: env.comps.filter((c) => c.solutionid === sol && (!types.length || types.includes(c.componenttype))) };
+      }
       if (q.startsWith('RetrieveDependenciesForDelete')) {
         const id = q.match(/ObjectId=([^,]+)/)[1];
         return { EntityCollection: { Entities: Array.from({ length: env.deps[id] || 0 }, () => ({})) } };
       }
       throw new Error('unexpected query ' + q);
     },
-    getSolutions: async () => ({ value: [] }),
+    getSolutions: async () => ({ value: env.sols }),
+    execute: async (req) => {
+      window.__mock.writes.push({ op: 'execute', req });
+      if (req.operationName !== 'AddSolutionComponent') throw new Error('unexpected execute ' + req.operationName);
+      const sol = env.sols.find((x) => x.uniquename === req.parameters.SolutionUniqueName);
+      env.comps.push({ solutionid: sol.solutionid, objectid: req.parameters.ComponentId, componenttype: req.parameters.ComponentType });
+      return {};
+    },
     create: async (entity, rec) => {
       window.__mock.writes.push({ op: 'create', entity, rec });
       const id = 'new-' + rec.connectionreferencelogicalname;
@@ -100,10 +117,39 @@ assert(await page.isVisible("#btn-consolidate"), "Consolidate button on connecti
 await page.click("#btn-consolidate");
 await page.waitForSelector(".cons-groups");
 const text = await page.textContent("#matrix-body");
-assert(text.includes("7 cloud flows scanned"), "flows scanned");
+assert(text.includes("8 cloud flows scanned"), "flows scanned");
 assert(text.includes("1 flow with unreadable clientdata"), "broken clientdata counted");
-const cards = await page.$$eval(".cons-groups .card", (els) => els.map((e) => e.querySelector("h3").textContent));
+const cards = await page.$$eval(".cons-groups .card", (els) => els.map((e) => e.querySelector("h3").textContent).filter((t) => !/^(Unused|Solution)/.test(t)));
 assert(cards.length === 2 && cards.some((c) => c.startsWith("shared_office365 · 4")) && cards.some((c) => c.startsWith("shared_commondataserviceforapps · 2")), "groups per connector, sql singleton excluded: " + cards.join(" | "));
+{
+  const unusedCard = await page.textContent(".cons-groups .card:last-child");
+  assert(unusedCard.includes("Unused connection references · 3") && unusedCard.includes("sss_unused") && unusedCard.includes("sss_canvas") && unusedCard.includes("sss_dv_1"), "unused references listed: " + unusedCard.slice(0, 80));
+}
+
+// solution fit: Sol A holds f1, f2, f8 and only reference r1 (sss_o365_a)
+await page.selectOption("#filter-solution", "sol1");
+await page.waitForSelector("#btn-fit-add", { timeout: 10000 });
+{
+  const fit = await page.textContent(".cons-groups .card:first-child");
+  assert(fit.includes("Solution check · Sol A") && fit.includes("sss_sql") && fit.includes("sss_o365_b") && !fit.includes("sss_o365_c"), "fit: references used by the solution's flows but not in it");
+  assert(fit.includes("sss_ghost") && fit.includes("does not exist"), "fit: flow naming a missing reference flagged");
+  assert((await page.textContent("#btn-fit-add")).includes("Add 2"), "fit: add only existing references");
+}
+await page.click("#btn-fit-add");
+await page.waitForSelector("dialog[open]");
+await page.click("#dlg-ok");
+await page.waitForFunction(() => document.querySelector("#dlg-title").textContent === "Results" && document.querySelector("dialog").open, null, { timeout: 10000 });
+{
+  const ex = (await page.evaluate(() => window.__mock.writes)).filter((w) => w.op === "execute");
+  assert(ex.length === 2 && ex.every((w) => w.req.parameters.SolutionUniqueName === "SolA" && w.req.parameters.ComponentType === 10097 && w.req.parameters.AddRequiredComponents === false) && ex.map((w) => w.req.parameters.ComponentId).sort().join() === "r2,r5", "AddSolutionComponent for r2 + r5 with the org's connectionreference type");
+}
+await page.click("#dlg-cancel");
+await page.waitForFunction(() => (document.querySelector(".cons-groups .card:first-child")?.textContent || "").includes("sss_ghost") && !document.querySelector("#btn-fit-add"), null, { timeout: 10000 });
+assert(true, "fit: after add only the missing reference remains");
+await page.selectOption("#filter-solution", "");
+await page.waitForFunction(() => document.querySelectorAll(".cons-groups .card").length >= 3);
+await page.evaluate(() => { window.__mock.writes = []; });
+
 const o365 = page.locator(".cons-groups .card", { hasText: "shared_office365 ·" });
 const keep = await o365.locator("tr.keep td.name .mono").textContent();
 assert(keep === "sss_o365_a", "suggested target: bound + most used (" + keep + ")");
@@ -146,7 +192,7 @@ assert(refsOf("f1").includes("sss_sql"), "other connector untouched");
 const dels = writes.filter((w) => w.op === "delete").map((w) => w.id).sort();
 assert(dels.join() === "r2,r3", "unmanaged sources deleted, managed kept (" + dels.join() + ")");
 await page.click("#dlg-cancel");
-await page.waitForFunction(() => document.querySelectorAll(".cons-groups .card").length === 2, null, { timeout: 10000 });
+await page.waitForFunction(() => document.querySelectorAll(".cons-groups .card").length === 3, null, { timeout: 10000 });
 assert((await page.$eval(".cons-groups", (e) => e.textContent)).includes("sss_o365_m"), "managed ref still listed after merge");
 
 // dependency blocks delete; activation failure reported as left off
@@ -167,7 +213,7 @@ assert(res.includes("left off") && res.includes("turning it back on failed"), "a
 {
   const w = await page.evaluate(() => window.__mock.writes);
   assert(!w.some((x) => x.op === "delete"), "no delete when reference still has a dependent component");
-  assert(res.includes("depend on it"), "dependency reason shown");
+  assert(/depends? on it/.test(res), "dependency reason shown");
 }
 await page.click("#dlg-cancel");
 
@@ -187,5 +233,27 @@ await page.waitForFunction(() => document.querySelector("#dlg-title").textConten
 }
 await page.click("#dlg-cancel");
 await page.screenshot({ path: resolve(TOOL, "scripts/.e2e-out/10-consolidate.png") });
+
+// unused cleanup: dv_2 (dependent), sss_unused, sss_canvas (dependent) are unused now
+await page.waitForFunction(() => (document.querySelector(".cons-groups .card:last-child")?.textContent || "").includes("sss_unused"), null, { timeout: 10000 });
+await page.evaluate(() => { window.__mock.writes = []; window.__mock.saved = []; });
+await page.getByRole("button", { name: "Select all unmanaged" }).click();
+await page.click("#btn-cleanup-preview");
+await page.waitForSelector("dialog[open]");
+{
+  const pv = await page.textContent("#dlg-body");
+  assert(pv.includes("sss_canvas") && pv.includes("2 other components depend on it"), "cleanup preview: dependents found before apply");
+  assert(await page.textContent("#dlg-title") === "Preview delete", "cleanup dialog title");
+}
+await page.screenshot({ path: resolve(TOOL, "scripts/.e2e-out/11-cleanup-preview.png") });
+await page.click("#dlg-ok");
+await page.waitForFunction(() => document.querySelector("#dlg-title").textContent === "Results" && document.querySelector("dialog").open, null, { timeout: 10000 });
+{
+  const w = await page.evaluate(() => window.__mock.writes);
+  const saved2 = await page.evaluate(() => window.__mock.saved);
+  assert(w.filter((x) => x.op === "delete").map((x) => x.id).join() === "r8", "cleanup deletes only the reference without dependents");
+  assert(saved2.length === 1 && JSON.parse(saved2[0].content).connectionReferences.some((c) => c.logicalName === "sss_unused"), "cleanup backup holds the deleted reference");
+}
+await page.click("#dlg-cancel");
 
 await finish();

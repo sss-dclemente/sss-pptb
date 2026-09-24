@@ -5,14 +5,20 @@ import { fetchColumn, fetchSolutionScope, fetchSolutions, type SolutionInfo } fr
 import { buildMatrix, filterConnRefs, filterEnvVars } from "./matrix/matrix";
 import {
   applyMerge,
+  addRefsToSolution,
   applyRestore,
   buildMergeBackup,
   connectorGroups,
   fetchFlows,
+  fetchSolutionFlowIds,
+  markDependents,
   mergeBackupFileName,
   parseMergeBackup,
+  planCleanup,
   planMerge,
   planRestore,
+  solutionFit,
+  unusedConnRefs,
   usageByConnRef,
   type DeleteResult,
   type FlowRecord,
@@ -21,9 +27,10 @@ import {
   type MergeSpec,
   type PlannedFlow,
 } from "./matrix/consolidate";
+import { isDeploymentSettings, parseDeploymentSettings } from "./matrix/settings";
 import { parseSnapshot } from "./matrix/snapshot";
 import type { ColumnData, ColumnMeta, ConnRefRecord, EnvVarRow, Filters, Matrix, Target } from "./matrix/types";
-import { applyPlan, connectionChangedMessage, planCopy, planSet, sameConnection, type ConnectionStamp, type WritePlan, type WriteResult } from "./matrix/write";
+import { applyPlan, connectionChangedMessage, planCopy, planSet, sameConnection, stampOf, type ConnectionStamp, type WritePlan, type WriteResult } from "./matrix/write";
 
 // ---------- state ----------
 let live: ColumnData[] = [];
@@ -47,6 +54,11 @@ let scanning: Promise<void> | null = null;
 const keepBy = new Map<string, string>();
 /** lowercase logical names selected to merge into their group's keep target */
 const mergeSel = new Set<string>();
+/** lowercase logical names of unused references selected for delete */
+const cleanupSel = new Set<string>();
+/** flow ids of the selected solution (solution fit check), stamped with solution + org */
+let fitCache: { solutionId: string; url: string; flowIds: Set<string> } | null = null;
+let fitLoading: Promise<void> | null = null;
 
 const columns = (): ColumnData[] => [...live, ...snaps];
 /** columns with data (a live column whose load failed has none) */
@@ -284,6 +296,7 @@ function scanFlows(): Promise<void> {
       if (flowCache && (flowCache.key !== col.meta.key || flowCache.url !== col.meta.url)) {
         keepBy.clear();
         mergeSel.clear();
+        cleanupSel.clear();
       }
       flowCache = { key: col.meta.key, url: col.meta.url, flows };
     } catch (e) {
@@ -366,11 +379,10 @@ function renderConsolidate(body: HTMLElement, f: Filters): void {
       `${flows.length} cloud flow${flows.length === 1 ? "" : "s"} scanned, ${total} connection reference${total === 1 ? "" : "s"}. ${groups.length} connector${groups.length === 1 ? "" : "s"} with more than one reference: up to ${reducible} can be merged away.${bad ? ` ${bad} flow${bad === 1 ? "" : "s"} with unreadable clientdata (skipped).` : ""}`,
     ),
   );
-  if (!groups.length) {
-    body.append(emptyState("Nothing to consolidate", "Every connector has at most one connection reference (within the current filters)."));
-    return;
-  }
   const wrap = h("div", { class: "cons-groups" });
+  const fit = fitCard(col, flows);
+  if (fit) wrap.append(fit);
+  if (!groups.length) wrap.append(emptyState("Nothing to consolidate", "Every connector has at most one connection reference (within the current filters)."));
   for (const g of groups) {
     const gk = lcase(g.connectorId);
     const keep = keepBy.get(gk) ?? g.suggested;
@@ -418,7 +430,154 @@ function renderConsolidate(body: HTMLElement, f: Filters): void {
     );
     wrap.append(card(`${g.connector} · ${g.refs.length} references`, table, all));
   }
+  wrap.append(cleanupCard(col, unusedConnRefs(refs, usage)));
   body.append(wrap);
+}
+
+function cleanupCard(col: ColumnData, unused: ConnRefRecord[]): HTMLElement {
+  if (!unused.length) return card("Unused connection references", emptyState("None", "Every connection reference is used by at least one cloud flow (within the current filters)."));
+  const deletable = unused.filter((r) => !r.isManaged);
+  const rows = unused.map((r) => {
+    const name = lcase(r.logicalName);
+    const cb = h("input", { type: "checkbox", "aria-label": `Delete ${r.logicalName}` }) as HTMLInputElement;
+    cb.checked = cleanupSel.has(name);
+    cb.disabled = r.isManaged;
+    cb.addEventListener("change", () => {
+      if (cb.checked) cleanupSel.add(name);
+      else cleanupSel.delete(name);
+      renderTable();
+    });
+    return h(
+      "tr",
+      { class: cb.checked ? "merge" : undefined },
+      h("td", { class: "pick" }, cb),
+      h("td", { class: "name" }, h("span", { class: "mono" }, r.logicalName), h("span", { class: "display" }, r.displayName)),
+      h("td", {}, r.connector ?? "—"),
+      h("td", {}, badge(r.connectionId ? "bound" : "unbound", r.connectionId ? "ok" : "bad"), " ", r.isManaged ? badge("managed", "neutral") : null),
+    );
+  });
+  const n = unused.filter((r) => cleanupSel.has(lcase(r.logicalName)) && !r.isManaged).length;
+  const actions = h("span", { style: "display:inline-flex; gap: var(--s-2); margin-left:auto" });
+  const all = h("button", { class: "btn btn-ghost btn-sm", type: "button" }, "Select all unmanaged");
+  all.addEventListener("click", () => {
+    for (const r of deletable) cleanupSel.add(lcase(r.logicalName));
+    renderTable();
+  });
+  const go = h("button", { class: "btn btn-primary btn-sm", type: "button", id: "btn-cleanup-preview", style: "flex:none" }, `Preview delete (${n})…`);
+  go.toggleAttribute("disabled", !n);
+  go.addEventListener("click", () => void previewCleanup(col));
+  actions.append(all, go);
+  const table = h(
+    "table",
+    {},
+    h("thead", {}, h("tr", {}, h("th", {}, "Delete"), h("th", {}, "Connection reference"), h("th", {}, "Connector"), h("th", {}, "State"))),
+    h("tbody", {}, ...rows),
+  );
+  return card(`Unused connection references · ${unused.length}`, table, actions);
+}
+
+const cleanupSummary = (n: number): string => `${n} unused reference${n === 1 ? "" : "s"} to delete`;
+
+async function previewCleanup(col: ColumnData): Promise<void> {
+  const flows = consFlows();
+  const api = dataverse();
+  if (!flows || !api) return;
+  const names = col.connRefs.filter((r) => cleanupSel.has(lcase(r.logicalName))).map((r) => r.logicalName);
+  if (!names.length) return;
+  const plan = planCleanup(col.meta, col.connRefs, flows, names);
+  setStatus("Checking dependencies…");
+  await markDependents(api, plan);
+  setStatus(null);
+  await runMergePlan(col, plan, `${cleanupSummary(plan.deletes.filter((d) => d.action === "delete").length)} in ${col.meta.name}. A backup is saved first; Restore from backup recreates them.`);
+  cleanupSel.clear();
+}
+
+/** Solution of the fit check: the solution filter, when it is set and the view works on the primary. */
+function fitSolution(col: ColumnData): SolutionInfo | null {
+  if (!selectedSolution || !scope || col.meta.target !== "primary") return null;
+  return solutions.find((x) => x.id === selectedSolution) ?? null;
+}
+
+function loadFit(col: ColumnData, sol: SolutionInfo): void {
+  const api = dataverse();
+  if (!api || fitLoading) return;
+  fitLoading = (async () => {
+    try {
+      const flowIds = await fetchSolutionFlowIds(api, "primary", sol.id);
+      fitCache = { solutionId: sol.id, url: col.meta.url, flowIds };
+    } catch (e) {
+      fitCache = null;
+      await notify("Solution check failed", (e as Error).message, "warning");
+    }
+  })().finally(() => {
+    fitLoading = null;
+    renderTable();
+  });
+}
+
+function fitCard(col: ColumnData, flows: FlowRecord[]): HTMLElement | null {
+  const sol = fitSolution(col);
+  if (!sol) return null;
+  if (!fitCache || fitCache.solutionId !== sol.id || fitCache.url !== col.meta.url) {
+    loadFit(col, sol);
+    return card(`Solution check · ${sol.friendlyName}`, h("p", { class: "caption" }, "Reading the solution's cloud flows…"));
+  }
+  const issues = solutionFit(flows, fitCache.flowIds, col.connRefs, scope!);
+  const title = `Solution check · ${sol.friendlyName}`;
+  if (!issues.length)
+    return card(title, h("p", { class: "caption" }, `All connection references used by the solution's ${fitCache.flowIds.size} cloud flow${fitCache.flowIds.size === 1 ? "" : "s"} are in the solution.`));
+  const addable = issues.filter((i) => i.ref).map((i) => i.ref!);
+  const table = h(
+    "table",
+    {},
+    h("thead", {}, h("tr", {}, h("th", {}, "Connection reference"), h("th", {}, "Used by (in solution)"), h("th", {}, "Note"))),
+    h(
+      "tbody",
+      {},
+      ...issues.map((i) =>
+        h(
+          "tr",
+          { class: i.ref ? "merge" : undefined },
+          h("td", { class: "mono" }, i.logicalName),
+          h("td", {}, i.flows.join(", ")),
+          h("td", { class: "caption" }, i.ref ? "not in the solution: an export would miss it" : h("span", {}, badge("missing", "bad"), " does not exist in this environment: the flow is broken")),
+        ),
+      ),
+    ),
+  );
+  let extra: HTMLElement | undefined;
+  if (sol.isManaged) extra = h("span", { class: "caption" }, "managed solution: fix it in the source environment");
+  else if (addable.length) {
+    extra = h("button", { class: "btn btn-primary btn-sm", type: "button", id: "btn-fit-add", style: "flex:none" }, `Add ${addable.length} to solution…`);
+    extra.addEventListener("click", () => void addToSolution(col, sol, addable));
+  }
+  return card(title, table, extra);
+}
+
+async function addToSolution(col: ColumnData, sol: SolutionInfo, refs: ConnRefRecord[]): Promise<void> {
+  const api = dataverse();
+  if (!api) return;
+  const body = h(
+    "div",
+    {},
+    h("p", { class: "caption" }, `AddSolutionComponent into ${sol.friendlyName} (${sol.uniqueName}), without required components:`),
+    h("ul", {}, ...refs.map((r) => h("li", { class: "mono" }, r.logicalName))),
+  );
+  const ok = await showDialog({ title: "Add to solution", target: targetChip(col.meta), body, okLabel: `Add ${refs.length}` });
+  if (!ok) return;
+  setStatus("Adding to solution…");
+  let res: DeleteResult[];
+  try {
+    res = await addRefsToSolution(api, col.meta, stampOf(col.meta), sol.uniqueName, refs, currentConnection);
+  } catch (e) {
+    setStatus(null);
+    await notify("Add to solution failed", (e as Error).message, "error");
+    return;
+  }
+  setStatus(null);
+  await showMergeResults("Added to solution", col.meta, [], { label: "Connection reference", rows: res });
+  fitCache = null;
+  await refresh();
 }
 
 function flowPlanTable(items: PlannedFlow[]): HTMLElement {
@@ -486,22 +645,27 @@ async function previewMerge(): Promise<void> {
   const specs = mergeSpecs(col.connRefs);
   if (!specs.length) return;
   const plan: MergePlan = planMerge(col.meta, col.connRefs, flows, specs, { deleteSources: $<HTMLInputElement>("#merge-delete").checked, collapseKeys: $<HTMLInputElement>("#merge-collapse").checked });
+  const summary = `${specs.map((s) => `${s.sources.join(", ")} → ${s.target}`).join(" · ")}. ${plan.flows.filter((f) => f.action === "update").length} flows to update in ${col.meta.name}; ${plan.deletes.filter((d) => d.action === "delete").length} references to delete. A backup of every touched flow is saved first.`;
+  await runMergePlan(col, plan, summary);
+  mergeSel.clear();
+}
+
+/** Preview → backup → apply → results for a merge or cleanup plan. */
+async function runMergePlan(col: ColumnData, plan: MergePlan, summary: string): Promise<void> {
+  const api = dataverse();
+  if (!api) return;
   const updates = plan.flows.filter((f) => f.action === "update");
   const dels = plan.deletes.filter((d) => d.action === "delete");
   const isProd = /prod/i.test(col.meta.environment);
   const body = h(
     "div",
     {},
-    h(
-      "p",
-      { class: "caption" },
-      `${specs.map((s) => `${s.sources.join(", ")} → ${s.target}`).join(" · ")}. ${updates.length} flow${updates.length === 1 ? "" : "s"} to update in ${col.meta.name}; ${dels.length} reference${dels.length === 1 ? "" : "s"} to delete. A backup of every touched flow is saved first.`,
-    ),
+    h("p", { class: "caption" }, summary),
     isProd ? h("div", { class: "warnings" }, "Target is a Production environment.") : null,
     ...plan.errors.map((e) => h("div", { class: "warnings" }, badge("blocked", "bad"), " ", e)),
     ...plan.warnings.map((w) => h("div", { class: "warnings" }, badge("caution", "warn"), " ", w)),
     updates.some((u) => u.wasOn) ? h("p", { class: "caption" }, "Flows that are on are turned off, updated and turned back on. Turning on re-validates the connection; a flow that fails is reported and left off.") : null,
-    plan.flows.length ? flowPlanTable(plan.flows) : h("p", { class: "caption" }, "No cloud flow uses the selected references."),
+    plan.flows.length ? flowPlanTable(plan.flows) : plan.specs.length ? h("p", { class: "caption" }, "No cloud flow uses the selected references.") : null,
     plan.deletes.length
       ? h(
           "table",
@@ -512,7 +676,7 @@ async function previewMerge(): Promise<void> {
       : null,
   );
   const n = updates.length + dels.length;
-  const ok = await showDialog({ title: "Preview merge", target: targetChip(col.meta), body, okLabel: !plan.errors.length && n ? `Save backup & apply` : "", danger: isProd || dels.length > 0 });
+  const ok = await showDialog({ title: plan.specs.length ? "Preview merge" : "Preview delete", target: targetChip(col.meta), body, okLabel: !plan.errors.length && n ? `Save backup & apply` : "", danger: isProd || dels.length > 0 });
   if (!ok || plan.errors.length || !n) return;
   const cur = await currentConnection(col.meta.target!).catch(() => null);
   if (!sameConnection(plan.stamp, cur)) {
@@ -527,8 +691,7 @@ async function previewMerge(): Promise<void> {
   }
   const res = await applyMerge(plan, { api, currentConnection, onStep: (m) => setStatus(m || null) });
   setStatus(null);
-  await showMergeResults("Merge applied", col.meta, res.flows, { label: "Deleted reference", rows: res.deletes });
-  mergeSel.clear();
+  await showMergeResults(plan.specs.length ? "Merge applied" : "Cleanup applied", col.meta, res.flows, { label: "Deleted reference", rows: res.deletes });
   flowCache = null;
   await refresh();
 }
@@ -671,7 +834,13 @@ async function loadSnapshot(): Promise<void> {
   const f = await openText({ title: "Open matrix snapshot", extensions: ["json"] });
   if (!f) return;
   try {
-    snaps.push(parseSnapshot(f.text, f.name));
+    let parsed: unknown = null;
+    try {
+      parsed = JSON.parse(f.text);
+    } catch {
+      /* parseSnapshot reports it */
+    }
+    snaps.push(isDeploymentSettings(parsed) ? parseDeploymentSettings(f.text, f.name) : parseSnapshot(f.text, f.name));
     rebuild();
   } catch (e) {
     await notify("Snapshot rejected", `${f.name}: ${(e as Error).message}`, "error");

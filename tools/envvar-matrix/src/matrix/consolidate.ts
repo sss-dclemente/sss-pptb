@@ -419,7 +419,7 @@ export interface ApplyDeps {
 }
 
 /** Dependents that block deleting a component (RetrieveDependenciesForDelete). */
-async function dependentsForDelete(api: DataverseLike, target: Target, id: string, type: number): Promise<number> {
+export async function dependentsForDelete(api: DataverseLike, target: Target, id: string, type: number): Promise<number> {
   const r = (await api.queryData(`RetrieveDependenciesForDelete(ObjectId=${id},ComponentType=${type})`, target)) as unknown as Row;
   const v = (r.EntityCollection as Row | undefined)?.Entities ?? r.value ?? (r as Row).Entities;
   return Array.isArray(v) ? v.length : 0;
@@ -476,7 +476,7 @@ export async function applyMerge(plan: MergePlan, deps: ApplyDeps): Promise<{ fl
         if (crType != null) {
           const n = await dependentsForDelete(api, t, d.connRefId, crType);
           if (n) {
-            skip(`${n} other component${n === 1 ? "" : "s"} depend on it (canvas app, other flow layer…)`);
+            skip(`${n} other component${n === 1 ? " depends" : "s depend"} on it (canvas app, other flow layer…)`);
             continue;
           }
         }
@@ -511,7 +511,7 @@ export interface MergeBackup {
 }
 
 export function buildMergeBackup(plan: MergePlan, refs: ConnRefRecord[]): MergeBackup {
-  const names = new Set(plan.specs.flatMap((s) => [s.target, ...s.sources]).map(lc));
+  const names = new Set([...plan.specs.flatMap((s) => [s.target, ...s.sources]), ...plan.deletes.map((d) => d.logicalName)].map(lc));
   return {
     kind: MERGE_BACKUP_KIND,
     version: 1,
@@ -621,4 +621,118 @@ export async function applyRestore(plan: RestorePlan, deps: ApplyDeps & { api: C
   }
   deps.onStep?.("");
   return { created, flows };
+}
+
+// ---------- unused cleanup ----------
+
+/** Connection references no cloud flow uses. Other dependents (canvas apps) are checked separately. */
+export function unusedConnRefs(refs: ConnRefRecord[], usage: Map<string, FlowRecord[]>): ConnRefRecord[] {
+  return refs.filter((r) => !usage.get(lc(r.logicalName))?.length).sort((a, b) => a.logicalName.localeCompare(b.logicalName));
+}
+
+/** Delete-only plan: runs through applyMerge / buildMergeBackup like a merge with no flow changes. */
+export function planCleanup(target: ColumnMeta, refs: ConnRefRecord[], flows: FlowRecord[], names: string[]): MergePlan {
+  const byName = new Map(refs.map((r) => [lc(r.logicalName), r]));
+  const usage = usageByConnRef(flows);
+  const errors: string[] = [];
+  const deletes: PlannedDelete[] = [];
+  for (const n of names) {
+    const r = byName.get(lc(n));
+    if (!r) errors.push(`${n} does not exist in ${target.name}`);
+    else if (r.isManaged) deletes.push({ connRefId: r.id, logicalName: r.logicalName, action: "keep", reason: "managed: remove it by updating or uninstalling its solution" });
+    else if (usage.get(lc(n))?.length) deletes.push({ connRefId: r.id, logicalName: r.logicalName, action: "keep", reason: `used by ${usage.get(lc(n))!.map((f) => f.name).join(", ")}` });
+    else deletes.push({ connRefId: r.id, logicalName: r.logicalName, action: "delete", reason: "not used by any cloud flow (re-checked before delete)" });
+  }
+  return { target, stamp: stampOf(target), specs: [], flows: [], deletes, warnings: [], errors };
+}
+
+/** Preview-time dependency check: planned deletes with dependents become "keep". Best effort: a failed check leaves the row for the apply-time check. */
+export async function markDependents(api: DataverseLike, plan: MergePlan): Promise<void> {
+  const t = plan.target.target;
+  if (!t) return;
+  const type = await connRefComponentType(api, t, plan.target.url);
+  if (type == null) return;
+  for (const d of plan.deletes) {
+    if (d.action !== "delete") continue;
+    try {
+      const n = await dependentsForDelete(api, t, d.connRefId, type);
+      if (n) Object.assign(d, { action: "keep", reason: `${n} other component${n === 1 ? " depends" : "s depend"} on it (canvas app, other flow layer…)` });
+    } catch {
+      /* re-checked at apply */
+    }
+  }
+}
+
+// ---------- solution fit ----------
+
+/** Cloud flow component type (workflow). */
+export const WORKFLOW_COMPONENT = 29;
+
+export async function fetchSolutionFlowIds(api: DataverseLike, target: Target, solutionId: string): Promise<Set<string>> {
+  const rows = await queryAll(api, `solutioncomponents?$select=objectid&$filter=_solutionid_value eq ${solutionId} and componenttype eq ${WORKFLOW_COMPONENT}`, target);
+  return new Set(rows.map((r) => lc(String(r.objectid))));
+}
+
+export interface FitIssue {
+  logicalName: string;
+  /** null: the flow names a reference that does not exist in the environment */
+  ref: ConnRefRecord | null;
+  flows: string[];
+}
+
+/** References used by the solution's flows that are not in the solution (`scope`: lowercase names in the solution). */
+export function solutionFit(flows: FlowRecord[], flowIds: Set<string>, refs: ConnRefRecord[], scope: Set<string>): FitIssue[] {
+  const byName = new Map(refs.map((r) => [lc(r.logicalName), r]));
+  const out = new Map<string, FitIssue>();
+  for (const f of flows) {
+    if (!flowIds.has(lc(f.id))) continue;
+    for (const r of f.refs) {
+      const n = lc(r.logicalName);
+      if (scope.has(n)) continue;
+      const issue = out.get(n) ?? { logicalName: byName.get(n)?.logicalName ?? r.logicalName, ref: byName.get(n) ?? null, flows: [] };
+      if (!issue.flows.includes(f.name)) issue.flows.push(f.name);
+      out.set(n, issue);
+    }
+  }
+  return [...out.values()].sort((a, b) => a.logicalName.localeCompare(b.logicalName));
+}
+
+export interface ExecLike {
+  execute: (req: DataverseAPI.ExecuteRequest, target?: Target) => Promise<Record<string, unknown>>;
+}
+
+/** AddSolutionComponent for each reference (no required components, no subcomponents). */
+export async function addRefsToSolution(
+  api: DataverseLike & ExecLike,
+  target: ColumnMeta,
+  stamp: ConnectionStamp,
+  solutionUniqueName: string,
+  refs: ConnRefRecord[],
+  currentConnection: (t: Target) => Promise<ConnectionStamp | null>,
+): Promise<DeleteResult[]> {
+  const t = target.target;
+  if (!t) throw new Error("target column is not a live connection");
+  const type = await connRefComponentType(api, t, target.url);
+  if (type == null) throw new Error("could not read the connection reference component type (EntityDefinitions)");
+  const out: DeleteResult[] = [];
+  for (const r of refs) {
+    if (!sameConnection(stamp, await currentConnection(t).catch(() => null))) {
+      out.push({ logicalName: r.logicalName, ok: false, error: "connection changed; not written" });
+      continue;
+    }
+    try {
+      await api.execute(
+        {
+          operationName: "AddSolutionComponent",
+          operationType: "action",
+          parameters: { ComponentId: r.id, ComponentType: type, SolutionUniqueName: solutionUniqueName, AddRequiredComponents: false, DoNotIncludeSubcomponents: false },
+        },
+        t,
+      );
+      out.push({ logicalName: r.logicalName, ok: true });
+    } catch (e) {
+      out.push({ logicalName: r.logicalName, ok: false, error: errMsg(e) });
+    }
+  }
+  return out;
 }
