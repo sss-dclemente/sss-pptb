@@ -58,6 +58,28 @@ const MOCK = `
       readText: async () => window.__mock.nextOpen,
     },
   };
+  const ppc = (name, connector, displayName, status, account) => ({ name, id: connector ? '/providers/Microsoft.PowerApps/apis/' + connector + '/connections/' + name : undefined, type: 'Microsoft.PowerApps/apis/connections', properties: { displayName, accountName: account, statuses: status ? [{ status }] : undefined } });
+  window.__mock.pp = {
+    fail: null,
+    gets: [],
+    pages: [
+      [ppc('conn-o-1', 'shared_office365', 'Office A', 'Connected', 'a@contoso.com'), ppc('conn-o-2', 'shared_office365', 'Office B', 'Error', 'b@contoso.com')],
+      [ppc('conn-sql-1', 'shared_sql', 'SQL prod', 'Connected'), ppc('weird', null, 'No connector')],
+    ],
+  };
+  window.powerplatformAPI = {
+    Connectivity: {
+      Get: async (path, target = 'primary') => {
+        const m = window.__mock.pp;
+        m.gets.push({ path, target });
+        if (m.fail) throw new Error('Power Platform request failed: ' + m.fail);
+        const page = /skiptoken=1/.test(path) ? 1 : 0;
+        const out = { value: m.pages[page] };
+        if (page === 0) out.nextLink = 'https://api.powerplatform.com/connectivity/environments/env-guid-1/connections?api-version=2024-10-01&skiptoken=1';
+        return out;
+      },
+    },
+  };
   window.dataverseAPI = {
     queryData: async (q) => {
       await new Promise((r) => setTimeout(r, 10));
@@ -82,6 +104,7 @@ const MOCK = `
     getSolutions: async () => ({ value: env.sols }),
     execute: async (req) => {
       window.__mock.writes.push({ op: 'execute', req });
+      if (req.operationName === 'RetrieveCurrentOrganization') return { Detail: { EnvironmentId: 'env-guid-1' } };
       if (req.operationName !== 'AddSolutionComponent') throw new Error('unexpected execute ' + req.operationName);
       const sol = env.sols.find((x) => x.uniquename === req.parameters.SolutionUniqueName);
       env.comps.push({ solutionid: sol.solutionid, objectid: req.parameters.ComponentId, componenttype: req.parameters.ComponentType });
@@ -327,5 +350,65 @@ await page.waitForSelector("dialog[open]");
 }
 await page.click("#dlg-cancel");
 assert((await page.evaluate(() => window.__mock.writes.length)) === 0, "nothing written from another org");
+
+// ---- pick connections through the Power Platform API ----
+await page.click('#columns .colchip button[aria-label^="Remove"]');
+await page.waitForFunction(() => document.querySelectorAll("#columns .colchip").length === 1);
+await page.evaluate(() => { window.__mock.writes = []; });
+if (!(await page.isHidden("#bulkbar"))) await page.click("#btn-clear-sel");
+await page.check('input[aria-label="Select sss_o365_c"]');
+await page.check('input[aria-label="Select sss_sql"]');
+assert(await page.isVisible("#btn-pick"), "Pick connections button on connection references tab");
+await page.selectOption("#copy-to", "primary");
+await page.click("#btn-pick");
+await page.waitForFunction(() => document.querySelector("#dlg-title").textContent === "Pick connections" && document.querySelector("dialog").open, null, { timeout: 10000 });
+{
+  const gets = await page.evaluate(() => window.__mock.pp.gets.map((g) => g.path));
+  assert(gets[0] === "environments/env-guid-1/connections?api-version=2024-10-01" && gets[1].includes("skiptoken=1"), "connections listed with env id from RetrieveCurrentOrganization, next link followed: " + gets.join(" | "));
+  const body = await page.textContent("#dlg-body");
+  assert(body.includes("4 connections") && body.includes("1 connection has no readable connector"), "picker: count and unknown-connector note");
+  const o365 = await page.$$eval('select[aria-label="Connection for sss_o365_c"] option', (os) => os.map((o) => o.value));
+  const sql = await page.$$eval('select[aria-label="Connection for sss_sql"] option', (os) => os.map((o) => o.value));
+  assert(o365.join() === ",conn-o-1,conn-o-2" && sql.join() === ",conn-sql-1", "picker: only same-connector connections offered");
+  const cur = await page.$eval('select[aria-label="Connection for sss_sql"]', (s) => [...s.options].map((o) => o.textContent).join("|"));
+  assert(cur.includes("SQL prod") && cur.includes("Connected"), "picker: label with display name and status");
+}
+await page.selectOption('select[aria-label="Connection for sss_o365_c"]', "conn-o-2");
+await page.selectOption('select[aria-label="Connection for sss_sql"]', "conn-sql-1");
+await page.click("#dlg-ok");
+await page.waitForFunction(() => document.querySelector("#dlg-title").textContent === "Preview bind" && document.querySelector("dialog").open, null, { timeout: 10000 });
+{
+  const pv = await page.textContent("#dlg-body");
+  assert(pv.includes("2 bindings from Picked connections") && pv.includes("picked from the Power Platform API"), "picker → bind preview");
+  assert(pv.includes("reports an error status"), "picker: error-status connection cautioned");
+}
+await page.screenshot({ path: resolve(TOOL, "scripts/.e2e-out/13-picker-preview.png") });
+await page.click("#dlg-ok");
+await page.waitForFunction(() => document.querySelector("#dlg-title").textContent === "Results" && document.querySelector("dialog").open, null, { timeout: 10000 });
+{
+  const cr = (await page.evaluate(() => window.__mock.writes)).filter((x) => x.entity === "connectionreference").map((x) => x.id + "=" + x.rec.connectionid).sort();
+  assert(cr.join() === "new-sss_o365_c=conn-o-2,r5=conn-sql-1", "picker: picked connection ids written (" + cr.join() + ")");
+}
+await page.click("#dlg-cancel");
+
+// API refuses: readable reason + fallback hint, nothing written
+await page.evaluate(() => { window.__mock.pp.fail = "HTTP 403: Forbidden"; window.__mock.writes = []; });
+await page.waitForFunction(() => !document.querySelector("#bulkbar").hidden, null, { timeout: 10000 }).catch(() => {});
+if (await page.isHidden("#bulkbar")) await page.check('input[aria-label="Select sss_o365_c"]');
+await page.click("#btn-pick");
+await page.waitForFunction(() => document.querySelector("#dlg-title").textContent === "Connections unavailable" && document.querySelector("dialog").open, null, { timeout: 10000 });
+{
+  const b = await page.textContent("#dlg-body");
+  assert(b.includes("403") && b.includes("Connectivity.Connections.Read") && b.includes("deploymentSettings.json"), "picker 403: reason, permission and fallback shown");
+}
+await page.click("#dlg-cancel");
+
+// older ToolBox without the API
+await page.evaluate(() => { delete window.powerplatformAPI; });
+await page.click("#btn-pick");
+await page.waitForFunction(() => document.querySelector("#dlg-title").textContent === "Connections unavailable" && document.querySelector("dialog").open, null, { timeout: 10000 });
+assert((await page.textContent("#dlg-body")).includes("does not expose the Power Platform API"), "picker: missing API explained");
+await page.click("#dlg-cancel");
+assert((await page.evaluate(() => window.__mock.writes.filter((w) => w.op !== "execute").length)) === 0, "picker failures write nothing");
 
 await finish();

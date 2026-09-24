@@ -1,5 +1,7 @@
 # Spike — Power Platform API for connection binding
 
+> **Status (2026-09-24):** built as an experimental feature in envvar-matrix 1.3.0 (`src/matrix/ppconnections.ts`, **Pick connections…**) on the assumptions below, **before** the §6 probe ran. The parser reads the connector from `id` or several `properties` fields, and the account and status from several candidates. Run the probe and adjust `normalizeConnection` if the real shape differs.
+
 Question: can the EnvVar & ConnRef Matrix list the connections in an environment, so a user can bind connection references by picking a connection instead of loading a deploymentSettings.json file?
 
 Answer: **yes, conditionally**. ToolBox (≥ 1.2.6) exposes `window.powerplatformAPI`, and Microsoft documents a list-connections endpoint. It only works for connections the user has set up for the Power Platform API, which needs their own Entra app registration. Build it as an optional path; keep the settings file as the default.
