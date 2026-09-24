@@ -436,7 +436,12 @@ function flowPlanTable(items: PlannedFlow[]): HTMLElement {
           h("td", {}, i.name, i.isManaged ? h("span", {}, " ", badge("managed", "neutral")) : null),
           h("td", {}, badge(i.wasOn ? "on" : "off", i.wasOn ? "ok" : "neutral")),
           h("td", {}, badge(i.action, i.action === "update" ? "warn" : "neutral")),
-          h("td", { class: "changes" }, ...i.changes.map((c) => h("div", {}, `${c.key}: ${c.from} → ${c.to}`))),
+          h(
+            "td",
+            { class: "changes" },
+            ...i.changes.map((c) => h("div", {}, `${c.key}: ${c.from} → ${c.to}`)),
+            ...(i.collapsed ?? []).map((c) => h("div", {}, `key ${c.drop} → ${c.into} (${c.uses} use${c.uses === 1 ? "" : "s"})`)),
+          ),
           h("td", { class: "caption" }, i.reason, i.warning ? h("div", {}, badge("caution", "warn"), " ", i.warning) : null),
         ),
       ),
@@ -480,7 +485,7 @@ async function previewMerge(): Promise<void> {
   if (!col || !flows || !api) return;
   const specs = mergeSpecs(col.connRefs);
   if (!specs.length) return;
-  const plan: MergePlan = planMerge(col.meta, col.connRefs, flows, specs, { deleteSources: $<HTMLInputElement>("#merge-delete").checked });
+  const plan: MergePlan = planMerge(col.meta, col.connRefs, flows, specs, { deleteSources: $<HTMLInputElement>("#merge-delete").checked, collapseKeys: $<HTMLInputElement>("#merge-collapse").checked });
   const updates = plan.flows.filter((f) => f.action === "update");
   const dels = plan.deletes.filter((d) => d.action === "delete");
   const isProd = /prod/i.test(col.meta.environment);

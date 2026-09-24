@@ -148,6 +148,7 @@ export interface PlannedFlow {
   wasOn: boolean;
   isManaged: boolean;
   changes: FlowChange[];
+  collapsed?: KeyCollapse[];
   oldClientdata: string;
   newClientdata: string | null;
   warning?: string;
@@ -174,9 +175,64 @@ export interface MergePlan {
   errors: string[];
 }
 
-/** Rewrite clientdata: every reference key whose logical name is in `rename` gets the new name. */
-export function rewriteClientdata(clientdata: string, rename: Map<string, string>): { json: string; changes: FlowChange[] } {
-  const o = JSON.parse(clientdata) as { properties?: { connectionReferences?: Record<string, Row> } };
+/** Key `drop` of connectionReferences folded into key `into`; `uses` = references rewritten in the definition. */
+export interface KeyCollapse {
+  drop: string;
+  into: string;
+  uses: number;
+}
+
+const esc = (v: string): string => v.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/**
+ * Point every use of connection key `from` in a flow definition at `to`: `host.connectionName` values and
+ * `$connections['from']` expressions. Returns the rewritten definition and the number of uses changed.
+ */
+export function renameConnectionKey(definition: unknown, from: string, to: string): { definition: unknown; uses: number } {
+  let uses = 0;
+  // parameters('$connections')['key'] and ['$connections']['key']
+  const expr = new RegExp(`(\\$connections'\\s*[)\\]]\\s*\\[\\s*')${esc(from)}('\\s*\\])`, "g");
+  const walk = (v: unknown, parentKey: string | null): unknown => {
+    if (typeof v === "string") {
+      if (parentKey === "connectionName" && v === from) {
+        uses++;
+        return to;
+      }
+      let n = 0;
+      const out = v.replace(expr, (_m, a: string, b: string) => {
+        n++;
+        return `${a}${to}${b}`;
+      });
+      uses += n;
+      return out;
+    }
+    if (Array.isArray(v)) return v.map((x) => walk(x, null));
+    if (v && typeof v === "object") return Object.fromEntries(Object.entries(v as Row).map(([k, x]) => [k, walk(x, k)]));
+    return v;
+  };
+  return { definition: walk(definition, null), uses };
+}
+
+/** True when `key` still appears in the definition as a string value or a quoted index (a use renameConnectionKey did not cover). */
+function keyStillUsed(definition: unknown, key: string): boolean {
+  const text = JSON.stringify(definition ?? null);
+  return text.includes(JSON.stringify(key)) || text.includes(`'${key}'`);
+}
+
+const sameJson = (a: unknown, b: unknown): boolean => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+
+/**
+ * Rewrite clientdata: every reference key whose logical name is in `rename` gets the new name. With `collapse`, keys
+ * that then point to the same reference (same api, runtimeSource and impersonation) fold into one: the kept key is the
+ * one not renamed (else the one equal to the api name, else the first), the definition is repointed, and a key is only
+ * dropped when no use of it is left in the definition.
+ */
+export function rewriteClientdata(
+  clientdata: string,
+  rename: Map<string, string>,
+  collapse = false,
+): { json: string; changes: FlowChange[]; collapsed: KeyCollapse[]; kept: string[] } {
+  const o = JSON.parse(clientdata) as { properties?: { connectionReferences?: Record<string, Row>; definition?: unknown } };
   const map = o?.properties?.connectionReferences ?? {};
   const changes: FlowChange[] = [];
   for (const [key, v] of Object.entries(map)) {
@@ -188,11 +244,49 @@ export function rewriteClientdata(clientdata: string, rename: Map<string, string
     conn!.connectionReferenceLogicalName = to;
     changes.push({ key, from: name, to });
   }
-  return { json: changes.length ? JSON.stringify(o) : clientdata, changes };
+  const collapsed: KeyCollapse[] = [];
+  /** duplicate keys left in place, with the reason */
+  const kept: string[] = [];
+  if (collapse && o.properties) {
+    const renamed = new Set(changes.map((c) => c.key));
+    const groups = new Map<string, string[]>();
+    for (const [key, v] of Object.entries(map)) {
+      const name = (v?.connection as Row | undefined)?.connectionReferenceLogicalName;
+      if (typeof name !== "string") continue;
+      const g = `${lc(name)}|${lc(String((v?.api as Row | undefined)?.name ?? ""))}`;
+      const list = groups.get(g);
+      if (list) list.push(key);
+      else groups.set(g, [key]);
+    }
+    for (const keys of groups.values()) {
+      if (keys.length < 2 || !keys.some((k) => renamed.has(k))) continue;
+      const api = String((map[keys[0]]?.api as Row | undefined)?.name ?? "");
+      const into = keys.find((k) => !renamed.has(k)) ?? keys.find((k) => k === api) ?? keys[0];
+      for (const drop of keys) {
+        if (drop === into) continue;
+        const a = map[into], b = map[drop];
+        if (!sameJson(a.runtimeSource, b.runtimeSource) || !sameJson(a.impersonation, b.impersonation)) {
+          kept.push(`${drop}: runtimeSource / impersonation differs from ${into}`);
+          continue;
+        }
+        const r = renameConnectionKey(o.properties.definition, drop, into);
+        if (keyStillUsed(r.definition, drop)) {
+          kept.push(`${drop}: used in a form this tool does not rewrite`);
+          continue;
+        }
+        o.properties.definition = r.definition;
+        delete map[drop];
+        collapsed.push({ drop, into, uses: r.uses });
+      }
+    }
+  }
+  return { json: changes.length ? JSON.stringify(o) : clientdata, changes, collapsed, kept };
 }
 
 export interface PlanOptions {
   deleteSources: boolean;
+  /** fold keys that end up on the same reference into one */
+  collapseKeys?: boolean;
 }
 
 export function planMerge(target: ColumnMeta, refs: ConnRefRecord[], flows: FlowRecord[], specs: MergeSpec[], opts: PlanOptions): MergePlan {
@@ -232,15 +326,17 @@ export function planMerge(target: ColumnMeta, refs: ConnRefRecord[], flows: Flow
       planned.push({ ...base, action: "skip", reason: f.parseError, changes: [], newClientdata: null });
       continue;
     }
-    const { json, changes } = rewriteClientdata(f.clientdata, rename);
+    const { json, changes, collapsed, kept } = rewriteClientdata(f.clientdata, rename, !!opts.collapseKeys);
     const cautions: string[] = [];
+    if (kept.length) cautions.push(`duplicate key kept: ${kept.join("; ")}`);
     if (f.isManaged) cautions.push("managed flow: the update adds an unmanaged layer on top");
     if (f.statecode === 2) cautions.push("flow is suspended; it is updated and left as it is");
     planned.push({
       ...base,
       action: "update",
-      reason: `${changes.length} reference${changes.length === 1 ? "" : "s"} rewritten${f.statecode === 1 ? "; turned off, updated, turned back on" : ""}`,
+      reason: `${changes.length} reference${changes.length === 1 ? "" : "s"} rewritten${collapsed.length ? `, ${collapsed.length} duplicate key${collapsed.length === 1 ? "" : "s"} collapsed` : ""}${f.statecode === 1 ? "; turned off, updated, turned back on" : ""}`,
       changes,
+      collapsed,
       newClientdata: json,
       warning: cautions.length ? cautions.join("; ") : undefined,
     });

@@ -11,7 +11,14 @@ const MOCK = `
 (() => {
   const cr = (id, name, connector, connectionid, ismanaged = false) => ({ connectionreferenceid: id, connectionreferencelogicalname: name, connectionreferencedisplayname: name.toUpperCase(), connectorid: '/providers/Microsoft.PowerApps/apis/' + connector, connectionid, ismanaged });
   const cd = (refs) => JSON.stringify({ properties: { connectionReferences: Object.fromEntries(refs.map(([k, n, api]) => [k, { runtimeSource: 'embedded', connection: { connectionReferenceLogicalName: n }, api: { name: api } }])), definition: { actions: {} } }, schemaVersion: '1.0.0.0' });
-  const wf = (id, name, statecode, refs, ismanaged = false) => ({ workflowid: id, name, statecode, statuscode: statecode === 1 ? 2 : 1, ismanaged, clientdata: cd(refs) });
+  const wf = (id, name, statecode, refs, ismanaged = false, definition) => {
+    const o = JSON.parse(cd(refs));
+    if (definition) o.properties.definition = definition;
+    return { workflowid: id, name, statecode, statuscode: statecode === 1 ? 2 : 1, ismanaged, clientdata: JSON.stringify(o) };
+  };
+  const act = (key) => ({ type: 'OpenApiConnection', inputs: { host: { apiId: '/providers/Microsoft.PowerApps/apis/shared_office365', connectionName: key, operationId: 'SendEmailV2' } } });
+  const f3def = { actions: { Send_1: act('shared_office365'), Send_2: act('shared_office365_1'), Compose: { type: 'Compose', inputs: "@parameters('$connections')['shared_office365_1']['connectionId']" }, Compose2: { type: 'Compose', inputs: "@{body('x')['$connections']['shared_office365_1']}" } } };
+  const f7def = { actions: { Send_1: act('shared_office365'), Send_2: act('shared_office365_1'), Weird: { type: 'Compose', inputs: { key: 'shared_office365_1' } } } };
   const env = {
     conn: { id: 'c1', name: 'SSS Dev', url: 'https://sss-dev.crm4.dynamics.com', environment: 'Dev', environmentColor: '#0f766e' },
     crs: [
@@ -26,7 +33,8 @@ const MOCK = `
     flows: [
       wf('f1', 'Flow One', 1, [['shared_office365', 'sss_o365_a', 'shared_office365'], ['shared_sql', 'sss_sql', 'shared_sql']]),
       wf('f2', 'Flow Two', 1, [['shared_office365', 'sss_o365_b', 'shared_office365']]),
-      wf('f3', 'Flow Three', 0, [['shared_office365', 'sss_o365_a', 'shared_office365'], ['shared_office365_1', 'sss_o365_c', 'shared_office365']]),
+      wf('f3', 'Flow Three', 0, [['shared_office365', 'sss_o365_a', 'shared_office365'], ['shared_office365_1', 'sss_o365_c', 'shared_office365']], false, f3def),
+      wf('f7', 'Flow Odd Key', 0, [['shared_office365', 'sss_o365_a', 'shared_office365'], ['shared_office365_1', 'sss_o365_b', 'shared_office365']], false, f7def),
       wf('f4', 'Flow Managed', 1, [['shared_office365', 'sss_o365_m', 'shared_office365']], true),
       wf('f5', 'Flow DV', 1, [['shared_commondataserviceforapps', 'sss_dv_2', 'shared_commondataserviceforapps']]),
       { workflowid: 'f6', name: 'Flow Broken', statecode: 0, statuscode: 1, ismanaged: false, clientdata: '{not json' },
@@ -92,7 +100,7 @@ assert(await page.isVisible("#btn-consolidate"), "Consolidate button on connecti
 await page.click("#btn-consolidate");
 await page.waitForSelector(".cons-groups");
 const text = await page.textContent("#matrix-body");
-assert(text.includes("6 cloud flows scanned"), "flows scanned");
+assert(text.includes("7 cloud flows scanned"), "flows scanned");
 assert(text.includes("1 flow with unreadable clientdata"), "broken clientdata counted");
 const cards = await page.$$eval(".cons-groups .card", (els) => els.map((e) => e.querySelector("h3").textContent));
 assert(cards.length === 2 && cards.some((c) => c.startsWith("shared_office365 · 4")) && cards.some((c) => c.startsWith("shared_commondataserviceforapps · 2")), "groups per connector, sql singleton excluded: " + cards.join(" | "));
@@ -107,7 +115,9 @@ await page.screenshot({ path: resolve(TOOL, "scripts/.e2e-out/09-consolidate-gro
 await page.click("#btn-merge-preview");
 await page.waitForSelector("dialog[open]");
 const pv = await page.textContent("#dlg-body");
-assert(pv.includes("3 flows to update"), "preview: 3 flows to update (f1 already uses the kept reference)");
+assert(pv.includes("4 flows to update"), "preview: 4 flows to update (f1 already uses the kept reference)");
+assert(pv.includes("key shared_office365_1 → shared_office365 (3 uses)"), "duplicate key collapse shown with use count");
+assert(pv.includes("duplicate key kept: shared_office365_1: used in a form"), "collapse refused when an unrecognised use of the key remains");
 assert(pv.includes("shared_office365_1: sss_o365_c → sss_o365_a"), "per-key rewrite shown");
 assert(pv.includes("managed flow"), "managed flow caution");
 assert(pv.includes("managed: remove it"), "managed reference kept, not deleted");
@@ -118,7 +128,7 @@ await page.waitForFunction(() => document.querySelector("#dlg-title").textConten
 const saved = await page.evaluate(() => window.__mock.saved);
 assert(saved.length === 1 && saved[0].name.startsWith("connref-merge-backup-SSS_Dev"), "backup saved before apply");
 const backup = JSON.parse(saved[0].content);
-assert(backup.flows.map((f) => f.id).sort().join() === "f2,f3,f4" && backup.flows.every((f) => f.clientdata.includes("sss_o365")), "backup holds original clientdata of every touched flow");
+assert(backup.flows.map((f) => f.id).sort().join() === "f2,f3,f4,f7" && backup.flows.every((f) => f.clientdata.includes("sss_o365")), "backup holds original clientdata of every touched flow");
 const writes = await page.evaluate(() => window.__mock.writes);
 const f2 = writes.filter((w) => w.id === "f2").map((w) => Object.keys(w.rec).join(",") + (w.rec.statecode != null ? "=" + w.rec.statecode : ""));
 assert(f2.join(" ") === "statecode,statuscode=0 clientdata statecode,statuscode=1", "active flow: off → clientdata → on (" + f2.join(" ") + ")");
@@ -126,7 +136,12 @@ const f3 = writes.filter((w) => w.id === "f3");
 assert(f3.length === 1 && f3[0].rec.clientdata, "flow that is off: clientdata only");
 const env = await page.evaluate(() => window.__mock.env);
 const refsOf = (id) => Object.values(JSON.parse(env.flows.find((f) => f.workflowid === id).clientdata).properties.connectionReferences).map((v) => v.connection.connectionReferenceLogicalName);
-assert(refsOf("f2").join() === "sss_o365_a" && refsOf("f3").join() === "sss_o365_a,sss_o365_a" && refsOf("f4").join() === "sss_o365_a", "flows now point to the kept reference");
+assert(refsOf("f2").join() === "sss_o365_a" && refsOf("f3").join() === "sss_o365_a" && refsOf("f4").join() === "sss_o365_a", "flows now point to the kept reference");
+{
+  const d3 = JSON.stringify(JSON.parse(env.flows.find((f) => f.workflowid === "f3").clientdata).properties.definition);
+  assert(!d3.includes("shared_office365_1") && d3.includes("['$connections']['shared_office365']") && d3.includes("parameters('$connections')['shared_office365']"), "f3: duplicate key collapsed, definition repointed");
+  assert(refsOf("f7").join() === "sss_o365_a,sss_o365_a", "f7: unrecognised key use -> both keys kept, still rewritten");
+}
 assert(refsOf("f1").includes("sss_sql"), "other connector untouched");
 const dels = writes.filter((w) => w.op === "delete").map((w) => w.id).sort();
 assert(dels.join() === "r2,r3", "unmanaged sources deleted, managed kept (" + dels.join() + ")");
@@ -167,7 +182,7 @@ await page.waitForFunction(() => document.querySelector("#dlg-title").textConten
 {
   const e2 = await page.evaluate(() => window.__mock.env);
   const r = (id) => Object.values(JSON.parse(e2.flows.find((f) => f.workflowid === id).clientdata).properties.connectionReferences).map((v) => v.connection.connectionReferenceLogicalName);
-  assert(r("f2").join() === "sss_o365_b" && r("f3").join() === "sss_o365_a,sss_o365_c", "restore puts original references back");
+  assert(r("f2").join() === "sss_o365_b" && r("f3").join() === "sss_o365_a,sss_o365_c" && r("f7").join() === "sss_o365_a,sss_o365_b", "restore puts original references back (collapsed keys too)");
   assert(e2.crs.some((c) => c.connectionreferencelogicalname === "sss_o365_c"), "deleted reference recreated");
 }
 await page.click("#dlg-cancel");
