@@ -5,7 +5,7 @@ Power Platform ToolBox tools by [Simple Smooth Safe](https://simplesmoothsafe.co
 | Tool | npm | Status |
 |---|---|---|
 | [SSS Solution XRay](tools/solution-xray/README.md) — offline Dataverse solution zip analysis | `@simplesmoothsafe/pptb-solution-xray` | v1.0.1 |
-| [SSS EnvVar & ConnRef Matrix](tools/envvar-matrix/README.md) — env vars and connection references across environments, copy values, merge duplicate and delete unused connection references across all flows, bind connection references (settings file or Power Platform API picker), solution fit check, deploymentSettings.json import/export | `@simplesmoothsafe/pptb-envvar-matrix` | v1.3.0 (unreleased; npm: 1.2.0) |
+| [SSS EnvVar & ConnRef Matrix](tools/envvar-matrix/README.md) — env vars and connection references across environments, copy values, merge duplicate and delete unused connection references across all flows, bind connection references (settings file or Power Platform API picker), solution fit check, deploymentSettings.json import/export | `@simplesmoothsafe/pptb-envvar-matrix` | v1.3.0 |
 | [SSS Access Checker](tools/access-checker/README.md) — why can / can't a user do X on a record: roles, teams, BU, ownership, shares, hierarchy, column security | `@simplesmoothsafe/pptb-access-checker` | v1.0.1 |
 | [SSS Dependency Cleaner](tools/dependency-cleaner/README.md) — why does my solution depend on msdyn_*: find the component, convert tables to shells, strip msdyn columns from forms and views, with backup and restore | `@simplesmoothsafe/pptb-dependency-cleaner` | v1.0.2 |
 

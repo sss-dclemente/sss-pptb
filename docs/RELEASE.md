@@ -56,7 +56,7 @@ Note: 1.2.0 was published to npm on 2026-09-24, before the checks below had run 
 - [ ] Solution check (1.2.0): solution with a flow whose reference lives outside it. Filter to the solution in Consolidate: listed; Add to solution; export the solution, the reference is in it.
 - [ ] Load a real `pac solution create-settings` file via Load snapshot…: values show as a column; copy one value into Dev through the preview.
 - [ ] Bind from that settings file: one unbound reference used by an active flow. Preview → Bind: connection set in maker portal, flow restarted and runs. Snapshot from another env as source: refused.
-- [ ] Pick connections (1.3.0, experimental): first run the probe in `docs/PP-API-SPIKE.md` §6. Connection with Power Platform API enabled: Pick connections… lists the env's connections, each dropdown only that connector's; bind one, flow restarted and runs. Connection without it: "Connections unavailable" with the reason. If the probe shows other field names, fix `normalizeConnection` in `src/matrix/ppconnections.ts`.
+- [ ] Pick connections (1.3.0, experimental; published to npm 2026-09-24 before the probe, fixes go in 1.3.1): first run the probe in `docs/PP-API-SPIKE.md` §6. Connection with Power Platform API enabled: Pick connections… lists the env's connections, each dropdown only that connector's; bind one, flow restarted and runs. Connection without it: "Connections unavailable" with the reason. If the probe shows other field names, fix `normalizeConnection` in `src/matrix/ppconnections.ts`.
 - [ ] Snapshot export from Dev, reload as third column, matrix compares.
 - [ ] Connection references tab: bound / unbound / absent correct.
 
