@@ -444,4 +444,85 @@ await page.click("#dlg-cancel");
 await page.waitForFunction(() => (document.querySelector(".cons-groups")?.textContent || "").includes("Flows that are off · 3"), null, { timeout: 10000 });
 assert(true, "turned-on flow leaves the off list; the failed one stays");
 
+// ---- bind backups, restore bindings, run log ----
+{
+  const backups = (await page.evaluate(() => window.__mock.saved)).filter((f) => f.name.startsWith("connref-bind-backup-"));
+  assert(backups.length === 2, "every bind saved a backup first (" + backups.length + ")");
+  const first = JSON.parse(backups[0].content);
+  const second = JSON.parse(backups[1].content);
+  assert(first.bindings.length === 1 && first.bindings[0].logicalName === "sss_o365_c" && first.bindings[0].connectionId === null, "settings bind backup: sss_o365_c was unbound");
+  assert(second.bindings.map((b) => b.logicalName + "=" + b.connectionId).sort().join() === "sss_o365_c=conn-new,sss_sql=conn-9", "picker bind backup: previous bindings");
+
+  // restore the picker bind
+  await page.evaluate((b) => { window.__mock.writes = []; window.__mock.nextOpen = b; }, backups[1].content);
+  await page.getByRole("button", { name: "Restore from backup…" }).click();
+  await page.waitForFunction(() => document.querySelector("#dlg-title").textContent === "Restore bindings" && document.querySelector("dialog").open, null, { timeout: 10000 });
+  assert((await page.textContent("#dlg-body")).includes("2 bindings to put back"), "bind backup detected, restore previewed");
+  await page.click("#dlg-ok");
+  await page.waitForFunction(() => document.querySelector("#dlg-title").textContent === "Results" && document.querySelector("dialog").open, null, { timeout: 10000 });
+  let cr = (await page.evaluate(() => window.__mock.writes)).filter((x) => x.entity === "connectionreference").map((x) => x.id + "=" + x.rec.connectionid).sort();
+  assert(cr.join() === "new-sss_o365_c=conn-new,r5=conn-9", "previous connection ids written back (" + cr.join() + ")");
+  await page.click("#dlg-cancel");
+
+  // restore the first bind: back to unbound
+  await page.waitForFunction(() => !document.querySelector("#status") || document.querySelector("#status").hidden);
+  await page.evaluate((b) => { window.__mock.writes = []; window.__mock.nextOpen = b; }, backups[0].content);
+  await page.getByRole("button", { name: "Restore from backup…" }).click();
+  await page.waitForFunction(() => document.querySelector("#dlg-title").textContent === "Restore bindings" && document.querySelector("dialog").open, null, { timeout: 10000 });
+  assert((await page.textContent("#dlg-body")).includes("restore: unbind"), "restore to unbound previewed");
+  await page.click("#dlg-ok");
+  await page.waitForFunction(() => document.querySelector("#dlg-title").textContent === "Results" && document.querySelector("dialog").open, null, { timeout: 10000 });
+  cr = (await page.evaluate(() => window.__mock.writes)).filter((x) => x.entity === "connectionreference");
+  assert(cr.length === 1 && cr[0].id === "new-sss_o365_c" && cr[0].rec.connectionid === null, "unbound restored as connectionid null");
+  await page.click("#dlg-cancel");
+}
+
+// a bind whose backup save is cancelled writes nothing
+await page.click("#btn-consolidate");
+await page.waitForSelector("table.matrix");
+await page.evaluate(() => {
+  window.__mock.writes = [];
+  window.toolboxAPI.fileSystem.saveFile = async (name, content) => (name.startsWith("connref-bind-backup-") ? null : (window.__mock.saved.push({ name, content }), "/tmp/" + name));
+  window.__mock.nextOpen = JSON.stringify({ EnvironmentVariables: [], ConnectionReferences: [{ LogicalName: "sss_o365_c", ConnectionId: "conn-z", ConnectorId: "/providers/Microsoft.PowerApps/apis/shared_office365" }] });
+});
+await page.click("#btn-load-snap");
+await page.waitForFunction(() => document.querySelectorAll("#columns .colchip").length === 2);
+if (!(await page.isHidden("#bulkbar"))) await page.click("#btn-clear-sel");
+await page.check('input[aria-label="Select sss_o365_c"]');
+await page.selectOption("#copy-from", await page.$eval("#copy-from", (s) => [...s.options].find((o) => o.value.startsWith("settings:")).value));
+await page.click("#btn-copy");
+await page.waitForFunction(() => document.querySelector("#dlg-title").textContent === "Preview bind" && document.querySelector("dialog").open, null, { timeout: 10000 });
+assert((await page.textContent("#dlg-body")).includes("saved to a backup file first"), "bind preview mentions the backup");
+await page.click("#dlg-ok");
+await page.waitForTimeout(400);
+assert((await page.evaluate(() => window.__mock.writes.filter((w) => w.entity === "connectionreference").length)) === 0, "backup not saved → nothing bound");
+assert((await page.evaluate(() => window.__mock.notes.some((n) => /Backup not saved/.test(n.title)))), "backup-not-saved notice");
+if (await page.$eval("dialog", (d) => d.open)) await page.click("#dlg-cancel");
+
+// run log
+{
+  const label = await page.textContent("#btn-runlog");
+  const n = Number((label.match(/\((\d+)\)/) || [])[1]);
+  assert(n >= 10, "run log counts writes: " + label);
+  await page.click("#btn-runlog");
+  await page.waitForFunction(() => document.querySelector("#dlg-title").textContent === "Run log" && document.querySelector("dialog").open, null, { timeout: 10000 });
+  const body = await page.textContent("#dlg-body");
+  for (const a of ["bind", "restart flow", "merge: update flow", "cleanup: delete reference", "add to solution", "turn on flow", "restore binding", "restore: flow clientdata"])
+    assert(body.includes(a), "run log has '" + a + "'");
+  assert(/failed/.test(body), "failed writes are logged too");
+  await page.screenshot({ path: resolve(TOOL, "scripts/.e2e-out/15-runlog.png") });
+  await page.evaluate(() => { window.toolboxAPI.fileSystem.saveFile = async (name, content) => { window.__mock.saved.push({ name, content }); return "/tmp/" + name; }; });
+  await page.getByRole("button", { name: "Export CSV" }).click();
+  await page.getByRole("button", { name: "Export JSON" }).click();
+  await page.waitForTimeout(300);
+  const saved = await page.evaluate(() => window.__mock.saved);
+  const csv = saved.find((f) => /envvar-matrix-runlog-.*\.csv$/.test(f.name));
+  const json = saved.find((f) => /envvar-matrix-runlog-.*\.json$/.test(f.name));
+  assert(csv && csv.content.startsWith("at,action,environment,url,item,detail,result,error") && csv.content.split("\n").length - 2 === n, "run log CSV export");
+  assert(json && JSON.parse(json.content).entries.length === n, "run log JSON export");
+  const stored = await page.evaluate(() => JSON.parse(localStorage.getItem("sss-envvar-matrix-runlog") || "[]").length);
+  assert(stored === n, "run log mirrored to localStorage (" + stored + ")");
+  await page.click("#dlg-cancel");
+}
+
 await finish();

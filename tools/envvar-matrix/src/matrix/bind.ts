@@ -120,3 +120,108 @@ export async function applyBind(
   onStep?.("");
   return { refs, flows };
 }
+
+// ---------- backup / restore ----------
+
+export const BIND_BACKUP_KIND = "sss-connref-bind-backup";
+
+export interface BindBackup {
+  kind: typeof BIND_BACKUP_KIND;
+  version: 1;
+  takenAt: string;
+  environment: { name: string; url: string };
+  /** bindings before the write; connectionId null = was unbound */
+  bindings: { connRefId: string; logicalName: string; connectorId: string | null; connectionId: string | null }[];
+}
+
+/** Current bindings of every reference the plan will update. */
+export function buildBindBackup(plan: BindPlan, rows: ConnRefRow[]): BindBackup {
+  const byName = new Map(rows.map((r) => [r.logicalName.toLowerCase(), r]));
+  return {
+    kind: BIND_BACKUP_KIND,
+    version: 1,
+    takenAt: new Date().toISOString(),
+    environment: { name: plan.target.name, url: plan.target.url },
+    bindings: plan.items
+      .filter((i) => i.action === "update" && i.connRefId)
+      .map((i) => {
+        const rec = byName.get(i.logicalName.toLowerCase())?.cells[plan.target.key]?.record;
+        return { connRefId: i.connRefId!, logicalName: i.logicalName, connectorId: rec?.connectorId ?? null, connectionId: i.current };
+      }),
+  };
+}
+
+export function bindBackupFileName(env: string, at = new Date()): string {
+  return `connref-bind-backup-${env.replace(/[^a-z0-9._-]+/gi, "_")}-${at.toISOString().replace(/[:.]/g, "-").slice(0, 19)}.json`;
+}
+
+/** Parsed backup, or null when the JSON is not a bind backup (the caller tries other kinds). Throws when it is one but broken. */
+export function parseBindBackup(o: unknown): BindBackup | null {
+  const b = o as Partial<BindBackup> | null;
+  if (b?.kind !== BIND_BACKUP_KIND) return null;
+  if (b.version !== 1) throw new Error(`unsupported bind backup version ${String(b.version)}`);
+  if (!b.environment?.url || !Array.isArray(b.bindings)) throw new Error("bind backup is incomplete");
+  return b as BindBackup;
+}
+
+export interface PlannedRestoreBinding {
+  connRefId: string;
+  logicalName: string;
+  action: "update" | "skip";
+  reason: string;
+  current: string | null;
+  restore: string | null;
+}
+
+export interface BindRestorePlan {
+  target: ColumnMeta;
+  stamp: ConnectionStamp;
+  items: PlannedRestoreBinding[];
+  errors: string[];
+}
+
+/** Put the backed-up bindings back; a binding that was unbound is restored as unbound (connectionid null). */
+export function planBindRestore(target: ColumnMeta, b: BindBackup, rows: ConnRefRow[]): BindRestorePlan {
+  const errors: string[] = [];
+  if (normUrl(b.environment.url) !== normUrl(target.url)) errors.push(`backup is for ${b.environment.url}, target is ${target.url}`);
+  const byId = new Map<string, ConnRefRow>();
+  const byName = new Map<string, ConnRefRow>();
+  for (const r of rows) {
+    const rec = r.cells[target.key]?.record;
+    if (rec) byId.set(rec.id.toLowerCase(), r);
+    byName.set(r.logicalName.toLowerCase(), r);
+  }
+  const items = b.bindings.map((x): PlannedRestoreBinding => {
+    const row = byId.get(x.connRefId.toLowerCase()) ?? byName.get(x.logicalName.toLowerCase());
+    const rec = row?.cells[target.key]?.record;
+    const base = { connRefId: rec?.id ?? x.connRefId, logicalName: x.logicalName, current: rec?.connectionId ?? null, restore: x.connectionId };
+    if (!rec) return { ...base, action: "skip", reason: "reference no longer exists in target" };
+    if ((rec.connectionId ?? "").toLowerCase() === (x.connectionId ?? "").toLowerCase()) return { ...base, action: "skip", reason: "already as in backup" };
+    return { ...base, action: "update", reason: x.connectionId ? "restore previous connection" : "restore: unbind (was unbound)" };
+  });
+  return { target, stamp: stampOf(target), items, errors };
+}
+
+export async function applyBindRestore(
+  api: BindWriter,
+  plan: BindRestorePlan,
+  currentConnection: (t: Target) => Promise<ConnectionStamp | null>,
+): Promise<DeleteResult[]> {
+  const t = plan.target.target;
+  if (!t) throw new Error("target column is not a live connection");
+  if (plan.errors.length) throw new Error(plan.errors.join("; "));
+  const out: DeleteResult[] = [];
+  for (const i of plan.items.filter((x) => x.action === "update")) {
+    if (!sameConnection(plan.stamp, await currentConnection(t).catch(() => null))) {
+      out.push({ logicalName: i.logicalName, ok: false, error: "connection changed; not written" });
+      continue;
+    }
+    try {
+      await api.update("connectionreference", i.connRefId, { connectionid: i.restore }, t);
+      out.push({ logicalName: i.logicalName, ok: true });
+    } catch (e) {
+      out.push({ logicalName: i.logicalName, ok: false, error: (e as Error)?.message ?? String(e) });
+    }
+  }
+  return out;
+}

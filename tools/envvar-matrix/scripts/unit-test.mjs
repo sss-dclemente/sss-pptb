@@ -14,7 +14,7 @@ const TOOL = new URL("..", import.meta.url).pathname.replace(/\/$/, "");
 const esbuild = createRequire(resolve(TOOL, "package.json"))("esbuild");
 const out = esbuild.buildSync({
   stdin: {
-    contents: ["consolidate", "bind", "settings", "ppconnections"].map((m) => `export * from "./src/matrix/${m}";`).join("\n"),
+    contents: ["consolidate", "bind", "settings", "ppconnections", "runlog"].map((m) => `export * from "./src/matrix/${m}";`).join("\n"),
     resolveDir: TOOL,
     loader: "ts",
   },
@@ -276,4 +276,89 @@ test("Power Platform helpers: next link, connector filter, error hints", () => {
   assert.deepEqual(M.connectionsFor(conns, null), []);
   assert.match(M.explainPpError(new Error("HTTP 403: Forbidden")), /Connectivity\.Connections\.Read/);
   assert.match(M.explainPpError(new Error("Authentication expired for connection 'Dev'")), /custom Client ID/);
+});
+
+// ---------- bind backup / restore ----------
+
+test("bind backup keeps the previous binding of each updated reference; restore plans it back", () => {
+  const rec = (id, name, connectionId) => ({ id, logicalName: name, displayName: name, connectorId: "/providers/Microsoft.PowerApps/apis/shared_sql", connector: "shared_sql", connectionId, isManaged: false });
+  const cell = (r) => ({ state: r.connectionId ? "bound" : "unbound", connector: r.connector, connectionId: r.connectionId, record: r });
+  const row = (r, src) => ({ key: r.logicalName, logicalName: r.logicalName, displayName: r.logicalName, connector: "shared_sql", differs: false, anyUnbound: false, anyAbsent: false, cells: { primary: cell(r), src: cell(src) } });
+  const settings = { key: "src", kind: "snapshot", name: "file", url: "", environment: "Settings file", takenAt: "" };
+  const rows = [row(rec("r1", "a", null), rec("s1", "a", "new-a")), row(rec("r2", "b", "old-b"), rec("s2", "b", "new-b")), row(rec("r3", "c", "same"), rec("s3", "c", "same"))];
+  const plan = M.planBind(rows, settings, TARGET);
+  const b = M.buildBindBackup(plan, rows);
+  assert.equal(b.kind, "sss-connref-bind-backup");
+  assert.deepEqual(b.bindings.map((x) => `${x.logicalName}:${x.connectionId}`), ["a:null", "b:old-b"], "only updated refs, with their previous binding");
+  // after the bind: a=new-a, b=new-b
+  const after = [row(rec("r1", "a", "new-a"), rec("s1", "a", "x")), row(rec("r2", "b", "new-b"), rec("s2", "b", "x"))];
+  const r = M.planBindRestore(TARGET, M.parseBindBackup(JSON.parse(JSON.stringify(b))), after);
+  assert.deepEqual(r.errors, []);
+  assert.deepEqual(r.items.map((i) => `${i.logicalName}:${i.action}:${i.restore}`), ["a:update:null", "b:update:old-b"]);
+  assert.match(r.items[0].reason, /unbind/);
+  // already restored → skip; reference gone → skip; other org → blocked
+  assert.equal(M.planBindRestore(TARGET, b, [row(rec("r2", "b", "old-b"), rec("s2", "b", "x"))]).items.map((i) => i.action).join(), "skip,skip");
+  assert.match(M.planBindRestore({ ...TARGET, url: "https://prod.crm4.dynamics.com" }, b, after).errors[0], /backup is for/);
+});
+
+test("parseBindBackup: null for other kinds, throws on a broken bind backup", () => {
+  assert.equal(M.parseBindBackup({ kind: "sss-connref-merge-backup" }), null);
+  assert.equal(M.parseBindBackup(null), null);
+  assert.throws(() => M.parseBindBackup({ kind: "sss-connref-bind-backup", version: 2 }), /unsupported/);
+  assert.throws(() => M.parseBindBackup({ kind: "sss-connref-bind-backup", version: 1 }), /incomplete/);
+});
+
+test("applyBindRestore writes the previous connectionid, including null, and stops on a changed connection", async () => {
+  const writes = [];
+  const api = { update: async (entity, id, rec) => writes.push([entity, id, rec.connectionid]) };
+  const plan = { target: TARGET, stamp: { connectionId: null, url: TARGET.url }, errors: [], items: [
+    { connRefId: "r1", logicalName: "a", action: "update", reason: "", current: "x", restore: null },
+    { connRefId: "r2", logicalName: "b", action: "skip", reason: "", current: "y", restore: "y" },
+  ] };
+  const res = await M.applyBindRestore(api, plan, async () => ({ connectionId: null, url: TARGET.url }));
+  assert.deepEqual(writes, [["connectionreference", "r1", null]]);
+  assert.equal(res.length, 1);
+  const res2 = await M.applyBindRestore(api, plan, async () => ({ connectionId: null, url: "https://other.crm4.dynamics.com" }));
+  assert.equal(res2[0].ok, false);
+  assert.equal(writes.length, 1, "nothing written after the connection changed");
+});
+
+// ---------- run log ----------
+
+const memStore = () => {
+  const m = new Map();
+  return { m, getItem: (k) => (m.has(k) ? m.get(k) : null), setItem: (k, v) => m.set(k, v), removeItem: (k) => m.delete(k) };
+};
+
+test("RunLog persists, reloads, caps and clears", () => {
+  const st = memStore();
+  const log = new M.RunLog(st);
+  log.add({ action: "bind", environment: "Dev", url: "u", item: "a", detail: "x → y", ok: true });
+  assert.equal(new M.RunLog(st).all.length, 1, "reloaded from storage");
+  for (let i = 0; i < M.RUN_LOG_MAX + 5; i++) log.add({ action: "turn on flow", environment: "Dev", url: "u", item: "f" + i, detail: "", ok: true });
+  assert.equal(log.all.length, M.RUN_LOG_MAX);
+  assert.equal(log.all.at(-1).item, "f" + (M.RUN_LOG_MAX + 4), "oldest dropped first");
+  log.clear();
+  assert.equal(new M.RunLog(st).all.length, 0);
+});
+
+test("RunLog tolerates corrupt or throwing storage", () => {
+  const bad = { getItem: () => "{not json", setItem: () => { throw new Error("quota"); }, removeItem: () => { throw new Error("denied"); } };
+  const log = new M.RunLog(bad);
+  assert.equal(log.all.length, 0);
+  log.add({ action: "bind", environment: "Dev", url: "u", item: "a", detail: "", ok: true });
+  assert.equal(log.all.length, 1, "in-memory log still works");
+  log.clear();
+  assert.equal(new M.RunLog(null).all.length, 0);
+});
+
+test("RunLog CSV neutralises formulas and quotes; JSON carries every entry", () => {
+  const log = new M.RunLog(null);
+  log.add({ at: "2026-09-25T08:00:00.000Z", action: "set env var", environment: "Dev", url: "u", item: "=HYPERLINK(1)", detail: 'a, "b"', ok: false, error: "403" });
+  const lines = log.csv().trim().split("\n");
+  assert.equal(lines[0], "at,action,environment,url,item,detail,result,error");
+  assert.equal(lines[1], `2026-09-25T08:00:00.000Z,set env var,Dev,u,'=HYPERLINK(1),"a, ""b""",failed,403`);
+  const j = JSON.parse(log.json());
+  assert.equal(j.kind, "sss-envvar-matrix-runlog");
+  assert.equal(j.entries.length, 1);
 });

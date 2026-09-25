@@ -29,7 +29,8 @@ import {
   type MergeSpec,
   type PlannedFlow,
 } from "./matrix/consolidate";
-import { applyBind, planBind, type BindPlan } from "./matrix/bind";
+import { applyBind, applyBindRestore, bindBackupFileName, buildBindBackup, parseBindBackup, planBind, planBindRestore, type BindBackup, type BindPlan } from "./matrix/bind";
+import { RunLog, type StoreLike } from "./matrix/runlog";
 import { connectionsFor, environmentId, explainPpError, listConnections, rowConnector, type PpConnection } from "./matrix/ppconnections";
 import { isDeploymentSettings, parseDeploymentSettings } from "./matrix/settings";
 import { parseSnapshot } from "./matrix/snapshot";
@@ -69,6 +70,87 @@ let fitCache: { solutionId: string; url: string; flowIds: Set<string> } | null =
 let fitLoading: Promise<void> | null = null;
 
 const columns = (): ColumnData[] => [...live, ...snaps];
+
+// ---------- run log ----------
+function safeStorage(): StoreLike | null {
+  try {
+    const st = window.localStorage;
+    st.getItem("x");
+    return st;
+  } catch {
+    return null;
+  }
+}
+const runLog = new RunLog(safeStorage());
+interface LogItem {
+  item: string;
+  detail: string;
+  ok: boolean;
+  error?: string;
+}
+/** Record the writes of one run (skipped rows are not writes and are left out by the callers). */
+function logRun(action: string, target: ColumnMeta, items: LogItem[]): void {
+  for (const i of items) runLog.add({ action, environment: target.name, url: target.url, item: i.item, detail: i.detail, ok: i.ok, error: i.error });
+  renderRunLogButton();
+}
+function renderRunLogButton(): void {
+  $("#btn-runlog").textContent = `Run log (${runLog.all.length})`;
+}
+async function openRunLog(): Promise<void> {
+  const entries = [...runLog.all].reverse();
+  const exportJson = h("button", { class: "btn btn-sm", type: "button" }, "Export JSON");
+  exportJson.addEventListener("click", () => void exportFile(`envvar-matrix-runlog-${new Date().toISOString().slice(0, 10)}.json`, runLog.json()));
+  const exportCsv = h("button", { class: "btn btn-sm", type: "button" }, "Export CSV");
+  exportCsv.addEventListener("click", () => void exportFile(`envvar-matrix-runlog-${new Date().toISOString().slice(0, 10)}.csv`, runLog.csv(), "text/csv"));
+  const clear = h("button", { class: "btn btn-ghost btn-sm", type: "button" }, "Clear log");
+  let armed = false;
+  clear.addEventListener("click", () => {
+    if (!armed) {
+      armed = true;
+      clear.textContent = "Click again to clear";
+      return;
+    }
+    runLog.clear();
+    renderRunLogButton();
+    $<HTMLDialogElement>("#dlg").close();
+  });
+  const shown = entries.slice(0, 300);
+  const body = h(
+    "div",
+    {},
+    h(
+      "p",
+      { class: "caption" },
+      `${entries.length} write${entries.length === 1 ? "" : "s"} recorded by this tool on this machine (newest first${entries.length > shown.length ? `, ${shown.length} shown; the export has all` : ""}). Kept across reloads in local storage, up to 2000.`,
+    ),
+    h("div", { style: "display:flex; gap: var(--s-2); margin-bottom: var(--s-2)" }, exportJson, exportCsv, clear),
+    entries.length
+      ? h(
+          "table",
+          {},
+          h("thead", {}, h("tr", {}, h("th", {}, "When"), h("th", {}, "Action"), h("th", {}, "Environment"), h("th", {}, "Item"), h("th", {}, "Detail"), h("th", {}, "Result"))),
+          h(
+            "tbody",
+            {},
+            ...shown.map((e) =>
+              h(
+                "tr",
+                {},
+                h("td", { class: "caption" }, e.at.replace("T", " ").slice(0, 19)),
+                h("td", {}, e.action),
+                h("td", { title: e.url }, e.environment),
+                h("td", { class: "mono" }, e.item),
+                h("td", { class: "changes" }, e.detail),
+                h("td", {}, e.ok ? badge("ok", "ok") : h("span", {}, badge("failed", "bad"), " ", h("span", { class: "caption" }, e.error ?? ""))),
+              ),
+            ),
+          ),
+        )
+      : emptyState("Nothing yet", "Writes from copy, set, bind, merge, cleanup, restore, add to solution and turn on are recorded here."),
+  );
+  await showDialog({ title: "Run log", body });
+}
+
 /** label of a non-live column: deploymentSettings file or snapshot */
 const fileKind = (m: ColumnMeta): string => (m.key.startsWith("settings:") ? "settings" : "snapshot");
 /** columns with data (a live column whose load failed has none) */
@@ -373,7 +455,7 @@ function renderConsolidate(body: HTMLElement, f: Filters): void {
   });
   const rescan = h("button", { class: "btn btn-sm", type: "button" }, "Rescan flows");
   rescan.addEventListener("click", () => void scanFlows());
-  const restore = h("button", { class: "btn btn-ghost btn-sm", type: "button" }, "Restore from backup…");
+  const restore = h("button", { class: "btn btn-ghost btn-sm", type: "button", title: "Merge, cleanup or bind backup" }, "Restore from backup…");
   restore.addEventListener("click", () => void restoreFromBackup());
   head.append(h("label", {}, "Environment ", sel), rescan, h("span", { class: "spacer" }), restore);
   body.append(head);
@@ -578,6 +660,7 @@ async function previewTurnOn(col: ColumnData, picked: { flowId: string; name: st
   if (!ok) return;
   const res = await turnOnFlows(api, col.meta, stampOf(col.meta), picked, currentConnection, (m) => setStatus(m || null));
   setStatus(null);
+  logRun("turn on flow", col.meta, res.map((f) => ({ item: f.name, detail: "off → on", ok: f.ok, error: f.error })));
   await showMergeResults("Flows turned on", col.meta, res, { label: "", rows: [] });
   turnOnSel.clear();
   flowCache = null;
@@ -667,6 +750,7 @@ async function addToSolution(col: ColumnData, sol: SolutionInfo, refs: ConnRefRe
     return;
   }
   setStatus(null);
+  logRun("add to solution", col.meta, res.map((r) => ({ item: r.logicalName, detail: `AddSolutionComponent → ${sol.uniqueName}`, ok: r.ok, error: r.error })));
   await showMergeResults("Added to solution", col.meta, [], { label: "Connection reference", rows: res });
   fitCache = null;
   await refresh();
@@ -786,8 +870,59 @@ async function runMergePlan(col: ColumnData, plan: MergePlan, summary: string): 
   }
   const res = await applyMerge(plan, { api, currentConnection, onStep: (m) => setStatus(m || null) });
   setStatus(null);
+  const planned = new Map(plan.flows.map((f) => [f.flowId, f]));
+  logRun(
+    "merge: update flow",
+    col.meta,
+    res.flows.map((f) => {
+      const p = planned.get(f.flowId);
+      const detail = [...(p?.changes ?? []).map((c) => `${c.key}: ${c.from} → ${c.to}`), ...(p?.collapsed ?? []).map((c) => `key ${c.drop} → ${c.into}`)].join("; ");
+      return { item: f.name, detail, ok: f.ok, error: f.error };
+    }),
+  );
+  logRun(plan.specs.length ? "merge: delete reference" : "cleanup: delete reference", col.meta, res.deletes.filter((d) => !d.skipped).map((d) => ({ item: d.logicalName, detail: "deleted", ok: d.ok, error: d.error })));
   await showMergeResults(plan.specs.length ? "Merge applied" : "Cleanup applied", col.meta, res.flows, { label: "Deleted reference", rows: res.deletes });
   flowCache = null;
+  await refresh();
+}
+
+async function restoreBindings(col: ColumnData, b: BindBackup): Promise<void> {
+  const api = dataverse();
+  if (!api) return;
+  const plan = planBindRestore(col.meta, b, matrix.connRefs);
+  const writes = plan.items.filter((i) => i.action === "update");
+  const body = h(
+    "div",
+    {},
+    h("p", { class: "caption" }, `Bind backup taken ${b.takenAt.replace("T", " ").slice(0, 19)} in ${b.environment.name}. ${writes.length} binding${writes.length === 1 ? "" : "s"} to put back; flows are not restarted.`),
+    ...plan.errors.map((e) => h("div", { class: "warnings" }, badge("blocked", "bad"), " ", e)),
+    h(
+      "table",
+      {},
+      h("thead", {}, h("tr", {}, h("th", {}, "Connection reference"), h("th", {}, "Action"), h("th", {}, "Current"), h("th", {}, "Restore to"), h("th", {}, "Note"))),
+      h(
+        "tbody",
+        {},
+        ...plan.items.map((i) =>
+          h(
+            "tr",
+            {},
+            h("td", { class: "mono" }, i.logicalName),
+            h("td", {}, badge(i.action, i.action === "update" ? "warn" : "neutral")),
+            h("td", { class: "mono" }, i.current ?? "unbound"),
+            h("td", { class: "mono" }, i.restore ?? "unbound"),
+            h("td", { class: "caption" }, i.reason),
+          ),
+        ),
+      ),
+    ),
+  );
+  const ok = await showDialog({ title: "Restore bindings", target: targetChip(col.meta), body, okLabel: !plan.errors.length && writes.length ? `Restore ${writes.length}` : "", danger: true });
+  if (!ok || plan.errors.length || !writes.length) return;
+  const res = await applyBindRestore(api, plan, currentConnection);
+  const byName = new Map(plan.items.map((i) => [i.logicalName, i]));
+  logRun("restore binding", col.meta, res.map((r) => ({ item: r.logicalName, detail: `${byName.get(r.logicalName)?.current ?? "unbound"} → ${byName.get(r.logicalName)?.restore ?? "unbound"} (bind backup)`, ok: r.ok, error: r.error })));
+  await showMergeResults("Bindings restored", col.meta, [], { label: "Connection reference", rows: res });
   await refresh();
 }
 
@@ -795,8 +930,21 @@ async function restoreFromBackup(): Promise<void> {
   const col = consColumn();
   const api = dataverse();
   if (!col || !api) return;
-  const file = await openText({ title: "Open connection reference merge backup", extensions: ["json"] });
+  const file = await openText({ title: "Open a merge, cleanup or bind backup", extensions: ["json"] });
   if (!file) return;
+  let bindBackup: BindBackup | null = null;
+  try {
+    bindBackup = parseBindBackup(JSON.parse(file.text));
+  } catch (e) {
+    if (!(e instanceof SyntaxError)) {
+      await notify("Backup rejected", `${file.name}: ${(e as Error).message}`, "error");
+      return;
+    }
+  }
+  if (bindBackup) {
+    await restoreBindings(col, bindBackup);
+    return;
+  }
   let plan;
   try {
     const b = parseMergeBackup(file.text);
@@ -823,6 +971,8 @@ async function restoreFromBackup(): Promise<void> {
   if (!ok || plan.errors.length || !n) return;
   const res = await applyRestore(plan, { api, currentConnection, onStep: (m) => setStatus(m || null) });
   setStatus(null);
+  logRun("restore: recreate reference", col.meta, res.created.map((d) => ({ item: d.logicalName, detail: "recreated from backup", ok: d.ok, error: d.error })));
+  logRun("restore: flow clientdata", col.meta, res.flows.map((f) => ({ item: f.name, detail: "clientdata restored from backup", ok: f.ok, error: f.error })));
   await showMergeResults("Restore applied", col.meta, res.flows, { label: "Recreated reference", rows: res.created });
   flowCache = null;
   await refresh();
@@ -999,6 +1149,11 @@ async function runPlan(plan: WritePlan): Promise<void> {
   setStatus("Writing…");
   const results = await applyPlan(api, plan, currentConnection);
   setStatus(null);
+  logRun(
+    "set env var",
+    plan.target,
+    results.filter((r) => r.action === "create" || r.action === "update").map((r) => ({ item: r.schemaName, detail: `${r.action}: ${r.currentValue ?? "—"} → ${r.newValue ?? ""}`, ok: r.ok, error: r.error })),
+  );
   await showResults(results, plan.target);
   await refresh();
 }
@@ -1169,6 +1324,7 @@ async function runBind(plan: BindPlan): Promise<void> {
       `${writes.length} binding${writes.length === 1 ? "" : "s"} from ${plan.source.name} into ${plan.target.name}. ${plan.items.length - writes.length - invalid.length} skipped.${invalid.length ? ` ${invalid.length} invalid (not written).` : ""}${restart && writes.length ? " Flows that are on and use a rebound reference are turned off and on afterwards." : ""}`,
     ),
     plan.source.key === "picker" ? h("p", { class: "caption" }, "Connections picked from the Power Platform API list.") : null,
+    writes.length ? h("p", { class: "caption" }, "The current bindings are saved to a backup file first; undo with Consolidate → Restore from backup….") : null,
     !plan.source.url ? h("p", { class: "caption" }, "Settings file: connection ids are taken as written for this environment. Check the file targets it.") : null,
     isProd && writes.length ? h("div", { class: "warnings" }, "Target is a Production environment.") : null,
     h(
@@ -1200,8 +1356,20 @@ async function runBind(plan: BindPlan): Promise<void> {
     await refresh();
     return;
   }
+  const backup = buildBindBackup(plan, matrix.connRefs);
+  if (!(await saveText(bindBackupFileName(plan.target.name), JSON.stringify(backup, null, 2)))) {
+    await notify("Backup not saved", "Nothing written: the backup of the current bindings must be saved before binding.", "warning");
+    return;
+  }
   const res = await applyBind(api, plan, currentConnection, restart, (m) => setStatus(m || null));
   setStatus(null);
+  const byName = new Map(plan.items.map((i) => [i.logicalName, i]));
+  logRun(
+    "bind",
+    plan.target,
+    res.refs.map((r) => ({ item: r.logicalName, detail: `${byName.get(r.logicalName)?.current ?? "unbound"} → ${byName.get(r.logicalName)?.next ?? ""} (from ${plan.source.name})`, ok: r.ok, error: r.error })),
+  );
+  logRun("restart flow", plan.target, res.flows.map((f) => ({ item: f.name, detail: "off → on after rebinding", ok: f.ok, error: f.error })));
   await showMergeResults("Bindings written", plan.target, res.flows, { label: "Connection reference", rows: res.refs });
   flowCache = null;
   await refresh();
@@ -1243,6 +1411,8 @@ function wire(): void {
   });
   $("#btn-refresh").addEventListener("click", () => void refresh());
   $("#btn-load-snap").addEventListener("click", () => void loadSnapshot());
+  $("#btn-runlog").addEventListener("click", () => void openRunLog());
+  renderRunLogButton();
   $("#btn-copy").addEventListener("click", () => void copySelected());
   $("#btn-pick").addEventListener("click", () => void pickConnections());
   $("#btn-clear-sel").addEventListener("click", () => {
