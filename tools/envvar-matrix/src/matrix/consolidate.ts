@@ -751,3 +751,63 @@ export async function addRefsToSolution(
   }
   return out;
 }
+
+// ---------- turn on flows (post-import) ----------
+
+export interface OffFlow {
+  flowId: string;
+  name: string;
+  isManaged: boolean;
+  /** logical names the flow uses */
+  refs: string[];
+  /** every reference exists and is bound */
+  ready: boolean;
+  /** why it is not ready (unbound / missing references, unreadable clientdata) */
+  reason: string;
+}
+
+/** Flows that are off (statecode 0), classified by whether every connection reference they use is bound. */
+export function offFlows(flows: FlowRecord[], refs: ConnRefRecord[]): OffFlow[] {
+  const byName = new Map(refs.map((r) => [lc(r.logicalName), r]));
+  return flows
+    .filter((f) => f.statecode === 0)
+    .map((f) => {
+      const names = [...new Map(f.refs.map((r) => [lc(r.logicalName), r.logicalName])).values()];
+      const base = { flowId: f.id, name: f.name, isManaged: f.isManaged, refs: names };
+      if (f.parseError) return { ...base, ready: false, reason: f.parseError };
+      const missing = names.filter((n) => !byName.has(lc(n)));
+      const unbound = names.filter((n) => byName.get(lc(n)) && !byName.get(lc(n))!.connectionId);
+      const problems = [missing.length ? `missing reference${missing.length === 1 ? "" : "s"}: ${missing.join(", ")}` : "", unbound.length ? `unbound: ${unbound.join(", ")}` : ""].filter(Boolean);
+      return { ...base, ready: !problems.length, reason: problems.length ? problems.join("; ") : names.length ? "all references bound" : "uses no connection references" };
+    })
+    .sort((a, b) => Number(b.ready) - Number(a.ready) || a.name.localeCompare(b.name));
+}
+
+/** Turn flows on (statecode 1, statuscode 2), re-checking the connection before each write. */
+export async function turnOnFlows(
+  api: Pick<WriterLike, "update">,
+  target: ColumnMeta,
+  stamp: ConnectionStamp,
+  flows: { flowId: string; name: string }[],
+  currentConnection: (t: Target) => Promise<ConnectionStamp | null>,
+  onStep?: (m: string) => void,
+): Promise<FlowResult[]> {
+  const t = target.target;
+  if (!t) throw new Error("target column is not a live connection");
+  const out: FlowResult[] = [];
+  for (const [i, f] of flows.entries()) {
+    onStep?.(`Turning on ${i + 1} / ${flows.length}: ${f.name}`);
+    if (!sameConnection(stamp, await currentConnection(t).catch(() => null))) {
+      out.push({ flowId: f.flowId, name: f.name, ok: false, error: "connection changed; not turned on" });
+      continue;
+    }
+    try {
+      await api.update("workflow", f.flowId, { statecode: 1, statuscode: 2 }, t);
+      out.push({ flowId: f.flowId, name: f.name, ok: true });
+    } catch (e) {
+      out.push({ flowId: f.flowId, name: f.name, ok: false, error: errMsg(e) });
+    }
+  }
+  onStep?.("");
+  return out;
+}

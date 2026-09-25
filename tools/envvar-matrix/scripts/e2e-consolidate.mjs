@@ -148,10 +148,10 @@ await page.waitForSelector(".cons-groups");
 const text = await page.textContent("#matrix-body");
 assert(text.includes("8 cloud flows scanned"), "flows scanned");
 assert(text.includes("1 flow with unreadable clientdata"), "broken clientdata counted");
-const cards = await page.$$eval(".cons-groups .card", (els) => els.map((e) => e.querySelector("h3").textContent).filter((t) => !/^(Unused|Solution)/.test(t)));
+const cards = await page.$$eval(".cons-groups .card", (els) => els.map((e) => e.querySelector("h3").textContent).filter((t) => !/^(Unused|Solution|Flows that are off)/.test(t)));
 assert(cards.length === 2 && cards.some((c) => c.startsWith("shared_office365 · 4")) && cards.some((c) => c.startsWith("shared_commondataserviceforapps · 2")), "groups per connector, sql singleton excluded: " + cards.join(" | "));
 {
-  const unusedCard = await page.textContent(".cons-groups .card:last-child");
+  const unusedCard = await page.textContent('.cons-groups .card:has(h3:text-matches("^Unused"))');
   assert(unusedCard.includes("Unused connection references · 3") && unusedCard.includes("sss_unused") && unusedCard.includes("sss_canvas") && unusedCard.includes("sss_dv_1"), "unused references listed: " + unusedCard.slice(0, 80));
 }
 
@@ -221,7 +221,7 @@ assert(refsOf("f1").includes("sss_sql"), "other connector untouched");
 const dels = writes.filter((w) => w.op === "delete").map((w) => w.id).sort();
 assert(dels.join() === "r2,r3", "unmanaged sources deleted, managed kept (" + dels.join() + ")");
 await page.click("#dlg-cancel");
-await page.waitForFunction(() => document.querySelectorAll(".cons-groups .card").length === 3, null, { timeout: 10000 });
+await page.waitForFunction(() => document.querySelectorAll(".cons-groups .card").length === 4, null, { timeout: 10000 });
 assert((await page.$eval(".cons-groups", (e) => e.textContent)).includes("sss_o365_m"), "managed ref still listed after merge");
 
 // dependency blocks delete; activation failure reported as left off
@@ -264,7 +264,7 @@ await page.click("#dlg-cancel");
 await page.screenshot({ path: resolve(TOOL, "scripts/.e2e-out/10-consolidate.png") });
 
 // unused cleanup: dv_2 (dependent), sss_unused, sss_canvas (dependent) are unused now
-await page.waitForFunction(() => (document.querySelector(".cons-groups .card:last-child")?.textContent || "").includes("sss_unused"), null, { timeout: 10000 });
+await page.waitForFunction(() => [...document.querySelectorAll(".cons-groups .card")].some((c) => c.querySelector("h3")?.textContent.startsWith("Unused") && c.textContent.includes("sss_unused")), null, { timeout: 10000 });
 await page.evaluate(() => { window.__mock.writes = []; window.__mock.saved = []; });
 await page.getByRole("button", { name: "Select all unmanaged" }).click();
 await page.click("#btn-cleanup-preview");
@@ -410,5 +410,38 @@ await page.waitForFunction(() => document.querySelector("#dlg-title").textConten
 assert((await page.textContent("#dlg-body")).includes("does not expose the Power Platform API"), "picker: missing API explained");
 await page.click("#dlg-cancel");
 assert((await page.evaluate(() => window.__mock.writes.filter((w) => w.op !== "execute").length)) === 0, "picker failures write nothing");
+
+// ---- turn on flows that are off ----
+await page.evaluate(() => { window.__mock.writes = []; window.__mock.failActivate = "f7"; });
+await page.click("#btn-consolidate");
+await page.waitForFunction(() => [...document.querySelectorAll(".cons-groups .card h3")].some((h) => h.textContent.startsWith("Flows that are off")), null, { timeout: 10000 });
+{
+  const card = page.locator(".cons-groups .card", { hasText: "Flows that are off" });
+  const t = await card.textContent();
+  assert(t.includes("Flows that are off · 4"), "off flows listed: " + t.slice(0, 40));
+  assert(/Flow DV.*ready/.test(t) && /Flow Odd Key.*ready/.test(t), "flows with every reference bound are ready");
+  assert(/Flow Ghost.*blocked.*missing reference.*sss_ghost/.test(t), "flow naming a missing reference is blocked");
+  assert(/Flow Broken.*blocked.*clientdata does not parse/.test(t), "flow with unreadable clientdata is blocked");
+  assert(await card.getByLabel("Turn on Flow Ghost").isDisabled(), "blocked flow cannot be selected");
+  await card.getByRole("button", { name: "Select all ready" }).click();
+}
+await page.click("#btn-turnon-preview");
+await page.waitForFunction(() => document.querySelector("#dlg-title").textContent === "Turn on flows" && document.querySelector("dialog").open, null, { timeout: 10000 });
+{
+  const b = await page.textContent("#dlg-body");
+  assert(b.includes("2 flows to turn on") && b.includes("start running on their triggers"), "turn-on preview warns about triggers");
+}
+await page.screenshot({ path: resolve(TOOL, "scripts/.e2e-out/14-turn-on.png") });
+await page.click("#dlg-ok");
+await page.waitForFunction(() => document.querySelector("#dlg-title").textContent === "Results" && document.querySelector("dialog").open, null, { timeout: 10000 });
+{
+  const w = (await page.evaluate(() => window.__mock.writes)).filter((x) => x.entity === "workflow");
+  assert(w.map((x) => x.id + ":" + x.rec.statecode).sort().join() === "f5:1,f7:1", "turn on: statecode 1 written for the ready flows only (" + w.map((x) => x.id).join() + ")");
+  const r = await page.textContent("#dlg-body");
+  assert(r.includes("Flow Odd Key") && r.includes("connection not bound"), "turn-on failure reported per flow");
+}
+await page.click("#dlg-cancel");
+await page.waitForFunction(() => (document.querySelector(".cons-groups")?.textContent || "").includes("Flows that are off · 3"), null, { timeout: 10000 });
+assert(true, "turned-on flow leaves the off list; the failed one stays");
 
 await finish();
