@@ -11,6 +11,7 @@
 // privileges and systemusers are paged (@odata.nextLink); `or` filters over 50 ids are rejected.
 // Run: npm run build && node scripts/e2e.mjs   (needs playwright + chromium available)
 import { launchPage } from "../../_shared/e2e-loader.mjs";
+import { checkDebugLog } from "../../_shared/e2e-debug.mjs";
 
 const TOOL = new URL("..", import.meta.url).pathname.replace(/\/$/, "");
 
@@ -505,5 +506,24 @@ await settle();
   assert(why.includes("Contact Reader via team Sales Readers: Local depth includes Basic: user owns the record"), "own record reached by Local depth via team in another BU");
   assert(why.includes("Deep depth includes Basic: user owns the record") && why.includes("Contact Appender: Local depth includes Basic"), "own record reached by Deep and by a direct role from another BU");
 }
+
+// ---- debug mode: the switch survives a reload, so start-up calls are in the log ----
+await checkDebugLog(page, assert, {
+  tool: "access-checker",
+  act: async () => {
+    await page.reload();
+    await page.waitForSelector("#debug-toggle");
+    assert(await page.$eval("#debug-toggle", (e) => e.checked), "access-checker: debug mode remembered across a reload");
+    await page.waitForTimeout(500);
+  },
+  readSaved: async (click) => {
+    await click();
+    await page.waitForFunction(() => window.__saved.length > 0);
+    const f = await page.evaluate(() => window.__saved.at(-1));
+    assert(/^access-checker-debug-.*\.txt$/.test(f.name), "access-checker: debug log file name " + f.name);
+    return f.content;
+  },
+  expect: [[/\[call\] #\d+ toolboxAPI\.connections\.getActiveConnection/, "records start-up host calls"]],
+});
 
 await finish();

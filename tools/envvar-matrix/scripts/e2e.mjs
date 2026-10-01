@@ -5,6 +5,7 @@
 import { mkdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { launchPage } from "../../_shared/e2e-loader.mjs";
+import { checkDebugLog } from "../../_shared/e2e-debug.mjs";
 
 const TOOL = new URL("..", import.meta.url).pathname.replace(/\/$/, "");
 const OUT = resolve(TOOL, "scripts/.e2e-out");
@@ -450,5 +451,27 @@ if (await page.$eval("dialog", (d) => d.open)) await page.click("#dlg-cancel");
 }
 await page.evaluate(() => { window.__mock.usePrimary("dev"); window.__mock.emit("connection:updated"); });
 await waitPrimary("SSS Dev");
+
+// ---- debug mode ----
+await checkDebugLog(page, assert, {
+  tool: "envvar-matrix",
+  act: async () => {
+    await page.click("#btn-refresh");
+    await page.waitForTimeout(500);
+  },
+  readSaved: async (click) => {
+    const n = await page.evaluate(() => window.__mock.saved.length);
+    await click();
+    await page.waitForFunction((k) => window.__mock.saved.length > k, n);
+    const f = await page.evaluate(() => window.__mock.saved.at(-1));
+    assert(/^envvar-matrix-debug-.*\.txt$/.test(f.name), "envvar-matrix: debug log file name " + f.name);
+    return f.content;
+  },
+  expect: [
+    [/\[call\] #\d+ dataverseAPI\.\w+ /, "records dataverseAPI calls"],
+    [/\[call\] #\d+ dataverseAPI\.\w+ ok \d+ ms/, "records results with timing"],
+    [/^connections: .*"target":"primary"/m, "header lists the connections"],
+  ],
+});
 
 await finish();

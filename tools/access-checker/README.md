@@ -63,6 +63,12 @@ Limitations (the platform verdict is always shown alongside and is right when th
 - Nested Entra groups are not resolved: only direct members of the group behind the team are considered.
 - Only explicit shares on the record are listed. Access that reaches it through a share of a related record (cascaded or inherited sharing through a parental relationship) may not appear.
 
+## Debug log
+
+For troubleshooting, tick **Debug log** in the footer, reproduce the problem, then **Save log**: a `access-checker-debug-<timestamp>.txt` file with every ToolBox, Dataverse and Power Platform API call the tool made (the exact query or request, the response or error, timing), notifications, connection events and uncaught errors. The switch is remembered for this tool; `?debug=1` also turns it on. Off, nothing is recorded.
+
+The file is written only where you save it. Secrets (keys named like password, secret, token, authorization) are redacted, and long strings, arrays and binary payloads are truncated, but responses still contain record data such as names and ids: review the file before you share it.
+
 ## Privacy
 
 All data stays between ToolBox and your Dataverse environment: the tool talks to Dataverse only through the ToolBox `dataverseAPI` bridge, requests no CSP exceptions, and sends nothing anywhere else. Exports are written to files you choose.

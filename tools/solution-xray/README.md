@@ -58,6 +58,12 @@ Notes:
 - Component type codes of 10000 and above are environment-specific (connection references, custom APIs, ...). They show as *Custom component (type N)* unless the zip reveals the table (a matching `connectionreferences` entry or a `customapis/` folder).
 - The risk score is a checklist, not a verdict. Read the evidence.
 
+## Debug log
+
+For troubleshooting, tick **Debug log** in the footer, reproduce the problem, then **Save log**: a `solution-xray-debug-<timestamp>.txt` file with every ToolBox, Dataverse and Power Platform API call the tool made (the exact query or request, the response or error, timing), notifications, connection events and uncaught errors. The switch is remembered for this tool; `?debug=1` also turns it on. Off, nothing is recorded.
+
+The file is written only where you save it. Secrets (keys named like password, secret, token, authorization) are redacted, and long strings, arrays and binary payloads are truncated, but responses still contain record data such as names and ids: review the file before you share it.
+
 ## Privacy
 
 All processing happens in the tool's page. There is no network access: no telemetry, no CDN, no fonts, no API calls, and no CSP exceptions are requested. The zip is read from disk through the ToolBox file API (or the browser file picker) and stays in memory for the session.

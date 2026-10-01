@@ -9,6 +9,7 @@ import { createRequire } from "node:module";
 import { mkdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { launchPage } from "../../_shared/e2e-loader.mjs";
+import { checkDebugLog } from "../../_shared/e2e-debug.mjs";
 
 const TOOL = new URL("..", import.meta.url).pathname.replace(/\/$/, "");
 const OUT = resolve(TOOL, "scripts/.e2e-out");
@@ -655,5 +656,45 @@ await page.waitForSelector("#rediag", { timeout: 15000 });
 await page.waitForTimeout(300);
 const b8 = await page.evaluate((w) => ({ updates: window.__mock.updates.length - w.updates, pubs: window.__mock.log.filter((x) => x === "PublishXml").length - w.pubs }), w6);
 assert(b8.updates === 1 && b8.pubs === 1, "bug 6: double-click on Confirm → one view update and one PublishXml: " + JSON.stringify(b8));
+
+// ---- debug mode: calls, results, failures and notifications; secrets redacted ----
+await page.click('.tab[data-tab="diagnose"]');
+await M(() => {
+  const m = window.__mock;
+  m.envs.primary.conn.clientSecret = "s3cret-value";
+  m.envs.primary.conn.accessToken = "eyJ-token-value";
+});
+const dbg = await checkDebugLog(page, assert, {
+  tool: "dependency-cleaner",
+  act: async () => {
+    await M(() => window.__mock.emit("connection:updated"));
+    await page.waitForFunction(() => !document.querySelector("#btn-run").disabled);
+    await M(() => { window.__mock.formsFail = true; });
+    await page.click("#btn-run");
+    await page.waitForFunction(() => !document.querySelector("#progress") || document.querySelector("#progress").hidden);
+    await page.waitForTimeout(300);
+    await M(() => { window.__mock.formsFail = false; });
+  },
+  readSaved: async (click) => {
+    const n = await M(() => window.__mock.saved.length);
+    await click();
+    await page.waitForFunction((k) => window.__mock.saved.length > k, n);
+    const f = await M(() => window.__mock.saved.at(-1));
+    assert(/^dependency-cleaner-debug-\d{4}-\d\d-\d\dT[\d-]+\.txt$/.test(f.name), "dependency-cleaner: debug log file name " + f.name);
+    return f.content;
+  },
+  expect: [
+    [/\[event\] connection:updated/, "records connection events"],
+    [/\[call\] #\d+ dataverseAPI\.queryData \["solutioncomponents\?\$select=[^"]*_solutionid_value eq 0{8}-/, "records the exact query text"],
+    [/\[call\] #\d+ dataverseAPI\.queryData ok \d+ ms \{"value":\[\{"solutioncomponentid"/, "records the response body"],
+    [/ERROR \[call\] #\d+ dataverseAPI\.queryData failed after \d+ ms \{"name":"Error","message":"mock: systemforms unavailable"/, "records failed calls with the error"],
+    [/\[redacted\]/, "marks redacted secrets"],
+  ],
+});
+assert(!dbg.includes("s3cret-value") && !dbg.includes("eyJ-token-value"), "dependency-cleaner: connection secrets never reach the log");
+const lines = dbg.split("\n").length;
+await M(() => window.__mock.emit("connection:updated"));
+await page.waitForTimeout(300);
+assert(await page.$eval("#debug-save", (e) => e.hidden) && lines > 20, "dependency-cleaner: nothing is recorded while debug mode is off");
 
 await finish();

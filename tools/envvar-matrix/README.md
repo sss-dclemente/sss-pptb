@@ -63,6 +63,12 @@ Notes:
 - Consolidation repoints each flow key to the kept reference. With **Collapse duplicate keys in flows** (on by default), keys that then point to the same reference (same `api.name`, `runtimeSource` and `impersonation`) fold into one: `host.connectionName` and `$connections['key']` expressions in the definition are repointed, and a key is dropped only when no other use of it is left in the definition (otherwise it stays, with a caution in the preview). Flows outside solutions ("My flows") use connections, not references, and are not touched. Canvas apps are not rewritten: a reference a canvas app uses is kept (its dependency blocks the delete).
 - Queries follow `@odata.nextLink`, so environments with more than 5 000 environment variables or connection references load completely.
 
+## Debug log
+
+For troubleshooting, tick **Debug log** in the footer, reproduce the problem, then **Save log**: a `envvar-matrix-debug-<timestamp>.txt` file with every ToolBox, Dataverse and Power Platform API call the tool made (the exact query or request, the response or error, timing), notifications, connection events and uncaught errors. The switch is remembered for this tool; `?debug=1` also turns it on. Off, nothing is recorded.
+
+The file is written only where you save it. Secrets (keys named like password, secret, token, authorization) are redacted, and long strings, arrays and binary payloads are truncated, but responses still contain record data such as names and ids: review the file before you share it.
+
 ## Privacy
 
 All data stays between ToolBox and your Dataverse environments: the tool talks to Dataverse only through the ToolBox `dataverseAPI` bridge, requests no CSP exceptions, and sends nothing anywhere else. Snapshots and exports are written to files you choose.

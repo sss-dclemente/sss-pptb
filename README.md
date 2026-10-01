@@ -11,4 +11,6 @@ Power Platform ToolBox tools by [Simple Smooth Safe](https://simplesmoothsafe.co
 
 Docs: [PPTB research notes](docs/PPTB-NOTES.md) · [port plan](docs/PORT-PLAN.md) · [backlog](docs/BACKLOG.md) · [matrix plan](docs/ENVVAR-MATRIX-PLAN.md) · [PP API spike](docs/PP-API-SPIKE.md) · [access checker plan](docs/ACCESS-CHECKER-PLAN.md) · [dependency cleaner plan](docs/DEPENDENCY-CLEANER-PLAN.md) · [release checklist](docs/RELEASE.md) · [screenshot shot list](docs/SCREENSHOTS.md) · [tool ideas](pptb-tool-ideas.md)
 
-Each tool is a self-contained npm package under `tools/`; `tools/_shared/` holds the host adapter, DOM helpers and design tokens they import by relative path (bundled by Vite, so published packages stay self-contained). Build with `npm install && npm run build` inside the tool folder; load in ToolBox via Debug → Load Local Tool.
+Each tool is a self-contained npm package under `tools/`; `tools/_shared/` holds the host adapter, debug log, DOM helpers and design tokens they import by relative path (bundled by Vite, so published packages stay self-contained). Build with `npm install && npm run build` inside the tool folder; load in ToolBox via Debug → Load Local Tool.
+
+Every tool has a **Debug log** switch in its footer: it records each ToolBox / Dataverse / Power Platform API call with its request, response or error, and saves it as a `.txt` file to attach to a bug report or a probe (secrets redacted; record data truncated but included).

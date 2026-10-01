@@ -63,6 +63,12 @@ Then in ToolBox: Debug → *Load Local Tool* → select the `tools/dependency-cl
 - Converting a table to a shell in a solution other developers use removes subcomponents they may rely on: read the list in the preview.
 - Ownership (above) relies on the base solution Dataverse reports, table / column metadata and System membership. A custom form or view contained by several managed solutions of different publishers is treated as not msdyn-owned.
 
+## Debug log
+
+For troubleshooting, tick **Debug log** in the footer, reproduce the problem, then **Save log**: a `dependency-cleaner-debug-<timestamp>.txt` file with every ToolBox, Dataverse and Power Platform API call the tool made (the exact query or request, the response or error, timing), notifications, connection events and uncaught errors. The switch is remembered for this tool; `?debug=1` also turns it on. Off, nothing is recorded.
+
+The file is written only where you save it. Secrets (keys named like password, secret, token, authorization) are redacted, and long strings, arrays and binary payloads are truncated, but responses still contain record data such as names and ids: review the file before you share it.
+
 ## Privacy
 
 All data stays between ToolBox and your Dataverse environments: the tool talks to Dataverse only through the ToolBox `dataverseAPI` bridge, requests no CSP exceptions, and sends nothing anywhere else. Backups and exports are written to files you choose.
