@@ -2,8 +2,9 @@
  * Backup (D5) and restore. Form XML edits cannot be undone through the platform, so the original
  * formxml / fetchxml / layoutxml and the full solution membership are saved before any write.
  */
-import { fetchComponents, fetchForms, fetchViews, type DataverseLike, type FormRecord, type ViewRecord } from "./fetch";
-import { CT, type Diagnosis, type SolutionInfo } from "./types";
+import { fetchComponents, fetchForms, fetchViews, retrieveRequired, type DataverseLike, type FormRecord, type ViewRecord } from "./fetch";
+import { CT, type Diagnosis, type NamedComponent, type SolutionInfo } from "./types";
+import type { UpgradeAnalysis, UpgradePlan } from "./upgrade";
 import { opLabel, type Op, type Prepared } from "./write";
 
 export const BACKUP_KIND = "sss-dependency-cleaner-backup";
@@ -28,6 +29,8 @@ export interface Backup {
   views: ViewRecord[];
   /** human-readable list of the operations the backup was taken for */
   operations: string[];
+  /** model-driven app components removed by an Upgrade blockers fix (re-added on restore) */
+  apps?: { id: string; name: string; components: NamedComponent[] }[];
 }
 
 export function buildBackup(d: Diagnosis, p: Prepared, ops: Op[]): Backup {
@@ -51,6 +54,29 @@ export function buildBackup(d: Diagnosis, p: Prepared, ops: Op[]): Backup {
   };
 }
 
+/** Backup before Upgrade blockers fixes: Dev membership of S plus the app components the plan removes. */
+export function buildUpgradeBackup(a: UpgradeAnalysis, plan: UpgradePlan): Backup {
+  const byRow = new Map(a.devComponents.map((c) => [c.rowId, c]));
+  return {
+    kind: BACKUP_KIND,
+    version: 1,
+    takenAt: new Date().toISOString(),
+    environment: { name: a.environment.name, url: a.environment.url },
+    solution: { id: a.solution.id, uniqueName: a.solution.uniqueName, friendlyName: a.solution.friendlyName },
+    membership: a.devComponents.map((c) => ({
+      objectId: c.objectId,
+      type: c.type,
+      behavior: c.behavior,
+      rootObjectId: c.rootRowId ? (byRow.get(c.rootRowId)?.objectId ?? null) : null,
+      name: c.name ?? c.objectId,
+    })),
+    forms: [],
+    views: [],
+    operations: plan.ops.map(opLabel),
+    apps: plan.apps,
+  };
+}
+
 export function backupFileName(solution: string, at = new Date()): string {
   const ts = at.toISOString().replace(/[:.]/g, "-").slice(0, 19);
   return `dependency-cleaner-backup-${solution.replace(/[^a-z0-9._-]+/gi, "_")}-${ts}.json`;
@@ -66,6 +92,7 @@ export function parseBackup(text: string): Backup {
   if (o?.kind !== BACKUP_KIND) throw new Error("not a Dependency Cleaner backup");
   if (o.version !== 1) throw new Error(`unsupported backup version ${String(o.version)}`);
   if (!o.solution?.uniqueName || !Array.isArray(o.membership) || !Array.isArray(o.forms) || !Array.isArray(o.views)) throw new Error("backup is incomplete");
+  if (o.apps !== undefined && (!Array.isArray(o.apps) || o.apps.some((x) => !x?.id || !Array.isArray(x.components)))) throw new Error("backup apps are malformed");
   return o as Backup;
 }
 
@@ -135,5 +162,23 @@ export async function planRestore(api: DataverseLike, b: Backup, solutions: Solu
     tables.add(now.table || v.table);
   }
   if (tables.size) ops.push({ kind: "publish", tables: [...tables].filter(Boolean).sort() });
+
+  // app components removed by an Upgrade blockers fix: re-add the ones the app no longer requires
+  const apps: NamedComponent[] = [];
+  for (const app of b.apps ?? []) {
+    let present: Set<string>;
+    try {
+      present = new Set((await retrieveRequired(api, app.id, CT.AppModule)).map((r) => r.requiredId));
+    } catch (e) {
+      notes.push(`App ${app.name}: components could not be read (${(e as Error).message}); not restored.`);
+      continue;
+    }
+    const missing = app.components.filter((c) => !present.has(c.id.toLowerCase()));
+    if (!missing.length) continue;
+    const comp = { type: CT.AppModule, id: app.id, name: app.name };
+    ops.push({ kind: "add-app-components", app: comp, components: missing, reason: "re-add removed app components" });
+    apps.push(comp);
+  }
+  if (apps.length) ops.push({ kind: "publish-apps", apps });
   return { solution: sol, ops, notes };
 }

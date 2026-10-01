@@ -17,6 +17,7 @@ Built by [Simple Smooth Safe](https://simplesmoothsafe.com).
   - Relationships, sitemap, apps, ribbon, charts, processes, web resources and plugin steps are report only, with a link to the solution in the maker portal.
 - **Preview → backup → confirm** — the preview lists every operation with a before/after XML diff. Confirm stays disabled until the backup (`dependency-cleaner-backup-<solution>-<timestamp>.json`: original form/view XML and the full solution membership) is saved. Then: membership changes → form/view updates → one `PublishXml` for the touched tables → the diagnosis runs again and shows fixed / still present.
 - **Restore** — load a backup, preview, apply: original XML written back, removed components re-added, tables put back to all assets, then published. A backup only restores into the environment it was taken in (its url is recorded in the file).
+- **Upgrade blockers** — before you upgrade a managed solution in Test or Prod (secondary connection), see what the upgrade will delete and what will block each delete ("cannot be deleted, referenced by…"), all in one run instead of one failed import per blocker. See *Upgrade blockers* below.
 - **Offline** — open an exported solution zip and read `solution.xml` `<MissingDependencies>` (the list the import checks), grouped and filtered the same way. No connection needed.
 - **Name lookups that fail** (metadata, form or view names) are shown as a warning above the findings, and every finding that involves such a component is report only: an edit keyed on an unresolved name would change nothing. Reads by id run 4 at a time; a throttled read (HTTP 429) is retried once after its `Retry-After`.
 - **Export** — findings as JSON or CSV (cells a spreadsheet would read as a formula are prefixed with `'`).
@@ -33,6 +34,22 @@ A component belongs to the solution that **created** it, not to every managed so
 A dependency is present in the target when any managed solution that contains the component is installed there.
 
 Safety: managed solutions are never offered and writes are refused if the solution turns out to be managed when re-checked right before writing; a Production-looking connection needs an explicit tick. Changing the connection clears the diagnosis, the preview and the backup tick; Confirm and Restore re-read the current connection and refuse when it is not the one the plan was made on. After a new diagnosis, a picked fix the finding no longer offers is dropped. Confirm runs once, however often it is clicked, and the re-diagnosis after a fix always covers the solution that was fixed, whatever the picker shows.
+
+## Upgrade blockers
+
+Pick the Dev solution you are about to ship; the target is the secondary connection, where the solution is installed managed.
+
+1. **Removed** — components in the target's solution that Dev's solution no longer has. Matched by id; model-driven apps, canvas apps / custom pages and web resources also by unique name (their ids can differ between environments). A table Dev includes with all assets keeps every subcomponent that still exists in Dev.
+2. **Deleted** — removed and held by no other managed solution in the target. The rest **survives** (listed with the solution that holds it).
+3. **Blockers** — `RetrieveDependenciesForDelete` in the target for each deleted component, the same check the import runs. Dependents deleted by the same upgrade, or part of a table it deletes, are dropped.
+4. **Where to fix** — from the dependent's top layer in the target (`msdyn_componentlayers`; when that is unavailable, from solution membership, flagged):
+   - *Fix in Dev*: the top layer is your solution and Dev's copy still references the component (`RetrieveRequiredComponents` in Dev). For a model-driven app that still lists a custom page, table, form, view or chart: **Remove from the app** (`RemoveAppComponents` in Dev + `PublishXml` for the app), behind preview → backup → confirm. Other dependents can be removed from the solution too, so the upgrade deletes both.
+   - *Release first*: another managed solution's layer references it. Ship a new version of that solution and upgrade it first; the tab shows the order.
+   - *Target unmanaged*: an unmanaged (Active) layer in the target references it. Report only: remove the active customization or edit it there.
+   - *Resolved*: your solution's new version no longer references it. No action.
+5. **Runtime breaks** — deleted custom pages and canvas apps whose unique name appears in the target's JavaScript web resources (`navigateTo({ pageType: "custom", name })`) or site maps. Not tracked as dependencies: the upgrade succeeds and these fail afterwards.
+
+Export the result as a Markdown checklist (release ticket) or CSV. The Restore tab re-adds app components removed by a fix.
 
 ## Install
 
@@ -51,12 +68,13 @@ Then in ToolBox: Debug → *Load Local Tool* → select the `tools/dependency-cl
 ## Usage
 
 1. Primary connection = the dev environment. Optionally a secondary connection = the target environment.
-2. **Diagnose**: pick the solution, adjust the filter, run.
+2. **Diagnose**: pick the solution, adjust the filter, run. Or **Upgrade blockers**: pick the solution you are about to upgrade in the target, Analyze.
 3. Pick a fix on the findings you want to act on, **Preview fixes…**, review, **Download backup**, **Confirm and apply**.
 4. Export the solution again.
 
 ## Limitations
 
+- **Upgrade blockers, UNVERIFIED against a live environment**: the response shape of `RetrieveDependenciesForDelete` through the host, the `msdyn_componentlayers` filter (`msdyn_componentid` as a quoted string, `msdyn_solutioncomponentname` = `CanvasApp`, `AppModule`, `SystemForm`…) and `"Active"` as the unmanaged layer's name, `AddAppComponents` / `RemoveAppComponents` with `@odata.type` component references (`entity` / `entityid` for a table), and whether imported components keep their ids (apps, canvas apps and web resources are also matched by unique name). Run the probe in docs/UPGRADE-BLOCKERS-PLAN.md §4 first.
 - **UNVERIFIED in the PPTB host**: `AddSolutionComponent` / `RemoveSolutionComponent` through `dataverseAPI.execute` (action, JSON body), and restoring a shell table to "all assets" with remove + add. The request shapes follow the Dataverse Web API; try them in a sandbox before relying on them.
 - `RetrieveRequiredComponents` is one call per component: a large solution means hundreds of calls. They run 4 at a time, can be cancelled, and are cached for the session. Its response shape through the host is also **UNVERIFIED**; the tool accepts `EntityCollection` as an array or as `{ Entities }`.
 - Forms with msdyn PCF controls, libraries or event handlers get warnings, not edits. A view whose only filter or sort used msdyn columns gets a warning.
@@ -80,7 +98,7 @@ npm run build       # typecheck + Vite IIFE bundle + dist checks
 npm run dev-watch   # rebuild on change; reload the tool tab in ToolBox
 npm run validate    # @pptb/validate manifest rules
 npm run xml-test    # form / view XML stripping
-npm run e2e         # Playwright test against dist/ with a mocked ToolBox host (needs playwright + Chromium)
+npm run e2e         # Playwright tests against dist/ with a mocked ToolBox host (needs playwright + Chromium): Diagnose/Fix/Restore, then Upgrade blockers
 ```
 
 Stack: TypeScript, Vite, no framework, JSZip (offline tab). Types from `@pptb/types`.

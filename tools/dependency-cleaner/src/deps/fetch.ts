@@ -14,6 +14,18 @@ export interface DataverseLike {
   update: (entity: string, id: string, record: Record<string, unknown>, target?: Target) => Promise<void>;
 }
 
+/** The same host bound to one connection: every call goes to `target`, whatever target the caller passes. */
+export function onTarget(api: DataverseLike, target: Target): DataverseLike {
+  return {
+    queryData: (q) => api.queryData(q, target),
+    getSolutions: (cols) => api.getSolutions(cols, target),
+    getAllEntitiesMetadata: (props) => api.getAllEntitiesMetadata(props, target),
+    getEntityRelatedMetadata: (entity, path, props) => api.getEntityRelatedMetadata(entity, path, props, target),
+    execute: (req) => api.execute(req, target),
+    update: (entity, id, record) => api.update(entity, id, record, target),
+  };
+}
+
 const s = (v: unknown): string | null => (v == null || v === "" ? null : String(v));
 export const lid = (v: unknown): string => String(v ?? "").toLowerCase();
 
@@ -173,7 +185,7 @@ export interface DependencyRow {
 }
 
 /** RetrieveRequiredComponentsResponse.EntityCollection: the host returns the body unchanged, so accept every plausible shape. */
-function dependencyRows(body: unknown): Row[] {
+export function dependencyRows(body: unknown): Row[] {
   const b = body as Record<string, unknown> | null;
   if (!b) return [];
   const ec = b.EntityCollection as unknown;
@@ -186,7 +198,7 @@ function dependencyRows(body: unknown): Row[] {
   return [];
 }
 
-const pick = (r: Row, name: string): unknown => r[name] ?? r[`_${name}_value`];
+export const pick = (r: Row, name: string): unknown => r[name] ?? r[`_${name}_value`];
 
 export async function retrieveRequired(api: DataverseLike, objectId: string, componentType: number): Promise<DependencyRow[]> {
   const id = assertGuid(objectId, "component id");
@@ -197,6 +209,24 @@ export async function retrieveRequired(api: DataverseLike, objectId: string, com
     requiredType: Number(pick(r, "requiredcomponenttype") ?? 0),
     requiredParentId: pick(r, "requiredcomponentparentid") ? lid(pick(r, "requiredcomponentparentid")) : null,
     requiredBaseSolutionId: pick(r, "requiredcomponentbasesolutionid") ? lid(pick(r, "requiredcomponentbasesolutionid")) : null,
+  }));
+}
+
+export interface DependentRow {
+  dependentId: string;
+  dependentType: number;
+  dependentParentId: string | null;
+}
+
+/** Components that block deleting this one (RetrieveDependenciesForDelete). Guid parameter → queryData (§12). */
+export async function retrieveDependenciesForDelete(api: DataverseLike, objectId: string, componentType: number): Promise<DependentRow[]> {
+  const id = assertGuid(objectId, "component id");
+  if (!Number.isInteger(componentType)) throw new Error(`bad component type ${componentType}`);
+  const body = await api.queryData(`RetrieveDependenciesForDelete(ObjectId=${id},ComponentType=${componentType})`);
+  return dependencyRows(body).map((r) => ({
+    dependentId: lid(pick(r, "dependentcomponentobjectid")),
+    dependentType: Number(pick(r, "dependentcomponenttype") ?? 0),
+    dependentParentId: pick(r, "dependentcomponentparentid") ? lid(pick(r, "dependentcomponentparentid")) : null,
   }));
 }
 
