@@ -1,3 +1,4 @@
+import { mountDebug } from "../../_shared/debug-ui";
 import { $, append, badge, card, emptyState, h, table, wireTabs, type BadgeKind } from "../../_shared/dom";
 import { dataverse, getConnections, initTheme, inToolbox, notify, onConnectionChange, saveText } from "../../_shared/host";
 import { columnAccess } from "./access/columns";
@@ -567,4 +568,5 @@ async function main(): Promise<void> {
   updateCheckButton();
 }
 
+mountDebug(document.querySelector("footer"), "access-checker");
 void main();

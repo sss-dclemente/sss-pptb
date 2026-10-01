@@ -214,3 +214,8 @@ tr:last-child td { border-bottom: none; }
 
 .warnings { border-left: 3px solid var(--status-warn-fg); background: var(--status-warn-bg); color: var(--status-warn-fg); padding: var(--s-2) var(--s-3); border-radius: var(--radius-sm); }
 
+
+/* debug mode switch (debug-ui.ts) */
+.debugctl { display: inline-flex; flex-wrap: wrap; gap: var(--s-2); align-items: center; }
+.debugctl label { display: inline-flex; gap: var(--s-1); align-items: center; cursor: pointer; }
+.debugctl input { accent-color: var(--accent); }

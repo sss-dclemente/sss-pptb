@@ -1,3 +1,4 @@
+import { mountDebug } from "../../_shared/debug-ui";
 import { $, badge, card, emptyState, h, showDialog, wireTabs } from "../../_shared/dom";
 import { dataverse, getConnections, initTheme, inToolbox, notify, onConnectionChange, openText, powerplatform, saveText } from "./host";
 import { deploymentSettings, matrixCsv, safeFileName, snapshot } from "./matrix/export";
@@ -1439,6 +1440,7 @@ function wire(): void {
   $("#host-mode").textContent = inToolbox() ? "Running inside Power Platform ToolBox" : "Standalone mode (snapshots only)";
 }
 
+mountDebug(document.querySelector("footer"), "envvar-matrix");
 void initTheme((t) => document.documentElement.setAttribute("data-theme", t));
 wire();
 void refresh();

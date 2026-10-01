@@ -1,3 +1,4 @@
+import { mountDebug } from "../../_shared/debug-ui";
 import { $, badge, card, emptyState, foldCard, h, table, wireTabs } from "../../_shared/dom";
 import { filesFromDrop, initTheme, inToolbox, notify, pickZips, saveText } from "./host";
 import { diffSolutions, type SolutionDiff } from "./xray/diff";
@@ -422,6 +423,7 @@ function wire(): void {
   $("#host-mode").textContent = inToolbox() ? "Running inside Power Platform ToolBox" : "Standalone mode (browser)";
 }
 
+mountDebug(document.querySelector("footer"), "solution-xray");
 void initTheme((t) => document.documentElement.setAttribute("data-theme", t));
 wire();
 renderAll();

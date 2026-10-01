@@ -1,3 +1,4 @@
+import { mountDebug } from "../../_shared/debug-ui";
 import { $, append, badge, emptyState, h, showDialog, wireTabs, type Child } from "../../_shared/dom";
 import { backupFileName, buildBackup, parseBackup, planRestore, type Backup, type RestorePlan } from "./deps/backup";
 import { parseFilter } from "./deps/classify";
@@ -634,6 +635,7 @@ function wire(): void {
   $("#host-mode").textContent = inToolbox() ? "Running inside Power Platform ToolBox" : "Standalone mode (Offline tab only)";
 }
 
+mountDebug(document.querySelector("footer"), "dependency-cleaner");
 void initTheme((t) => document.documentElement.setAttribute("data-theme", t));
 wire();
 renderDiagnosis();

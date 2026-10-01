@@ -5,6 +5,7 @@ import { createRequire } from "node:module";
 import { writeFileSync, mkdirSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { launchPage } from "../../_shared/e2e-loader.mjs";
+import { checkDebugLog } from "../../_shared/e2e-debug.mjs";
 
 const TOOL = new URL("..", import.meta.url).pathname.replace(/\/$/, "");
 const OUT = resolve(TOOL, "scripts/.e2e-out");
@@ -408,5 +409,16 @@ await page.click("#cmp-hide-root");
 const [dlc2] = await Promise.all([page.waitForEvent("download"), page.click("#cmp-export")]);
 const diffJson2 = JSON.parse(readFileSync(await dlc2.path(), "utf8"));
 assert(diffJson2.entries.some((e) => e.category === "Root component"), "compare export includes root rows when filter off");
+
+// ---- debug mode (standalone: no host, the log still records the switch and saves as a download) ----
+await checkDebugLog(page, assert, {
+  tool: "solution-xray",
+  act: async () => {},
+  readSaved: async (click) => {
+    const [dl] = await Promise.all([page.waitForEvent("download"), click()]);
+    assert(/^solution-xray-debug-\d{4}-\d\d-\d\dT[\d-]+\.txt$/.test(dl.suggestedFilename()), "solution-xray: debug log file name " + dl.suggestedFilename());
+    return readFileSync(await dl.path(), "utf8");
+  },
+});
 
 await finish();
