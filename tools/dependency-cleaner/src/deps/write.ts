@@ -53,7 +53,10 @@ export type Op =
   | { kind: "add"; component: NamedComponent; doNotIncludeSubcomponents: boolean; reason: string }
   | { kind: "update-form"; edit: FormEdit }
   | { kind: "update-view"; edit: ViewEdit }
-  | { kind: "publish"; tables: string[] };
+  | { kind: "publish"; tables: string[] }
+  | { kind: "remove-app-components"; app: NamedComponent; components: NamedComponent[]; reason: string }
+  | { kind: "add-app-components"; app: NamedComponent; components: NamedComponent[]; reason: string }
+  | { kind: "publish-apps"; apps: NamedComponent[] };
 
 export interface OpResult {
   op: Op;
@@ -188,6 +191,37 @@ export function publishXml(tables: string[]): string {
   return `<importexportxml><entities>${tables.map((t) => `<entity>${esc(t)}</entity>`).join("")}</entities></importexportxml>`;
 }
 
+/** Table and primary key of a component a model-driven app can list (AddAppComponents / RemoveAppComponents). */
+const APP_COMPONENT_REF: Record<number, [string, string]> = {
+  [CT.Entity]: ["entity", "entityid"],
+  [CT.View]: ["savedquery", "savedqueryid"],
+  [CT.Form]: ["systemform", "formid"],
+  [CT.Chart]: ["savedqueryvisualization", "savedqueryvisualizationid"],
+  [CT.SiteMap]: ["sitemap", "sitemapid"],
+  [CT.Workflow]: ["workflow", "workflowid"],
+  300: ["canvasapp", "canvasappid"],
+};
+export const isAppComponentType = (t: number): boolean => t in APP_COMPONENT_REF;
+
+export function appComponentsRequest(op: "AddAppComponents" | "RemoveAppComponents", app: { id: string }, components: { id: string; type: number }[]): DataverseAPI.ExecuteRequest {
+  return {
+    operationName: op,
+    operationType: "action",
+    parameters: {
+      AppId: app.id,
+      Components: components.map((c) => {
+        const ref = APP_COMPONENT_REF[c.type];
+        if (!ref) throw new Error(`${typeName(c.type)} cannot be an app component`);
+        return { "@odata.type": `Microsoft.Dynamics.CRM.${ref[0]}`, [ref[1]]: c.id };
+      }),
+    },
+  };
+}
+
+export function publishAppsXml(appIds: string[]): string {
+  return `<importexportxml><appmodules>${appIds.map((id) => `<appmodule>${id.replace(/[^0-9a-f-]/gi, "")}</appmodule>`).join("")}</appmodules></importexportxml>`;
+}
+
 export const removeRequest = (c: { id: string; type: number }, solution: string): DataverseAPI.ExecuteRequest => ({
   operationName: "RemoveSolutionComponent",
   operationType: "action",
@@ -210,7 +244,7 @@ export async function executeOps(api: DataverseLike, ops: Op[], solution: string
   for (let i = 0; i < ops.length; i++) {
     const op = ops[i];
     onStep?.(i, ops.length);
-    if (failed && !(op.kind === "publish" && xmlWritten)) {
+    if (failed && !((op.kind === "publish" || op.kind === "publish-apps") && xmlWritten)) {
       out.push({ op, ok: false, skipped: true, error: "not run: an earlier step failed" });
       continue;
     }
@@ -224,6 +258,10 @@ export async function executeOps(api: DataverseLike, ops: Op[], solution: string
         await api.update("savedquery", op.edit.view.id, { fetchxml: op.edit.after.fetchxml, layoutxml: op.edit.after.layoutxml });
         xmlWritten = true;
       } else if (op.kind === "publish") await api.execute({ operationName: "PublishXml", operationType: "action", parameters: { ParameterXml: publishXml(op.tables) } });
+      else if (op.kind === "remove-app-components" || op.kind === "add-app-components") {
+        await api.execute(appComponentsRequest(op.kind === "remove-app-components" ? "RemoveAppComponents" : "AddAppComponents", op.app, op.components));
+        xmlWritten = true;
+      } else if (op.kind === "publish-apps") await api.execute({ operationName: "PublishXml", operationType: "action", parameters: { ParameterXml: publishAppsXml(op.apps.map((a) => a.id)) } });
       out.push({ op, ok: true });
     } catch (e) {
       failed = true;
@@ -246,6 +284,12 @@ export function opLabel(op: Op): string {
       return `Update view ${op.edit.view.name} (${op.edit.view.table}): fetchxml + layoutxml`;
     case "publish":
       return `PublishXml ${op.tables.join(", ")}`;
+    case "remove-app-components":
+      return `RemoveAppComponents ${op.app.name}: ${op.components.map((c) => `${typeName(c.type)} ${c.name}`).join(", ")}`;
+    case "add-app-components":
+      return `AddAppComponents ${op.app.name}: ${op.components.map((c) => `${typeName(c.type)} ${c.name}`).join(", ")}`;
+    case "publish-apps":
+      return `PublishXml app ${op.apps.map((a) => a.name).join(", ")}`;
   }
 }
 

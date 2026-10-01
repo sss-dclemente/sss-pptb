@@ -1,6 +1,12 @@
 # UPGRADE-BLOCKERS-PLAN — upgrade pre-flight for "cannot be deleted" (F2)
 
-Status: DRAFT, decisions D1–D8 need owner approval.
+Status: BUILT in Dependency Cleaner 1.1.0 (tab **Upgrade blockers**, `src/deps/upgrade.ts`, `src/upgrade-ui.ts`, `scripts/upgrade-e2e.mjs`). Owner approved building on 2026-10-01 before the §4 probe ran: every UNVERIFIED call below is parsed defensively and has a fallback. Run the probe and adjust if the real shapes differ.
+
+Built as planned, plus:
+- D2: apps, canvas apps / custom pages and web resources are also matched by **unique name** between Dev and target, in case imported ids differ (the §4 question). Fixes look the app and the canvas app up in Dev by unique name.
+- When `msdyn_componentlayers` fails or returns nothing, the dependent is placed by solution membership in the target and flagged (order and unmanaged layer unknown).
+- D8: JS web resources and site maps only; `appaction` scanning is deferred.
+- Restore re-adds app components removed by a fix (`AddAppComponents` + `PublishXml`).
 
 One-liner: before you upgrade solution S in Test/Prod, list every component the upgrade will delete, every component that will block that delete, **where** the blocker lives (S in Dev, another managed solution, or the unmanaged layer in the target), and the fix. Canvas apps and custom pages come first.
 

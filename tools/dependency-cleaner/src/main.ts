@@ -7,12 +7,14 @@ import { fetchEnvironmentId, fetchSolutionManaged, fetchSolutions, MetaCache, ty
 import { readSolutionZip, refName, type OfflineResult } from "./deps/offline";
 import { CT, DEFAULT_FILTER, typeName, type Diagnosis, type Finding, type FixKind, type SolutionInfo } from "./deps/types";
 import { buildOps, executeOps, opLabel, prepare, xmlDiff, type Op, type OpResult, type Prepared } from "./deps/write";
+import { initUpgrade, upgradeOnConnections } from "./upgrade-ui";
 import { dataverse, getConnections, initTheme, inToolbox, notify, onConnectionChange, openText, pickBinary, saveText, type LiveConnection } from "./host";
 
 // ---------- state ----------
 let conns: LiveConnection[] = [];
 let solutions: SolutionInfo[] = [];
 let targetSolutions: Set<string> | null = null;
+let targetSolutionList: SolutionInfo[] | null = null;
 let meta = new MetaCache();
 /** RetrieveRequiredComponents cache per environment url for the session */
 const reqCaches = new Map<string, Map<string, DependencyRow[]>>();
@@ -86,7 +88,8 @@ async function loadConnections(): Promise<void> {
   conns = await getConnections();
   meta = new MetaCache();
   envId = undefined;
-  if (connKey(conns) !== before) {
+  const changed = connKey(conns) !== before;
+  if (changed) {
     // everything read or planned belongs to the previous environment
     connGen++;
     diagnosis = null;
@@ -109,6 +112,7 @@ async function loadConnections(): Promise<void> {
   const a = api();
   solutions = [];
   targetSolutions = null;
+  targetSolutionList = null;
   if (a && p) {
     setStatus("Loading solutions…");
     try {
@@ -118,7 +122,8 @@ async function loadConnections(): Promise<void> {
     }
     if (s) {
       try {
-        targetSolutions = new Set((await fetchSolutions(a, "secondary")).map((x) => x.uniqueName.toLowerCase()));
+        targetSolutionList = await fetchSolutions(a, "secondary");
+        targetSolutions = new Set(targetSolutionList.map((x) => x.uniqueName.toLowerCase()));
       } catch (e) {
         await notify("Target load failed", `${s.conn.name}: ${(e as Error).message}`, "warning");
       }
@@ -131,6 +136,7 @@ async function loadConnections(): Promise<void> {
   sel.replaceChildren(...(pickable.length ? pickable.map((x) => h("option", { value: x.id }, `${x.friendlyName} (${x.uniqueName}) ${x.version}`)) : [h("option", { value: "" }, p ? "No unmanaged solutions" : "No connection")]));
   if ([...sel.options].some((o) => o.value === prev)) sel.value = prev;
   $<HTMLButtonElement>("#btn-run").disabled = !pickable.length;
+  upgradeOnConnections(changed);
 }
 
 // ---------- diagnose ----------
@@ -514,7 +520,7 @@ function renderRestore(error?: string): void {
     return;
   }
   const b = restore.backup;
-  body.append(h("p", { class: "caption" }, `Backup of ${b.solution.uniqueName} from ${b.environment.name}, ${b.takenAt}. ${b.membership.length} members, ${b.forms.length} forms, ${b.views.length} views.`));
+  body.append(h("p", { class: "caption" }, `Backup of ${b.solution.uniqueName} from ${b.environment.name}, ${b.takenAt}. ${b.membership.length} members, ${b.forms.length} forms, ${b.views.length} views${b.apps?.length ? `, ${b.apps.length} app(s)` : ""}.`));
   if (error) body.append(h("div", { class: "danger-banner", id: "restore-error" }, error));
   if (!restore.plan) return;
   for (const n of restore.plan.notes) body.append(h("div", { class: "warnings" }, n));
@@ -630,6 +636,17 @@ function wire(): void {
     if (diagnosis) void exportFile(`dependency-findings.${safeFileName(diagnosis.solution.uniqueName)}.csv`, findingsCsv(diagnosis), "text/csv");
   });
   wireDrop();
+  initUpgrade({
+    api,
+    primary,
+    secondary,
+    currentPrimary,
+    devSolutions: () => solutions,
+    targetSolutions: () => targetSolutionList,
+    isProd,
+    sameUrl,
+    setStatus,
+  });
   onConnectionChange(() => void loadConnections().then(renderDiagnosis));
   $("#host-mode").textContent = inToolbox() ? "Running inside Power Platform ToolBox" : "Standalone mode (Offline tab only)";
 }

@@ -51,6 +51,12 @@ pre.diff .ctx { display: block; }
 .leaving label { display: flex; gap: var(--s-2); align-items: center; }
 .leaving input { accent-color: var(--accent); }
 .danger-banner { border-left: 3px solid var(--status-bad-fg); background: var(--status-bad-bg); color: var(--status-bad-fg); padding: var(--s-2) var(--s-3); border-radius: var(--radius-sm); font-weight: var(--fw-bold); }
+/* upgrade blockers */
+.toolbar .spacer { flex: 1; }
+.ub-section { display: flex; flex-direction: column; gap: var(--s-2); }
+.ub-section h3 { font-size: var(--fs-body); }
+.finding[data-location="dev"] { border-left-color: var(--status-warn-fg); }
+ul.plain { margin: 0; padding-left: var(--s-5); font-size: var(--fs-caption); }
 .dropzone { margin-top: var(--s-4) !important; display: flex; flex-direction: column; gap: var(--s-2); align-items: center; }
 
 dialog { border: 1px solid var(--border-color); border-radius: var(--radius-md); background: var(--bg-card); color: var(--fg-body); margin: auto; padding: 0; max-width: min(760px, 92vw); width: 100%; font-family: var(--font-sans); font-size: var(--fs-body); }

@@ -21,6 +21,7 @@
 
     <nav class="tabs" role="tablist">
       <button class="tab is-active" data-tab="diagnose" role="tab" type="button">Diagnose</button>
+      <button class="tab" data-tab="upgrade" role="tab" type="button">Upgrade blockers</button>
       <button class="tab" data-tab="fix" role="tab" type="button">Fix</button>
       <button class="tab" data-tab="restore" role="tab" type="button">Restore</button>
       <button class="tab" data-tab="offline" role="tab" type="button">Offline</button>
@@ -44,6 +45,33 @@
           <span id="sel-count" class="caption"></span>
           <button id="btn-to-fix" class="btn btn-primary btn-sm" type="button" disabled>Preview fixes…</button>
         </div>
+      </section>
+
+      <section id="tab-upgrade" class="panel" hidden>
+        <div class="toolbar">
+          <label>Solution <select id="ub-solution"><option value="">Loading…</option></select></label>
+          <label class="check" title="Look for the unique names of deleted custom pages and canvas apps in the target's JavaScript web resources and site maps"><input type="checkbox" id="ub-scan" checked /> Scan JS and site maps</label>
+          <button id="ub-run" class="btn btn-primary btn-sm" type="button" disabled>Analyze</button>
+          <button id="ub-cancel" class="btn btn-ghost btn-sm" type="button" hidden>Cancel</button>
+          <span class="spacer"></span>
+          <button id="ub-export-md" class="btn btn-ghost btn-sm" type="button" disabled>Markdown</button>
+          <button id="ub-export-csv" class="btn btn-ghost btn-sm" type="button" disabled>CSV</button>
+        </div>
+        <p class="caption">Before you upgrade a managed solution: what the upgrade deletes in the target (secondary connection), what blocks each delete, and where to fix it. Dev is the primary connection.</p>
+        <div id="ub-progress" class="progress" hidden><progress id="ub-progress-bar" max="1" value="0"></progress><span id="ub-progress-text" class="caption"></span></div>
+        <div id="ub-summary"></div>
+        <div id="ub-body"></div>
+        <div class="actionbar" id="ub-actions" hidden>
+          <span id="ub-sel-count" class="caption"></span>
+          <button id="ub-preview" class="btn btn-primary btn-sm" type="button" disabled>Preview Dev fixes…</button>
+        </div>
+        <div id="ub-plan"></div>
+        <div class="actionbar" id="ub-fix-actions" hidden>
+          <button id="ub-backup" class="btn btn-sm" type="button">1. Download backup</button>
+          <label class="check" id="ub-prod-ack-wrap" hidden><input type="checkbox" id="ub-prod-ack" /> I understand this is Production</label>
+          <button id="ub-confirm" class="btn btn-primary btn-sm" type="button" disabled>2. Confirm and apply</button>
+        </div>
+        <div id="ub-results"></div>
       </section>
 
       <section id="tab-fix" class="panel" hidden>
