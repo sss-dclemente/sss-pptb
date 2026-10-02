@@ -1,5 +1,12 @@
 @import "../../_shared/tokens.css";
 
+.toolbar input[type="search"] {
+  font: inherit; font-size: var(--fs-caption); color: var(--fg-primary);
+  background: var(--bg-card); border: 1px solid var(--border-color); border-radius: var(--radius-sm);
+  padding: var(--s-1) var(--s-2); min-width: 180px;
+}
+.toolbar input[type="search"]:focus-visible { outline: none; box-shadow: var(--shadow-teal); }
+
 /* Solution list */
 .solution-list { list-style: none; display: flex; flex-direction: column; gap: var(--s-2); }
 .solution-list li {

@@ -214,7 +214,19 @@ const solIFiles = (behavior) => ({
 const solI1 = await zip(solIFiles(0));
 const solI2 = await zip(solIFiles(2));
 
-const files = { "SolA_1_0_0_0.zip": solA1, "SolA_1_1_0_0_managed.zip": solA2, "SolB_2_0_0_0_managed.zip": solB, "SolC_1_0_0_0_managed.zip": solC, "SolD.zip": solD, "SolE.zip": solE, "SolF.zip": solF, "SolF_copy.zip": solF, "SolG.zip": solG, "SolH_1_0.zip": solH1, "SolH_1_1.zip": solH2, "SolI_1.zip": solI1, "SolI_2.zip": solI2 };
+// compare filters (X1): SolJ v2 changes one column type, removes a table and adds a 25-column table
+// -> Column category 27 rows (starts closed), Table 2 rows (starts open), root rows hidden by default
+const BIG_COLS = Array.from({ length: 24 }, (_, i) => [`sss_c${String(i).padStart(2, "0")}`, "nvarchar"]);
+const solJ1 = await zip({
+  "solution.xml": solutionXml({ name: "SolJ", version: "1.0.0.0", managed: 1, roots: [{ type: 1, schemaName: "sss_keep" }, { type: 1, schemaName: "sss_old" }] }),
+  "customizations.xml": customizationsXml({ entities: entity("sss_keep", "Keep", [["sss_name", "nvarchar"], ["sss_note", "nvarchar"]]) + entity("sss_old", "Old", [["sss_name", "nvarchar"]]) }),
+});
+const solJ2 = await zip({
+  "solution.xml": solutionXml({ name: "SolJ", version: "1.1.0.0", managed: 1, roots: [{ type: 1, schemaName: "sss_keep" }, { type: 1, schemaName: "sss_big" }] }),
+  "customizations.xml": customizationsXml({ entities: entity("sss_keep", "Keep", [["sss_name", "nvarchar"], ["sss_note", "memo"]]) + entity("sss_big", "Big", [["sss_name", "nvarchar"], ...BIG_COLS]) }),
+});
+
+const files = { "SolA_1_0_0_0.zip": solA1, "SolA_1_1_0_0_managed.zip": solA2, "SolB_2_0_0_0_managed.zip": solB, "SolC_1_0_0_0_managed.zip": solC, "SolD.zip": solD, "SolE.zip": solE, "SolF.zip": solF, "SolF_copy.zip": solF, "SolG.zip": solG, "SolH_1_0.zip": solH1, "SolH_1_1.zip": solH2, "SolI_1.zip": solI1, "SolI_2.zip": solI2, "SolJ_1.zip": solJ1, "SolJ_2.zip": solJ2 };
 for (const [n, b] of Object.entries(files)) writeFileSync(resolve(OUT, n), b);
 
 const { page, assert, finish } = await launchPage(import.meta.url, { width: 1280, height: 900 });
@@ -474,6 +486,47 @@ assert(!(await page.$eval("#cmp-hide-root", (e) => e.checked)), "Clear filters u
 cmpI = await page.textContent("#cmp-body");
 assert(cmpI.includes("Root component") && cmpI.includes("sss_only") && (await chipText()) === "+0 ~1 -0" && !(await page.$("#cmp-body .count-caption")), "Clear filters shows the root-component row");
 await page.click("#cmp-hide-root"); // back to the default
+
+// ---- compare filters: change types, name, category folds, export, clear, persistence ----
+await page.reload(); // fresh fold memory
+await addOne("SolJ_1.zip", 1);
+await addOne("SolJ_2.zip", 2);
+await page.click('.tab[data-tab="compare"]');
+const cmpFold = (title) => page.$eval(`#cmp-body details.card:has(h3:text-is("${title}"))`, (d) => d.open).catch(() => null);
+const cmpCats = () => page.$$eval("#cmp-body details.card h3", (els) => els.map((e) => e.textContent));
+const cmpRows = (cls = "") => page.$$eval(`#cmp-body tbody tr${cls}`, (els) => els.length);
+const shownCaption = () => page.$$eval("#cmp-body .count-caption", (els) => els.map((e) => e.textContent).find((t) => t.includes("changes")) ?? null);
+assert((await cmpRows()) === 29 && (await chipText()) === "+26 ~1 -2" && (await shownCaption()) === null, "SolJ: 29 rows, counts, no shown-of caption by default");
+assert((await cmpFold("Column")) === false && (await cmpFold("Table")) === true, "category with >20 rows starts closed, <=20 open");
+await page.click("#cmp-added");
+assert((await cmpRows(".diff-added")) === 0 && (await cmpRows()) === 3, "untick Added hides added rows");
+assert((await chipText()) === "+0 ~1 -2" && (await shownCaption()) === "3 of 29 changes", "untick Added: header counts + shown-of caption: " + (await shownCaption()));
+assert((await cmpFold("Column")) === true, "Column opens once it has <=20 visible rows");
+await page.click("#cmp-added");
+await page.fill("#cmp-q", "sss_c0");
+assert(JSON.stringify(await cmpCats()) === '["Column"]' && (await cmpRows()) === 10 && (await shownCaption()) === "10 of 29 changes", "name filter narrows; empty categories not rendered: " + (await cmpCats()));
+const [dlj] = await Promise.all([page.waitForEvent("download"), page.click("#cmp-export")]);
+const diffJ = JSON.parse(readFileSync(await dlj.path(), "utf8"));
+assert(diffJ.entries.length === 10 && diffJ.entries.every((e) => e.name.startsWith("sss_big.sss_c0")) && diffJ.counts.added === 10 && diffJ.filter.name === "sss_c0" && diffJ.filter.changes.length === 3, "export JSON reflects name filter");
+await page.fill("#cmp-q", "memo");
+assert((await cmpRows()) === 1 && (await page.textContent("#cmp-body tbody")).includes("sss_keep.sss_note"), "name filter matches detail text");
+await page.fill("#cmp-q", "sss_c0");
+await page.click("#cmp-added");
+const cmpJ = await page.textContent("#cmp-body");
+assert(cmpJ.includes("No changes match") && cmpJ.includes("29 changes are hidden"), "filters hiding everything: filteredEmpty");
+await page.click('#cmp-body .empty-state button:text-is("Clear filters")');
+assert((await page.$eval("#cmp-added", (e) => e.checked)) && (await page.inputValue("#cmp-q")) === "" && (await page.$eval("#cmp-hide-root", (e) => e.checked)), "Clear filters resets type + name, keeps hide-root");
+assert((await cmpRows()) === 29 && (await shownCaption()) === null, "Clear filters shows every row again");
+await page.click("#cmp-removed");
+await page.fill("#cmp-q", "sss_keep");
+await page.reload();
+assert(!(await page.$eval("#cmp-removed", (e) => e.checked)) && (await page.$eval("#cmp-added", (e) => e.checked)) && (await page.inputValue("#cmp-q")) === "sss_keep", "compare filters restored after reload");
+await addOne("SolJ_1.zip", 1);
+await addOne("SolJ_2.zip", 2);
+await page.click('.tab[data-tab="compare"]');
+assert((await cmpRows()) === 1 && (await shownCaption()) === "1 of 29 changes", "restored filters applied after reload");
+await page.click("#cmp-removed");
+await page.fill("#cmp-q", "");
 
 // ---- debug mode (standalone: no host, the log still records the switch and saves as a download) ----
 await checkDebugLog(page, assert, {
