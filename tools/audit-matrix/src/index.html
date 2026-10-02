@@ -30,7 +30,8 @@
 
     <section id="tab-matrix" class="panel">
       <div class="toolbar">
-        <input id="filter-text" type="search" placeholder="Filter tables…" aria-label="Filter tables" />
+        <input id="filter-text" type="search" placeholder="Filter tables…" aria-label="Filter tables" aria-describedby="filter-text-hint" />
+        <span id="filter-text-hint" class="count-caption" hidden>Column names match expanded tables only.</span>
         <label>Audit <select id="filter-audit"><option value="all">all</option><option value="on">on</option><option value="off">off</option></select></label>
         <label class="check"><input type="checkbox" id="filter-diff" /> Only differences</label>
         <label>Layer <select id="filter-managed"><option value="all">all</option><option value="custom">custom</option><option value="managed">managed</option></select></label>
@@ -47,7 +48,7 @@
         <div id="matrix-body"></div>
       </div>
       <div id="bulkbar" class="bulkbar" hidden>
-        <span class="count"><span id="sel-count">0</span> selected</span>
+        <span class="count"><span id="sel-count">0</span> selected<span id="sel-hidden" title="Hidden by the filters or under a collapsed table. Plans use the visible selection only." hidden></span></span>
         <button id="btn-plan-on" class="btn btn-sm" type="button">Plan: audit on</button>
         <button id="btn-plan-off" class="btn btn-sm" type="button">Plan: audit off</button>
         <button id="btn-clear-sel" class="btn btn-ghost btn-sm" type="button">Clear selection</button>

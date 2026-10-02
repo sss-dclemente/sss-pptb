@@ -96,10 +96,19 @@ export function buildMatrix(primary: EnvData | null, other: EnvData | null): Mat
   };
 }
 
+const tableMatches = (r: MatrixTableRow, t: string): boolean =>
+  r.logicalName.includes(t) || r.displayName.toLowerCase().includes(t) || r.schemaName.toLowerCase().includes(t);
+const columnMatches = (c: MatrixColumnRow, t: string): boolean => c.logicalName.includes(t) || c.displayName.toLowerCase().includes(t);
+
+/**
+ * Table rows passing the filters. The text matches the table's names, or the name of one of its
+ * loaded columns: column flags are only read when a row is expanded, so a column name cannot find
+ * a table that was never expanded.
+ */
 export function filterRows(rows: MatrixTableRow[], f: Filters): MatrixTableRow[] {
   const t = f.text.trim().toLowerCase();
   return rows.filter((r) => {
-    if (t && !r.logicalName.includes(t) && !r.displayName.toLowerCase().includes(t) && !r.schemaName.toLowerCase().includes(t)) return false;
+    if (t && !tableMatches(r, t) && !(r.columns ?? []).some((c) => columnMatches(c, t))) return false;
     if (f.audit === "on" && r.state !== "on") return false;
     if (f.audit === "off" && r.state !== "off") return false;
     if (f.onlyDiff && !r.differs && !(r.stats && r.stats.differs > 0)) return false;
@@ -110,15 +119,18 @@ export function filterRows(rows: MatrixTableRow[], f: Filters): MatrixTableRow[]
   });
 }
 
-/** Column sub-rows to show under a table row: all of them, or only the differing ones. */
+/**
+ * Column sub-rows to show under a table row: all of them, or only the differing ones. A text that
+ * matches the table keeps every column; one that only matches column names narrows to those columns.
+ */
 export function visibleColumns(row: MatrixTableRow, f: Filters): MatrixColumnRow[] {
   const cols = row.columns ?? [];
   const t = f.text.trim().toLowerCase();
+  const byTable = !t || tableMatches(row, t);
   return cols.filter((c) => {
     if (f.onlyDiff && !c.differs) return false;
     if (f.audit === "on" && c.state !== "on") return false;
     if (f.audit === "off" && c.state !== "off") return false;
-    // the text filter matches the table; a column row is only narrowed by it when it would hide nothing useful
-    return !t || row.logicalName.includes(t) || row.displayName.toLowerCase().includes(t) || c.logicalName.includes(t) || c.displayName.toLowerCase().includes(t);
+    return byTable || columnMatches(c, t);
   });
 }

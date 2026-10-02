@@ -454,6 +454,92 @@ await runVariant("int", async (p) => {
   assert(new Set(ownInts).size === 4 && !ownInts.includes("none"), "the integer form is decoded, not labelled “none” across the board: " + ownInts.join(","));
 });
 
+// ---- show / hide: column-name search, hidden selections, counts, Clear filters, persisted filters
+await runVariant("", async (p) => {
+  const rowNames = () => p.$$eval("table.matrix > tbody > tr:not(.colrow) td.name .mono", (els) => els.map((e) => e.textContent));
+  const colNamesOf = () => p.$$eval("tr.colrow tbody td.name .mono", (els) => els.map((e) => e.textContent));
+  const shown = () => p.textContent("#shown-count");
+  const lastNote = () => p.evaluate(() => JSON.stringify(window.__mock.notes.at(-1) ?? {}));
+  assert((await shown()) === "5 tables shown", "count caption without filters — " + (await shown()));
+  assert(!(await p.textContent("#counts")).includes("Clear filters"), "no Clear filters in the counts bar while no filter is on");
+  assert(await p.$eval("#filter-text-hint", (e) => e.hidden), "column-name hint hidden while the search is empty");
+
+  // a column name cannot find a table whose columns were never loaded: filtered empty state with Clear filters
+  await p.fill("#filter-text", "telephone1");
+  await p.waitForSelector("#matrix-body .empty-state");
+  assert((await p.textContent("#matrix-body")).includes("No tables match"), "column name of an unexpanded table matches nothing");
+  assert(!(await p.$eval("#filter-text-hint", (e) => e.hidden)) && (await p.textContent("#filter-text-hint")).includes("Column names match expanded tables only"), "column-name hint shown while searching");
+  assert((await shown()) === "0 of 5 tables shown", "count caption reflects the filter — " + (await shown()));
+  await p.click("#matrix-body .empty-state button");
+  await p.waitForSelector("table.matrix");
+  assert((await p.inputValue("#filter-text")) === "" && (await rowNames()).length === 5, "Clear filters in the empty state resets the search");
+
+  // once account is expanded, its column name keeps the table and narrows its columns
+  await p.click('button[aria-label="Expand account"]');
+  await p.waitForSelector("table.matrix tr.colrow");
+  await p.fill("#filter-text", "telephone1");
+  await p.waitForFunction(() => document.querySelectorAll("table.matrix > tbody > tr:not(.colrow)").length === 1);
+  assert(JSON.stringify(await rowNames()) === JSON.stringify(["account"]), "column-name search keeps the expanded table: " + (await rowNames()).join(","));
+  assert(JSON.stringify(await colNamesOf()) === JSON.stringify(["telephone1"]), "column-name search shows only the matching columns: " + (await colNamesOf()).join(","));
+  assert((await shown()) === "1 of 5 tables shown", "count caption 1 of 5 — " + (await shown()));
+  assert((await p.textContent("#counts")).includes("Clear filters"), "Clear filters in the counts bar while a filter is on");
+  assert((await p.textContent("#btn-plan-match")) === "Plan: match (visible 1)", "match plan names the visible rows — " + (await p.textContent("#btn-plan-match")));
+  await p.screenshot({ path: resolve(OUT, "07-column-search.png") });
+  await p.fill("#filter-text", "account");
+  await p.waitForFunction(() => document.querySelectorAll("tr.colrow tbody tr").length === 4);
+  assert((await colNamesOf()).length === 4, "a search matching the table itself keeps every column");
+
+  // selections hidden by a filter are counted and not planned
+  await p.fill("#filter-text", "");
+  await p.check('input[aria-label="Select table sss_case"]');
+  await p.check('input[aria-label="Select table sss_fails"]');
+  await p.fill("#filter-text", "sss_case");
+  await p.waitForFunction(() => document.querySelectorAll("table.matrix > tbody > tr:not(.colrow)").length === 1);
+  const bulk = (await p.textContent("#bulkbar .count")).replace(/\s+/g, " ").trim();
+  assert(bulk === "2 selected (1 hidden)", "bulk bar counts the hidden selection — " + bulk);
+  await p.click("#btn-plan-on");
+  await p.waitForFunction(() => document.querySelector("#plan-count").textContent === "1");
+  let planText = await p.textContent("#apply-body");
+  assert(planText.includes("sss_case") && !planText.includes("sss_fails"), "audit-on plan covers the visible selection only");
+  const note = await lastNote();
+  assert(note.includes("1 hidden selection not planned"), "the plan notification says the hidden selection was left out — " + note);
+
+  // "match other env" plans only the visible rows while a filter is on
+  await p.fill("#filter-text", "account");
+  await p.waitForFunction(() => document.querySelector("#btn-plan-match").textContent === "Plan: match (visible 1)");
+  await p.click("#btn-plan-match");
+  await p.waitForFunction(() => document.querySelector("#plan-count").textContent === "3");
+  planText = await p.textContent("#apply-body");
+  assert(planText.includes("telephone1") && !planText.includes("sss_fails"), "visible match plan adds account + telephone1, not the hidden sss_fails");
+
+  // select all visible tables from the header checkbox
+  await p.click("#btn-clear-sel");
+  await p.fill("#filter-text", "");
+  await p.selectOption("#filter-managed", "custom");
+  await p.waitForFunction(() => document.querySelectorAll("table.matrix > tbody > tr:not(.colrow)").length === 2);
+  await p.check("#sel-all");
+  assert((await p.textContent("#sel-count")) === "2", "select-all-visible selects the 2 visible tables");
+  await p.click("#counts button");
+  await p.waitForFunction(() => document.querySelectorAll("table.matrix > tbody > tr:not(.colrow)").length === 5);
+  assert((await p.inputValue("#filter-managed")) === "all", "Clear filters in the counts bar resets the layer filter");
+  assert(await p.$eval("#sel-all", (e) => e.indeterminate), "header checkbox is indeterminate once only some visible tables are selected");
+  assert((await p.textContent("#btn-plan-match")) === "Plan: match other env", "match label back to the whole matrix with no filter");
+
+  // filters survive a reload
+  await p.fill("#filter-text", "sss");
+  await p.check("#filter-diff");
+  await p.reload();
+  await p.waitForFunction(() => document.querySelectorAll("#columns .colchip").length === 2);
+  await p.waitForSelector("table.matrix");
+  assert((await p.inputValue("#filter-text")) === "sss" && (await p.isChecked("#filter-diff")), "search and Only differences restored after a reload");
+  assert(JSON.stringify(await rowNames()) === JSON.stringify(["sss_fails", "sss_locked"]), "restored filters applied on load: " + (await rowNames()).join(","));
+  assert((await shown()) === "2 of 5 tables shown", "count caption after reload — " + (await shown()));
+  await p.click("#counts button");
+  await p.reload();
+  await p.waitForFunction(() => document.querySelectorAll("table.matrix > tbody > tr:not(.colrow)").length === 5);
+  assert((await p.inputValue("#filter-text")) === "" && !(await p.isChecked("#filter-diff")), "cleared filters stay cleared after a reload");
+});
+
 // ---- debug mode: the switch survives a reload, so start-up calls are in the log ----
 await checkDebugLog(page, assert, {
   tool: "audit-matrix",

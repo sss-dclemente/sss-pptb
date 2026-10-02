@@ -1,6 +1,7 @@
 import { mountDebug } from "../../_shared/debug-ui";
-import { $, badge, card, emptyState, h, showDialog, table as domTable, wireTabs } from "../../_shared/dom";
+import { $, badge, card, emptyState, filteredEmpty, h, showDialog, shownOf, table as domTable, wireTabs } from "../../_shared/dom";
 import { dataverse, getConnections, initTheme, inToolbox, notify, onConnectionChange, openText, saveText } from "../../_shared/host";
+import { persistControls, type PersistedControls } from "../../_shared/view-state";
 import { matrixCsv, planCsv, planScript, safeFileName } from "./audit/export";
 import { fetchColumns, fetchEnv, type DataverseLike } from "./audit/fetch";
 import { buildMatrix, filterRows, visibleColumns } from "./audit/matrix";
@@ -21,9 +22,22 @@ let plan: PlanItem[] = [];
 let cancelRun = false;
 /** Comparison column to select on the next render (a snapshot just loaded). */
 let preferCompare: string | null = null;
+/** Saved toolbar filters (wired in wire()). */
+let view: PersistedControls | null = null;
+/** Selection keys whose checkbox is on screen: table rows passing the filters, visible columns of expanded rows. */
+let visibleKeys = new Set<string>();
+/** Selectable (unlocked) table keys on screen, for the select-all header checkbox. */
+let visibleTableKeys: string[] = [];
 
 const api = (): DataverseLike | null => (dataverse() as unknown as DataverseLike) ?? null;
 const otherEnv = (): EnvData | null => others.find((o) => o.meta.key === $<HTMLSelectElement>("#compare").value) ?? null;
+
+const filtersActive = (): boolean => view?.active() ?? false;
+
+function clearFilters(): void {
+  view?.reset();
+  renderMatrix();
+}
 
 function filters(): Filters {
   return {
@@ -84,15 +98,17 @@ function renderHeader(): void {
   sel.value = others.some((o) => o.meta.key === want) ? want : (others[0]?.meta.key ?? "");
 
   $("#btn-refresh").toggleAttribute("disabled", !inToolbox());
-  $("#btn-plan-match").toggleAttribute("disabled", !otherEnv() || !primary);
   for (const id of ["#btn-export-csv", "#btn-export-snap"]) $(id).toggleAttribute("disabled", !primary);
   $("#host-mode").textContent = inToolbox() ? "Running inside Power Platform ToolBox" : "Not running inside ToolBox — connect a ToolBox environment to load data";
 }
 
-function renderCounts(): void {
+function renderCounts(shown: number): void {
   const c = matrix.counts;
   const metric = (value: string, label: string, title?: string) => h("span", { class: "metric", title }, h("strong", {}, value), h("span", {}, label));
+  const clear = h("button", { class: "btn btn-ghost btn-sm", type: "button" }, "Clear filters");
+  clear.addEventListener("click", clearFilters);
   const items: HTMLElement[] = [
+    h("span", { class: "metric" }, h("span", { class: "count-caption", id: "shown-count" }, `${shownOf(shown, c.tables, "tables")} shown`), filtersActive() ? clear : null),
     metric(`${c.tablesAudited} / ${c.tables}`, "tables audited"),
     metric(String(c.tablesDiffer), matrix.other ? `table differences vs ${matrix.other.name}` : "table differences (no comparison)"),
     metric(String(c.columnsAudited), `columns audited in ${c.loadedTables} expanded table${c.loadedTables === 1 ? "" : "s"}`, "Column flags are read when a row is expanded, so this counts expanded tables only."),
@@ -217,7 +233,15 @@ function tableRow(r: MatrixTableRow, f: Filters): HTMLElement[] {
 function renderMatrix(): void {
   const body = $("#matrix-body");
   body.replaceChildren();
-  renderCounts();
+  const f = filters();
+  const rows = filterRows(matrix.rows, f);
+  visibleKeys = new Set(rows.flatMap((r) => [`t:${r.key}`, ...(expanded.has(r.logicalName) && r.columns ? visibleColumns(r, f).map((c) => `c:${c.key}`) : [])]));
+  visibleTableKeys = rows.filter((r) => !r.locked).map((r) => `t:${r.key}`);
+  $("#filter-text-hint").hidden = !f.text.trim();
+  const planMatch = $("#btn-plan-match");
+  planMatch.textContent = filtersActive() ? `Plan: match (visible ${rows.length})` : "Plan: match other env";
+  planMatch.toggleAttribute("disabled", !otherEnv() || !primary || !rows.length);
+  renderCounts(rows.length);
   if (!matrix.rows.length) {
     body.append(
       emptyState(
@@ -228,13 +252,20 @@ function renderMatrix(): void {
     renderBulkbar();
     return;
   }
-  const f = filters();
-  const rows = filterRows(matrix.rows, f);
   if (!rows.length) {
-    body.append(emptyState("No tables match", "Adjust the filters."));
+    body.append(filteredEmpty("No tables match", "No table passes the current filters.", clearFilters));
     renderBulkbar();
     return;
   }
+  const all = h("input", { type: "checkbox", id: "sel-all", "aria-label": "Select all visible tables" }) as HTMLInputElement;
+  all.disabled = !visibleTableKeys.length;
+  all.addEventListener("change", () => {
+    for (const k of visibleTableKeys) {
+      if (all.checked) selected.add(k);
+      else selected.delete(k);
+    }
+    renderMatrix();
+  });
   body.append(
     h(
       "table",
@@ -245,7 +276,7 @@ function renderMatrix(): void {
         h(
           "tr",
           {},
-          h("th", { class: "sel" }, ""),
+          h("th", { class: "sel" }, all),
           h("th", {}, "Table"),
           h("th", {}, "Layer"),
           h("th", { class: "col" }, "primary", h("span", { class: "env" }, matrix.primary?.name ?? "—")),
@@ -261,8 +292,37 @@ function renderMatrix(): void {
 }
 
 function renderBulkbar(): void {
+  const hidden = [...selected].filter((k) => !visibleKeys.has(k)).length;
   $("#bulkbar").hidden = selected.size === 0 || !primary;
   $("#sel-count").textContent = String(selected.size);
+  const hid = $("#sel-hidden");
+  hid.hidden = !hidden;
+  hid.textContent = hidden ? ` (${hidden} hidden)` : "";
+  for (const id of ["#btn-plan-on", "#btn-plan-off"]) $(id).toggleAttribute("disabled", selected.size === hidden);
+  const all = document.querySelector<HTMLInputElement>("#sel-all");
+  if (all) {
+    const n = visibleTableKeys.filter((k) => selected.has(k)).length;
+    all.checked = n > 0 && n === visibleTableKeys.length;
+    all.indeterminate = n > 0 && n < visibleTableKeys.length;
+  }
+}
+
+/** Plan the selection that is on screen; selections hidden by the filters or a collapsed row are left out, and said so. */
+function planSelected(next: boolean): void {
+  const visible = new Set([...selected].filter((k) => visibleKeys.has(k)));
+  const hidden = selected.size - visible.size;
+  addToPlan(planSet(matrix.rows, visible, next), `Plan: audit ${next ? "on" : "off"}`, hidden ? `${hidden} hidden selection${hidden === 1 ? "" : "s"} not planned` : "");
+}
+
+/** "Match other env" over the whole matrix, or only the rows and columns the filters show while any filter is on. */
+function planMatch(): void {
+  if (!filtersActive()) {
+    addToPlan(planMatchOther(matrix), "Plan: match other env");
+    return;
+  }
+  const f = filters();
+  const rows = filterRows(matrix.rows, f).map((r) => (r.columns ? { ...r, columns: visibleColumns(r, f) } : r));
+  addToPlan(planMatchOther({ ...matrix, rows }), `Plan: match (visible ${rows.length})`);
 }
 
 // ---------- org tab ----------
@@ -338,7 +398,7 @@ function planTable(items: PlanItem[]): HTMLElement {
   );
 }
 
-function addToPlan(build: PlanBuild, label: string): void {
+function addToPlan(build: PlanBuild, label: string, note = ""): void {
   const seen = new Set(plan.map((i) => `${i.level}:${i.table}:${i.column ?? ""}`));
   let added = 0;
   for (const i of build.items) {
@@ -350,7 +410,7 @@ function addToPlan(build: PlanBuild, label: string): void {
   }
   renderApply();
   const skippedNote = build.skipped.length ? `, ${build.skipped.length} skipped (${build.skipped[0].reason}${build.skipped.length > 1 ? ", …" : ""})` : "";
-  void notify(label, `${added} change${added === 1 ? "" : "s"} added to the plan${skippedNote}`, added ? "success" : "warning");
+  void notify(label, `${added} change${added === 1 ? "" : "s"} added to the plan${skippedNote}${note ? `; ${note}` : ""}`, added ? "success" : "warning");
 }
 
 async function runPlan(): Promise<void> {
@@ -518,13 +578,14 @@ async function exportFile(name: string, content: string, mime = "application/jso
 // ---------- wiring ----------
 function wire(): void {
   wireTabs(() => undefined);
+  view = persistControls("audit-matrix", ["filter-text", "filter-audit", "filter-diff", "filter-managed", "filter-cols"]);
   for (const id of ["#filter-text", "#filter-diff", "#filter-audit", "#filter-managed", "#filter-cols"]) $(id).addEventListener("input", renderMatrix);
   $("#compare").addEventListener("change", rebuild);
   $("#btn-refresh").addEventListener("click", () => void refresh());
   $("#btn-load-snap").addEventListener("click", () => void loadSnapshot());
-  $("#btn-plan-on").addEventListener("click", () => addToPlan(planSet(matrix.rows, selected, true), "Plan: audit on"));
-  $("#btn-plan-off").addEventListener("click", () => addToPlan(planSet(matrix.rows, selected, false), "Plan: audit off"));
-  $("#btn-plan-match").addEventListener("click", () => addToPlan(planMatchOther(matrix), "Plan: match other env"));
+  $("#btn-plan-on").addEventListener("click", () => planSelected(true));
+  $("#btn-plan-off").addEventListener("click", () => planSelected(false));
+  $("#btn-plan-match").addEventListener("click", planMatch);
   $("#btn-clear-sel").addEventListener("click", () => {
     selected.clear();
     renderMatrix();
