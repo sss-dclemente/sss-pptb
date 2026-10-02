@@ -1,0 +1,95 @@
+# Every Monday opens a "Weekly issue digest" issue (and closes last week's):
+# new issues, issues still waiting for triage, stale issues, closed this week,
+# and open issues per tool. Run it by hand from the Actions tab any time.
+name: Weekly issue digest
+
+on:
+  schedule:
+    - cron: '17 7 * * 1' # Mondays 07:17 UTC
+  workflow_dispatch:
+
+permissions:
+  issues: write
+
+concurrency:
+  group: weekly-issue-digest
+  cancel-in-progress: false
+
+jobs:
+  digest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const DAY = 24 * 60 * 60 * 1000;
+            const now = new Date();
+            const weekAgo = new Date(now - 7 * DAY);
+            const staleBefore = new Date(now - 30 * DAY);
+
+            const isDigest = i => i.labels.some(l => l.name === 'digest');
+            const all = await github.paginate(github.rest.issues.listForRepo, {
+              owner, repo, state: 'all', since: weekAgo.toISOString(), per_page: 100,
+            });
+            const open = (await github.paginate(github.rest.issues.listForRepo, {
+              owner, repo, state: 'open', per_page: 100,
+            })).filter(i => !i.pull_request && !isDigest(i));
+
+            const recent = all.filter(i => !i.pull_request && !isDigest(i));
+            const created = recent.filter(i => new Date(i.created_at) >= weekAgo);
+            const closed = recent.filter(i => i.closed_at && new Date(i.closed_at) >= weekAgo);
+            const triage = open.filter(i => i.labels.some(l => l.name === 'triage'));
+            const stale = open.filter(i => new Date(i.updated_at) < staleBefore);
+            const unassigned = open.filter(i => !i.assignees?.length);
+
+            const labelsOf = i => i.labels.map(l => `\`${l.name}\``).join(' ');
+            const age = i => `${Math.floor((now - new Date(i.created_at)) / DAY)}d`;
+            const line = i => `- #${i.number} ${i.title} ${labelsOf(i)} · ${age(i)}${i.assignees?.length ? ' · @' + i.assignees.map(a => a.login).join(' @') : ''}`;
+            const section = (heading, list, empty = '_none_') =>
+              `### ${heading} (${list.length})\n${list.length ? list.map(line).join('\n') : empty}\n`;
+
+            const perTool = {};
+            for (const i of open) {
+              const tools = i.labels.map(l => l.name).filter(n => n.startsWith('tool:'));
+              for (const t of tools.length ? tools : ['no tool label']) perTool[t] = (perTool[t] || 0) + 1;
+            }
+            const toolTable = Object.keys(perTool).length
+              ? '| Tool | Open |\n|---|---|\n' + Object.entries(perTool).sort((a, b) => b[1] - a[1]).map(([t, n]) => `| ${t} | ${n} |`).join('\n')
+              : '_no open issues_';
+
+            const date = now.toISOString().slice(0, 10);
+            const body = [
+              `Week ending ${date} · @${owner}`,
+              '',
+              `**${open.length} open** · ${created.length} new · ${closed.length} closed · ${triage.length} waiting for triage · ${unassigned.length} unassigned`,
+              '',
+              'Sort an issue: remove `triage`, check the type and `tool:` labels, assign or close it.',
+              '',
+              section('Needs triage', triage, '_inbox zero_'),
+              section('New this week', created),
+              section('Stale: no activity for 30+ days', stale),
+              section('Closed this week', closed),
+              '### Open by tool',
+              toolTable,
+            ].join('\n');
+
+            const previous = (await github.paginate(github.rest.issues.listForRepo, {
+              owner, repo, state: 'open', labels: 'digest', per_page: 100,
+            })).filter(i => !i.pull_request);
+
+            try {
+              await github.rest.issues.getLabel({ owner, repo, name: 'digest' });
+            } catch (e) {
+              if (e.status !== 404) throw e;
+              await github.rest.issues.createLabel({ owner, repo, name: 'digest', color: 'ededed', description: 'Weekly issue digest' });
+            }
+
+            const { data: issue } = await github.rest.issues.create({
+              owner, repo, title: `Weekly issue digest — ${date}`, body, labels: ['digest'],
+            });
+            for (const p of previous) {
+              await github.rest.issues.createComment({ owner, repo, issue_number: p.number, body: `Superseded by #${issue.number}.` });
+              await github.rest.issues.update({ owner, repo, issue_number: p.number, state: 'closed', state_reason: 'completed' });
+            }
+            core.info(`Opened #${issue.number}; closed ${previous.length} previous digest(s).`);
