@@ -51,6 +51,18 @@ Pick the Dev solution you are about to ship; the target is the secondary connect
 
 Export the result as a Markdown checklist (release ticket) or CSV. The Restore tab re-adds app components removed by a fix.
 
+## Screenshots
+
+Synthetic sample data from the e2e harness (mocked ToolBox host). Replace with real captures.
+
+![Diagnose: msdyn dependencies grouped by the component that causes them](https://raw.githubusercontent.com/sss-dclemente/sss-pptb/main/tools/dependency-cleaner/docs/img/diagnose.png)
+
+![Upgrade blockers: what a managed upgrade deletes and what blocks each delete](https://raw.githubusercontent.com/sss-dclemente/sss-pptb/main/tools/dependency-cleaner/docs/img/upgrade-blockers.png)
+
+![Fix preview with before/after XML diff and backup](https://raw.githubusercontent.com/sss-dclemente/sss-pptb/main/tools/dependency-cleaner/docs/img/fix-preview.png)
+
+![Offline zip analysis, dark theme](https://raw.githubusercontent.com/sss-dclemente/sss-pptb/main/tools/dependency-cleaner/docs/img/offline-dark.png)
+
 ## Install
 
 **From the ToolBox marketplace** — search for "SSS Dependency Cleaner" once listed.
