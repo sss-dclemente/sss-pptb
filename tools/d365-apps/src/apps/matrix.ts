@@ -1,6 +1,6 @@
 /** Packages per environment → app × environment matrix (plan §2), selection → install plan. */
 import { compareVersions } from "./api";
-import type { Cell, EnvPackages, Environment, Matrix, Package, PlannedInstall, Row } from "./types";
+import type { Cell, CellKind, EnvPackages, Environment, Matrix, Package, PlannedInstall, Row } from "./types";
 
 const BUSY = new Set(["installing", "installrequested", "installscheduled", "installretrying", "uninstalling", "uninstallrequested"]);
 const lower = (s: string) => s.toLowerCase();
@@ -62,18 +62,34 @@ export function buildMatrix(results: EnvPackages[], opts: { showNotInstalled: bo
   return { envs, rows, errors };
 }
 
-/** Cells "Select all updates" ticks: updates, except custom-upgrade packages (plan D8). */
-export function updateKeys(m: Matrix): string[] {
+/** Cells "Select all updates" ticks: updates, except custom-upgrade packages (plan D8). Rows the filter hides and hidden environment columns are included only when `visible` allows them. */
+export function updateKeys(m: Matrix, visible: (uniqueName: string, envId: string) => boolean = () => true): string[] {
   const out: string[] = [];
-  for (const r of m.rows) for (const env of m.envs) if (r.cells.get(env.id)?.kind === "update" && !r.customHandleUpgrade) out.push(cellKey(env.id, r.uniqueName));
+  for (const r of m.rows) for (const env of m.envs) if (visible(r.uniqueName, env.id) && r.cells.get(env.id)?.kind === "update" && !r.customHandleUpgrade) out.push(cellKey(env.id, r.uniqueName));
   return out;
 }
 
-/** Cells "Select all failed" ticks: every failed install, for a retry. Rows the filter hides are included only when `visible` allows them. */
-export function failedKeys(m: Matrix, visible: (uniqueName: string) => boolean = () => true): string[] {
+/** Cells "Select all failed" ticks: every failed install, for a retry. Rows the filter hides and hidden environment columns are included only when `visible` allows them. */
+export function failedKeys(m: Matrix, visible: (uniqueName: string, envId: string) => boolean = () => true): string[] {
   const out: string[] = [];
-  for (const r of m.rows) if (visible(r.uniqueName)) for (const env of m.envs) if (r.cells.get(env.id)?.kind === "failed") out.push(cellKey(env.id, r.uniqueName));
+  for (const r of m.rows) for (const env of m.envs) if (visible(r.uniqueName, env.id) && r.cells.get(env.id)?.kind === "failed") out.push(cellKey(env.id, r.uniqueName));
   return out;
+}
+
+/** Cell kinds that mean "something is installed here" (installed, update, failed, in progress); "available" and "—" do not. */
+const HAS_APP = new Set<CellKind>(["current", "update", "failed", "busy"]);
+
+/** Environments with nothing installed in any row ("Hide empty environments"). Unreadable environments are never empty: their error header matters. */
+export function emptyEnvIds(m: Matrix): Set<string> {
+  const out = new Set<string>();
+  for (const env of m.envs) if (!m.errors.has(env.id) && !m.rows.some((r) => HAS_APP.has(r.cells.get(env.id)?.kind ?? "absent"))) out.add(env.id);
+  return out;
+}
+
+/** The environment columns the matrix shows, in column order: not hidden with ✕, and not empty while `hideEmpty`. */
+export function visibleEnvs(m: Matrix, hidden: ReadonlySet<string>, hideEmpty: boolean): Environment[] {
+  const empty = hideEmpty ? emptyEnvIds(m) : new Set<string>();
+  return m.envs.filter((e) => !hidden.has(e.id) && !empty.has(e.id));
 }
 
 /** Selection → installs, per environment in matrix column order, apps in row order. Cells without an action are skipped. */
@@ -91,13 +107,43 @@ export function planInstalls(m: Matrix, selected: Set<string>): PlannedInstall[]
 
 export const isProduction = (e: Environment): boolean => /production/i.test(e.type);
 
-/** Row counts for the summary line. */
-export function counts(m: Matrix): { updates: number; failed: number; busy: number } {
+/** Usual environment types, in the order the picker offers them; any other type reported follows, A–Z. */
+const TYPE_ORDER = ["production", "sandbox", "developer", "trial", "default"];
+
+/** The environment types present in `envs` (as the API spells them, once each, case-insensitive), for the picker's type filter. */
+export function envTypes(envs: readonly Environment[]): string[] {
+  const seen = new Map<string, string>();
+  for (const e of envs) {
+    const t = e.type.trim();
+    if (t && !seen.has(t.toLowerCase())) seen.set(t.toLowerCase(), t);
+  }
+  const rank = (k: string) => (TYPE_ORDER.includes(k) ? TYPE_ORDER.indexOf(k) : TYPE_ORDER.length);
+  return [...seen].sort(([a], [b]) => rank(a) - rank(b) || a.localeCompare(b)).map(([, t]) => t);
+}
+
+/** Picker filter: the text in name, type or URL (case-insensitive) and the type ("" = all). */
+export const envMatches = (e: Environment, query: string, type: string): boolean =>
+  (!type || e.type.trim().toLowerCase() === type.toLowerCase()) && (!query.trim() || `${e.name} ${e.type} ${e.url ?? ""}`.toLowerCase().includes(query.trim().toLowerCase()));
+
+/** Install preview: environment groups fold closed past this many; Production (and installs in a hidden column) always open. */
+export const PLAN_FOLD_OVER = 5;
+export const planGroupOpen = (env: Environment, groups: number, hiddenColumn = false): boolean => groups <= PLAN_FOLD_OVER || isProduction(env) || hiddenColumn;
+
+/** The summary badges that filter rows by state: update available, failed install, install in progress. */
+export type StateKind = Extract<CellKind, "update" | "failed" | "busy">;
+export const STATE_KINDS: readonly StateKind[] = ["update", "failed", "busy"];
+
+/** True when the row has any of `states` in one of the `cols` environment columns (the pressed badges combine as OR). */
+export const rowHasState = (r: Row, states: ReadonlySet<CellKind>, cols: ReadonlySet<string>): boolean => [...r.cells].some(([id, c]) => cols.has(id) && states.has(c.kind));
+
+/** Cell counts for the summary line; only the `cols` environment columns when given (the shown ones). */
+export function counts(m: Matrix, cols?: ReadonlySet<string>): { updates: number; failed: number; busy: number } {
   let updates = 0;
   let failed = 0;
   let busy = 0;
   for (const r of m.rows)
-    for (const c of r.cells.values()) {
+    for (const [id, c] of r.cells) {
+      if (cols && !cols.has(id)) continue;
       if (c.kind === "update") updates++;
       if (c.kind === "failed") failed++;
       if (c.kind === "busy") busy++;

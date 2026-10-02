@@ -27,7 +27,7 @@
       <button class="tab" data-tab="offline" role="tab" type="button">Offline</button>
     </nav>
 
-    <div id="status" class="status" hidden></div>
+    <div id="status" class="status" role="status" aria-live="polite" hidden></div>
 
     <main class="main">
       <section id="tab-diagnose" class="panel">
@@ -40,6 +40,10 @@
         </div>
         <div id="progress" class="progress" hidden><progress id="progress-bar" max="1" value="0"></progress><span id="progress-text" class="caption"></span></div>
         <div id="diag-summary"></div>
+        <div class="find-tools" id="diag-tools" hidden>
+          <input id="diag-find" type="search" placeholder="Find component, table or solution" aria-label="Find in the findings: component, table or required solution" />
+          <select id="diag-type" aria-label="Finding type"><option value="">All types</option></select>
+        </div>
         <div id="findings"></div>
         <div class="actionbar" id="diag-actions" hidden>
           <span id="sel-count" class="caption"></span>
@@ -103,7 +107,15 @@
           <button id="btn-open-zip" class="btn btn-sm" type="button">Open zip…</button>
           <p class="caption">Reads solution.xml MissingDependencies, the list the import checks. Same filter as Diagnose; a connected target marks solutions it already has.</p>
         </div>
-        <div id="offline-body"></div>
+        <div id="offline-body">
+          <div id="offline-head"></div>
+          <div class="find-tools" id="off-tools" hidden>
+            <input id="off-find" type="search" placeholder="Find component, table or solution" aria-label="Find in the missing dependencies: component, table or required solution" />
+            <select id="off-type" aria-label="Dependent type"><option value="">All types</option></select>
+            <label class="check" title="Also list dependents whose required solutions the connected target already has"><input type="checkbox" id="off-show-safe" /> Show present in target</label>
+          </div>
+          <div id="offline-list"></div>
+        </div>
       </section>
     </main>
 

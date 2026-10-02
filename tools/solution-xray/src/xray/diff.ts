@@ -4,7 +4,19 @@ export interface DiffEntry {
   category: string;
   name: string;
   change: "added" | "removed" | "changed";
+  /** "changed": the changed fields as `Label: before → after`, joined with "; " */
   detail?: string;
+  /** "changed": only the fields that differ */
+  fields?: FieldChange[];
+  /** "changed": every compared field, labelled (`Label: value · …`), before and after */
+  before?: string;
+  after?: string;
+}
+
+export interface FieldChange {
+  field: string;
+  before: string;
+  after: string;
 }
 
 export interface SolutionDiff {
@@ -28,25 +40,38 @@ export function compareVersions(a: string, b: string): number {
   return 0;
 }
 
-/** stable key -> { display name, fingerprint } */
-type Keyed = Map<string, { name: string; fp: string }>;
-
-function fingerprint(parts: (string | number | boolean | null | undefined)[]): string {
-  return parts.map((p) => (p == null ? "" : String(p))).join("|");
+/** A compared property: label + display value ("—" when empty, yes/no for flags). */
+interface Field {
+  label: string;
+  value: string;
 }
+
+/** stable key -> { display name, compared fields } */
+type Keyed = Map<string, { name: string; fields: Field[] }>;
+
+type Raw = string | number | boolean | null | undefined;
+
+function show(v: Raw): string {
+  if (v == null || v === "") return "—";
+  return typeof v === "boolean" ? (v ? "yes" : "no") : String(v);
+}
+
+const BEHAVIOR: Record<number, string> = { 0: "include subcomponents", 1: "no subcomponents", 2: "shell only" };
+
+const labelled = (fields: Field[]): string => fields.map((f) => `${f.label}: ${f.value}`).join(" · ");
 
 function categories(s: SolutionInfo): Record<string, Keyed> {
   const out: Record<string, Keyed> = {};
   /** key defaults to the display name; pass a stable id-based key when names are not unique */
-  const put = (cat: string, name: string, fp = "", key = name) => {
-    (out[cat] ??= new Map()).set(key, { name, fp });
+  const put = (cat: string, name: string, fields: [string, Raw][] = [], key = name) => {
+    (out[cat] ??= new Map()).set(key, { name, fields: fields.map(([label, v]) => ({ label, value: show(v) })) });
   };
 
   for (const e of s.entities) {
-    put("Table", e.name, fingerprint([e.displayName, e.forms, e.views, e.charts, e.hasRibbon]));
-    for (const a of e.attributes) put("Column", `${e.name}.${a.name}`, a.type);
+    put("Table", e.name, [["Display name", e.displayName], ["Forms", e.forms], ["Views", e.views], ["Charts", e.charts], ["Ribbon", e.hasRibbon]]);
+    for (const a of e.attributes) put("Column", `${e.name}.${a.name}`, [["Type", a.type]]);
   }
-  for (const r of s.relationships) put("Relationship", r.name, fingerprint([r.type, r.referencing, r.referenced]));
+  for (const r of s.relationships) put("Relationship", r.name, [["Type", r.type], ["Referencing", r.referencing], ["Referenced", r.referenced]]);
   for (const o of s.optionSets) put("Global choice", o.name);
   for (const r of s.roles) put("Security role", r.name);
   for (const w of s.workflows) {
@@ -54,18 +79,18 @@ function categories(s: SolutionInfo): Record<string, Keyed> {
     const entity = w.primaryEntity && w.primaryEntity !== "none" ? w.primaryEntity : null;
     const id = w.id?.replace(/[{}]/g, "").toLowerCase();
     const key = id ? `id:${id}` : `name:${(entity ?? "").toLowerCase()}/${w.name}`;
-    put("Process / flow", entity ? `${w.name} (${entity})` : w.name, fingerprint([w.category, w.primaryEntity, w.connectionReferences.join(",")]), key);
+    put("Process / flow", entity ? `${w.name} (${entity})` : w.name, [["Category", w.categoryName], ["Primary table", w.primaryEntity], ["Connection references", w.connectionReferences.join(", ")]], key);
   }
-  for (const w of s.webResources) put("Web resource", w.name, w.detail ?? "");
+  for (const w of s.webResources) put("Web resource", w.name, [["Type", w.detail]]);
   for (const a of s.appModules) put("Model-driven app", a.name);
   for (const c of s.canvasApps) put("Canvas app", c.name);
-  for (const c of s.connectionReferences) put("Connection reference", c.logicalName, c.connector ?? "");
-  for (const e of s.environmentVariables) put("Environment variable", e.schemaName, fingerprint([e.type, e.hasDefault, e.hasValue]));
-  for (const p of s.pluginAssemblies) put("Plugin assembly", p.name, p.detail ?? "");
-  for (const p of s.pluginSteps) put("Plugin step", p.name, fingerprint([p.pluginType, p.message, p.entity, p.stage]));
+  for (const c of s.connectionReferences) put("Connection reference", c.logicalName, [["Connector", c.connector]]);
+  for (const e of s.environmentVariables) put("Environment variable", e.schemaName, [["Type", e.type], ["Has default", e.hasDefault], ["Has value", e.hasValue]]);
+  for (const p of s.pluginAssemblies) put("Plugin assembly", p.name, [["Full name", p.detail]]);
+  for (const p of s.pluginSteps) put("Plugin step", p.name, [["Plugin type", p.pluginType], ["Message", p.message], ["Table", p.entity], ["Stage", p.stage]]);
   for (const c of s.customControls) put("Custom control", c.name);
   for (const f of s.fieldSecurityProfiles) put("Column security profile", f.name);
-  for (const rc of s.rootComponents) put("Root component", `${rc.typeName}: ${rc.schemaName ?? rc.id ?? "?"}`, String(rc.behavior));
+  for (const rc of s.rootComponents) put("Root component", `${rc.typeName}: ${rc.schemaName ?? rc.id ?? "?"}`, [["Behavior", `${rc.behavior}${BEHAVIOR[rc.behavior] ? ` (${BEHAVIOR[rc.behavior]})` : ""}`]]);
   return out;
 }
 
@@ -78,10 +103,25 @@ export function diffSolutions(a: SolutionInfo, b: SolutionInfo): SolutionDiff {
   for (const cat of cats) {
     const ma: Keyed = ca[cat] ?? new Map();
     const mb: Keyed = cb[cat] ?? new Map();
-    for (const [key, { name, fp }] of mb) {
+    for (const [key, { name, fields }] of mb) {
       const prev = ma.get(key);
-      if (!prev) entries.push({ category: cat, name, change: "added" });
-      else if (prev.fp !== fp) entries.push({ category: cat, name, change: "changed", detail: `${prev.fp} → ${fp}` });
+      if (!prev) {
+        entries.push({ category: cat, name, change: "added" });
+        continue;
+      }
+      const changed: FieldChange[] = fields
+        .map((f, i) => ({ field: f.label, before: prev.fields[i]?.value ?? "—", after: f.value }))
+        .filter((f) => f.before !== f.after);
+      if (changed.length)
+        entries.push({
+          category: cat,
+          name,
+          change: "changed",
+          detail: changed.map((f) => `${f.field}: ${f.before} → ${f.after}`).join("; "),
+          fields: changed,
+          before: labelled(prev.fields),
+          after: labelled(fields),
+        });
     }
     for (const [key, { name }] of ma) if (!mb.has(key)) entries.push({ category: cat, name, change: "removed" });
   }

@@ -783,6 +783,23 @@ export function offFlows(flows: FlowRecord[], refs: ConnRefRecord[]): OffFlow[] 
     .sort((a, b) => Number(b.ready) - Number(a.ready) || a.name.localeCompare(b.name));
 }
 
+export interface OffFlowFilter {
+  /** lowercase text matched against the flow name and its reference names; "" = all */
+  text: string;
+  /** flow ids (lowercase) of the selected solution; null = no solution filter */
+  flowIds: Set<string> | null;
+  onlyReady: boolean;
+}
+
+/**
+ * Off flows within the consolidate filters: `scoped` is what the text and solution filters keep (the card's total),
+ * `shown` is that minus the blocked flows when only ready ones are asked for.
+ */
+export function filterOffFlows(list: OffFlow[], f: OffFlowFilter): { scoped: OffFlow[]; shown: OffFlow[] } {
+  const scoped = list.filter((x) => (!f.flowIds || f.flowIds.has(lc(x.flowId))) && (!f.text || lc(x.name).includes(f.text) || x.refs.some((r) => lc(r).includes(f.text))));
+  return { scoped, shown: f.onlyReady ? scoped.filter((x) => x.ready) : scoped };
+}
+
 /** Turn flows on (statecode 1, statuscode 2), re-checking the connection before each write. */
 export async function turnOnFlows(
   api: Pick<WriterLike, "update">,

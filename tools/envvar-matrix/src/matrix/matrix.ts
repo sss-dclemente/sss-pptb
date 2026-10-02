@@ -1,4 +1,4 @@
-import { SECRET_TYPE, type ColumnData, type ConnRefCell, type ConnRefRow, type EnvVarCell, type EnvVarRow, type Filters, type Matrix } from "./types";
+import { SECRET_TYPE, type ColumnData, type ColumnMeta, type ConnRefCell, type ConnRefRow, type EnvVarCell, type EnvVarRow, type Filters, type Matrix } from "./types";
 
 function envVarCell(rec: EnvVarRecordOrNull): EnvVarCell {
   if (!rec) return { source: "absent", effective: null, record: null };
@@ -13,9 +13,15 @@ function connRefCell(rec: ColumnData["connRefs"][number] | null): ConnRefCell {
   return { state: rec.connectionId ? "bound" : "unbound", connector: rec.connector, connectionId: rec.connectionId, record: rec };
 }
 
-export function buildMatrix(columns: ColumnData[]): Matrix {
+/**
+ * Rows are the union over every column and carry cells for every column (copy and bind read any of them), but
+ * `differs` / `anyMissing` / `anyAbsent` compare only the visible ones: keys in `hidden` are left out of the
+ * comparison and of `Matrix.columns` (the rendered and CSV-exported columns).
+ */
+export function buildMatrix(columns: ColumnData[], hidden: ReadonlySet<string> = new Set()): Matrix {
+  const visible = columns.filter((c) => !hidden.has(c.meta.key));
   // Columns that failed to load have no data: show them, but leave them out of the comparison.
-  const keys = columns.filter((c) => !c.meta.error).map((c) => c.meta.key);
+  const keys = visible.filter((c) => !c.meta.error).map((c) => c.meta.key);
 
   const evNames = new Map<string, { schemaName: string; displayName: string; type: string; isSecret: boolean }>();
   for (const c of columns)
@@ -35,7 +41,8 @@ export function buildMatrix(columns: ColumnData[]): Matrix {
         key,
         ...head,
         cells,
-        differs: values.size > 1 || present.length !== keys.length,
+        // absent from every compared column (only in a hidden one) is not a difference between the visible ones
+        differs: values.size > 1 || (present.length > 0 && present.length !== keys.length),
         anyMissing: keys.some((k) => cells[k].source === "missing"),
         anyAbsent: keys.some((k) => cells[k].source === "absent"),
       };
@@ -65,8 +72,14 @@ export function buildMatrix(columns: ColumnData[]): Matrix {
       };
     });
 
-  return { columns: columns.map((c) => c.meta), envVars, connRefs };
+  return { columns: visible.map((c) => c.meta), envVars, connRefs };
 }
+
+/**
+ * "Missing value / unbound" and "Not deployed" each narrow to rows with that problem; with both on, a row with
+ * either one is shown (two kinds of gap, not a combination nobody asks for).
+ */
+const gapOk = (f: Filters, missing: boolean, absent: boolean): boolean => (!f.onlyMissing && !f.onlyAbsent) || (f.onlyMissing && missing) || (f.onlyAbsent && absent);
 
 export function filterEnvVars(rows: EnvVarRow[], f: Filters): EnvVarRow[] {
   const t = f.text.trim().toLowerCase();
@@ -74,7 +87,7 @@ export function filterEnvVars(rows: EnvVarRow[], f: Filters): EnvVarRow[] {
     (r) =>
       (!t || r.key.includes(t) || r.displayName.toLowerCase().includes(t)) &&
       (!f.onlyDiff || r.differs) &&
-      (!f.onlyMissing || r.anyMissing || r.anyAbsent) &&
+      gapOk(f, r.anyMissing, r.anyAbsent) &&
       (!f.scope || f.scope.has(r.key)),
   );
 }
@@ -85,7 +98,30 @@ export function filterConnRefs(rows: ConnRefRow[], f: Filters): ConnRefRow[] {
     (r) =>
       (!t || r.key.includes(t) || r.displayName.toLowerCase().includes(t) || (r.connector ?? "").toLowerCase().includes(t)) &&
       (!f.onlyDiff || r.differs) &&
-      (!f.onlyMissing || r.anyUnbound || r.anyAbsent) &&
+      gapOk(f, r.anyUnbound, r.anyAbsent) &&
       (!f.scope || f.scope.has(r.key)),
   );
 }
+
+/** What `differs` compares in an env var cell: secrets by presence only, others by effective value; absent is its own value. */
+function envVarCellKey(row: EnvVarRow, cell: EnvVarCell): string {
+  if (cell.source === "absent") return "\u0000absent";
+  return row.isSecret ? cell.source : (cell.effective ?? "\u0000missing");
+}
+
+/** What `differs` compares in a connection reference cell: state and connector (connection ids are per environment). */
+const connRefCellKey = (cell: ConnRefCell): string => `${cell.state}|${cell.record?.connectorId?.toLowerCase() ?? ""}`;
+
+function diffCells<C>(cells: Record<string, C>, columns: ColumnMeta[], key: (c: C) => string): Set<string> {
+  // columns that failed to load have no data and are not compared (as in buildMatrix)
+  const keys = columns.filter((c) => !c.error && cells[c.key]).map((c) => c.key);
+  const out = new Set<string>();
+  if (keys.length < 2) return out;
+  const ref = key(cells[keys[0]]);
+  for (const k of keys.slice(1)) if (key(cells[k]) !== ref) out.add(k);
+  return out;
+}
+
+/** Keys of the columns whose cell differs from the first compared column of `columns` (the visible ones, in order). */
+export const envVarDiffCells = (row: EnvVarRow, columns: ColumnMeta[]): Set<string> => diffCells(row.cells, columns, (c) => envVarCellKey(row, c));
+export const connRefDiffCells = (row: ConnRefRow, columns: ColumnMeta[]): Set<string> => diffCells(row.cells, columns, connRefCellKey);

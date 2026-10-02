@@ -1,6 +1,7 @@
 import { mountDebug } from "../../_shared/debug-ui";
-import { $, badge, card, emptyState, h, showDialog, table, wireTabs } from "../../_shared/dom";
+import { $, badge, card, emptyState, filteredEmpty, foldAllButtons, h, keepFold, shownOf, showDialog, table, wireTabs } from "../../_shared/dom";
 import { dataverse, getConnections, initTheme, inToolbox, notify, onConnectionChange, saveText } from "../../_shared/host";
+import { loadView, saveView } from "../../_shared/view-state";
 import { applyPlan, DEFAULT_WRITE_CONCURRENCY } from "./offboard/apply";
 import { inventoryCsv, inventoryJson, resultsCsv, resultsJson, safeFileName } from "./offboard/export";
 import {
@@ -24,6 +25,7 @@ import {
   type CategoryKey,
   type CategoryResult,
   type Inventory,
+  type InventoryItem,
   type LeaverInfo,
   type OpResult,
   type Plan,
@@ -44,12 +46,24 @@ let lastPlan: Plan | null = null;
 let lastResults: OpResult[] | null = null;
 let envName: string | null = null;
 let control: PoolControl | null = null;
+/** Report table view: null = default (Failed when anything failed, else All); reset by every new apply. */
+let resultView: "failed" | "all" | null = null;
 
 const selectedCats = new Set<CategoryKey>();
+/** "Filter tables" inside the records card: narrows the rows shown, never what is scanned or planned. */
+let scanRowFilter = "";
+/** Per-card "Filter items" text for categories over CARD_FILTER_MIN items; view only, reset with the leaver. */
+const catFilters = new Map<CategoryKey, string>();
+/** A category card gets its own filter box once it lists more than this many items. */
+const CARD_FILTER_MIN = 20;
 const selectedTables = new Set<string>();
 const opts = { roleCopy: true, roleRemove: false, profileCopy: true, profileRemove: false, teamRemove: true, teamAdd: false, recordCap: DEFAULT_RECORD_CAP };
 const SCAN_CONCURRENCY = 6;
+/** Operations listed per category in the preview before a "Show all N" button. */
 const PREVIEW_ROWS = 25;
+const TOOL = "offboarding-wizard";
+/** Off by default: a category holding nothing is one name in the "Nothing held in" caption, not a full "0" card. */
+let showEmptyCats = loadView<boolean>(TOOL, "showEmptyCats", false) === true;
 
 const api = (): DataverseLike | null => (dataverse() as unknown as DataverseLike | undefined) ?? null;
 const msg = (e: unknown): string => (e instanceof Error ? e.message : String(e));
@@ -156,6 +170,8 @@ async function pickLeaver(u: UserInfo): Promise<void> {
   if (!a) return;
   selectedCats.clear();
   selectedTables.clear();
+  scanRowFilter = "";
+  catFilters.clear();
   inventory = null;
   lastPlan = null;
   lastResults = null;
@@ -238,11 +254,80 @@ async function runScan(): Promise<void> {
   await notify("Scan finished", `${scan.rows.length} table(s) with records, ${scan.failed.length} not scanned`, scan.failed.length ? "warning" : "success");
 }
 
-const foldHead = (cb: HTMLElement, label: string, hint: string, count: Node): HTMLElement =>
-  h("summary", {}, h("div", { class: "card-head" }, cb, h("span", { class: "label" }, label), h("span", { class: "caption" }, hint), h("span", { class: "count" }, count)));
+/** `hint` is plain language; `source` (the entity set or relationship behind it) is only its tooltip. */
+const foldHead = (cb: HTMLElement, label: string, hint: string, source: string | undefined, ...count: Node[]): HTMLElement =>
+  h(
+    "summary",
+    {},
+    h("div", { class: "card-head" }, cb, h("span", { class: "label" }, label), h("span", { class: "caption hint", title: source }, hint), h("span", { class: "count" }, ...count)),
+  );
+
+/** Inventory folds keep their open/closed state across re-renders, per leaver (see keepFold). */
+const invFold = (el: HTMLDetailsElement, key: string, defaultOpen: boolean): HTMLDetailsElement => keepFold(el, `inv:${leaver?.user.id ?? ""}:${key}`, defaultOpen);
+
+/** Why a category's include box is disabled, for its `title`; null when it can be ticked. */
+function catDisabledReason(c: CategoryResult): string | null {
+  if (c.error) return `${c.label} could not be read, so nothing in it can be planned`;
+  if (!c.writable) return `${c.label} are listed only: this tool does not change them. Handle them by hand (see Remaining manual steps on the Report tab)`;
+  if (!c.items.length) return `Nothing held in ${c.label}`;
+  return null;
+}
+
+/** Friendly detail text plus the raw value as its tooltip: a connector's display form, a table's display name. */
+function itemDetail(c: CategoryResult, i: InventoryItem): { text: string; title?: string } {
+  if (i.metaLabel) return { text: i.metaLabel, title: i.meta };
+  if ((c.key === "userqueries" || c.key === "usercharts") && i.meta) {
+    const t = tables.find((x) => x.logicalName === i.meta);
+    if (t) return { text: t.displayName, title: i.meta };
+  }
+  return { text: i.meta };
+}
+
+const itemRow = (c: CategoryResult, i: InventoryItem): (Node | string)[] => {
+  const d = itemDetail(c, i);
+  // the category-wide note is said once above the table: the row keeps a short pointer, full text on hover
+  const flag = !i.flag ? "" : i.flag === c.note ? h("span", { class: "flag", title: i.flag }, "see note") : h("span", { class: "flag" }, i.flag);
+  return [i.label, h("span", { class: "caption", title: d.title }, d.text), flag];
+};
+
+/**
+ * The category's item table; past CARD_FILTER_MIN items it gets its own "Filter items" box (same pattern
+ * as the records card's "Filter tables"). Typing re-renders only the rows, so the input keeps focus.
+ */
+function itemsView(c: CategoryResult): HTMLElement {
+  const tableOf = (items: InventoryItem[]): HTMLElement => table(["Name", "Detail", "Note"], items.map((i) => itemRow(c, i)), undefined, `detail-table cat-${c.key}`);
+  if (c.items.length <= CARD_FILTER_MIN) return tableOf(c.items);
+  const input = h("input", { type: "search", placeholder: "Filter items", "aria-label": `Filter ${c.label}`, "data-cat-filter": c.key });
+  input.value = catFilters.get(c.key) ?? "";
+  const caption = h("span", { class: "count-caption", "data-cat-count": c.key });
+  const clear = h("button", { class: "btn btn-ghost btn-sm", type: "button", "data-cat-clear": c.key }, "Clear");
+  const list = h("div", {});
+  const reset = (): void => {
+    input.value = "";
+    catFilters.delete(c.key);
+    draw();
+    input.focus();
+  };
+  const draw = (): void => {
+    const q = input.value.trim();
+    const f = q.toLowerCase();
+    const rows = f ? c.items.filter((i) => [i.label, i.meta, itemDetail(c, i).text].some((t) => t.toLowerCase().includes(f))) : c.items;
+    caption.textContent = shownOf(rows.length, c.items.length, "items");
+    clear.hidden = !f;
+    list.replaceChildren(rows.length ? tableOf(rows) : filteredEmpty("No items match", `Nothing in ${c.label} matches “${q}”.`, reset));
+  };
+  input.addEventListener("input", () => {
+    catFilters.set(c.key, input.value);
+    draw();
+  });
+  clear.addEventListener("click", reset);
+  draw();
+  return h("div", { class: "stack cat-items" }, h("div", { class: "row" }, input, caption, clear), list);
+}
 
 function categoryCard(c: CategoryResult): HTMLElement {
-  const cb = check({ "aria-label": `Include ${c.label}`, "data-cat": c.key }, selectedCats.has(c.key), !c.writable || !c.items.length || !!c.error, (v) => {
+  const reason = catDisabledReason(c);
+  const cb = check({ "aria-label": `Include ${c.label}`, "data-cat": c.key, ...(reason ? { title: reason } : {}) }, selectedCats.has(c.key), !!reason, (v) => {
     if (v) selectedCats.add(c.key);
     else selectedCats.delete(c.key);
     updatePlanSummary();
@@ -250,9 +335,13 @@ function categoryCard(c: CategoryResult): HTMLElement {
   const body = c.error
     ? h("div", { class: "danger-box" }, `Could not read this category: ${c.error}`)
     : c.items.length
-      ? table(["Name", "Detail", "Note"], c.items.map((i) => [i.label, h("span", { class: "caption" }, i.meta), i.flag ? h("span", { class: "flag" }, i.flag) : ""]), undefined, `detail-table cat-${c.key}`)
+      ? h("div", {}, c.note ? h("p", { class: "caption cat-note", "data-cat-note": c.key }, h("strong", {}, "Note: "), c.note) : null, itemsView(c))
       : h("p", { class: "caption" }, "Nothing held in this category.");
-  return h("details", { class: "card", "data-cat": c.key }, foldHead(cb, c.label, c.hint, c.error ? badge("error", "bad") : badge(String(c.items.length), "neutral")), h("div", { class: "card-body" }, body));
+  // A flag is a consequence the user must see before planning (e.g. an active flow that breaks), so a
+  // category holding any flagged item starts open and says how many in its header.
+  const flagged = c.error ? 0 : c.items.filter((i) => i.flag).length;
+  const head = foldHead(cb, c.label, c.hint, c.source, ...(flagged ? [badge(`${flagged} flagged`, "warn")] : []), c.error ? badge("error", "bad") : badge(String(c.items.length), "neutral"));
+  return invFold(h("details", { class: "card", "data-cat": c.key }, head, h("div", { class: "card-body" }, body)), c.key, flagged > 0 || !!c.error);
 }
 
 function scanRow(r: NonNullable<Inventory["scan"]>["rows"][number]): (Node | string)[] {
@@ -277,27 +366,136 @@ function recordsCard(): HTMLElement {
     updatePlanSummary();
   });
   const total = scan?.rows.reduce((n, r) => n + (r.count ?? 0), 0) ?? 0;
-  const rows = scan ? ($<HTMLInputElement>("#scan-hide-empty").checked ? scan.rows : [...scan.rows, ...scan.failed]) : [];
   const body = !scan
     ? h("p", { class: "caption" }, "Not scanned yet. Use “Scan owned records” above.")
     : h(
         "div",
         {},
         h("p", { class: "scan-note", id: "scan-note" }, `${scan.scanned} of ${scan.requested} tables scanned${scan.cancelled ? " (cancelled)" : ""} · ${scan.rows.length} with records · ${scan.failed.length} not scanned`),
-        rows.length ? table(["", "Table", "#Records", "Note"], rows.map(scanRow), undefined, "scan") : emptyState("No records owned", "The leaver owns no records in the scanned tables."),
+        scanRowsView(scan),
       );
   const count = badge(scan ? `${total} in ${scan.rows.length} tables` : "not scanned", scan?.rows.length ? "warn" : "neutral");
-  return h("details", { class: "card", "data-cat": "records", open: !!scan?.rows.length }, foldHead(cb, "Records owned per table", "one count request per owned table", count), h("div", { class: "card-body" }, body));
+  return invFold(
+    h("details", { class: "card", "data-cat": "records" }, foldHead(cb, "Records owned per table", "one count request per owned table", undefined, count), h("div", { class: "card-body" }, body)),
+    "records",
+    !!scan?.rows.length,
+  );
+}
+
+/**
+ * The scanned-table list with its own "Filter tables" box. Typing re-renders only the rows, so the
+ * input keeps focus. The filter is view-only: a ticked table it hides is still planned, and says so.
+ */
+function scanRowsView(scan: NonNullable<Inventory["scan"]>): HTMLElement {
+  const all = $<HTMLInputElement>("#scan-show-failed").checked ? [...scan.rows, ...scan.failed] : scan.rows;
+  const input = h("input", { type: "search", id: "scan-rows-filter", placeholder: "Filter tables", "aria-label": "Filter scanned tables" });
+  input.value = scanRowFilter;
+  const caption = h("span", { class: "count-caption", id: "scan-rows-count" });
+  const list = h("div", {});
+  const draw = (): void => {
+    const f = scanRowFilter.trim().toLowerCase();
+    const rows = f ? all.filter((r) => r.table.logicalName.includes(f) || r.table.displayName.toLowerCase().includes(f)) : all;
+    const hiddenTicked = f ? scan.rows.filter((r) => selectedTables.has(r.table.logicalName) && !rows.includes(r)).length : 0;
+    caption.textContent = shownOf(rows.length, all.length, "tables") + (hiddenTicked ? ` · ${hiddenTicked} ticked ${hiddenTicked === 1 ? "table hidden by the filter stays" : "tables hidden by the filter stay"} in the plan` : "");
+    list.replaceChildren(
+      rows.length
+        ? table(["", "Table", "#Records", "Note"], rows.map(scanRow), undefined, "scan")
+        : f
+          ? filteredEmpty("No tables match", `Nothing in this scan matches “${scanRowFilter.trim()}”.`, () => {
+              scanRowFilter = "";
+              input.value = "";
+              draw();
+            })
+          : emptyState("No records owned", "The leaver owns no records in the scanned tables."),
+    );
+  };
+  input.addEventListener("input", () => {
+    scanRowFilter = input.value;
+    draw();
+  });
+  draw();
+  return h("div", { class: "stack scan-rows" }, all.length ? h("div", { class: "row" }, input, caption) : null, list);
+}
+
+/** A category that read cleanly and holds nothing (a read error is never "empty": it must stay visible). */
+const isEmptyCat = (c: CategoryResult): boolean => !c.error && !c.items.length;
+
+/**
+ * "Nothing held in: …" caption plus the "Show empty categories" switch (remembered per viewer). Toggling
+ * only hides or shows the empty cards, so nothing re-renders and the switch keeps focus.
+ */
+function emptyCatsControls(empty: CategoryResult[], cards: HTMLElement[]): HTMLElement[] {
+  if (!empty.length) return [];
+  const caption = h("span", { class: "caption empty-cats", id: "empty-cats-caption" }, `Nothing held in: ${empty.map((c) => c.label).join(", ")}`);
+  const cb = h("input", { type: "checkbox", id: "show-empty-cats" });
+  cb.checked = showEmptyCats;
+  const sync = (): void => {
+    caption.hidden = showEmptyCats;
+    for (const el of cards) if (el.dataset.empty) el.hidden = !showEmptyCats;
+  };
+  cb.addEventListener("change", () => {
+    showEmptyCats = cb.checked;
+    saveView(TOOL, "showEmptyCats", showEmptyCats || undefined);
+    sync();
+  });
+  sync();
+  return [caption, h("label", { class: "check" }, cb, "Show empty categories")];
 }
 
 function renderInventory(): void {
   const panel = $("#inventory-body");
   panel.replaceChildren();
   if (!inventory) return void panel.append(emptyState("No leaver selected", "Pick the leaver on the first tab."));
-  panel.append(h("div", { class: "stack", id: "inventory-cards" }, recordsCard(), ...inventory.categories.map(categoryCard)));
+  const empty = inventory.categories.filter(isEmptyCat);
+  const cards = inventory.categories.map((c) => {
+    const el = categoryCard(c);
+    if (isEmptyCat(c)) el.dataset.empty = "true";
+    return el;
+  });
+  panel.append(
+    h("div", { class: "row fold-row" }, ...emptyCatsControls(empty, cards), foldAllButtons(() => document.getElementById("inventory-cards"), "details.card:not([hidden])")),
+    h("div", { class: "stack", id: "inventory-cards" }, recordsCard(), ...cards),
+  );
 }
 
 // ---------- 3. plan & apply ----------
+/** The category each per-category option acts on: the option is moot while that category is empty or unticked. */
+const OPT_CAT: Partial<Record<keyof typeof opts, CategoryKey>> = {
+  roleCopy: "roles",
+  roleRemove: "roles",
+  profileCopy: "fieldprofiles",
+  profileRemove: "fieldprofiles",
+  teamRemove: "teams",
+  teamAdd: "teams",
+};
+
+/** Why an option does nothing right now (its category empty, unreadable or not ticked), or null. */
+function optOffReason(cat: CategoryKey): string | null {
+  const c = inventory?.categories.find((x) => x.key === cat);
+  if (!c) return null;
+  if (c.error) return `${c.label} could not be read`;
+  if (!c.items.length) return `The leaver holds no ${c.label.toLowerCase()}`;
+  if (!selectedCats.has(cat)) return `${c.label} is not ticked on the Inventory tab`;
+  return null;
+}
+
+/**
+ * Disable each per-category option whose category is empty or not selected, the reason in `title`.
+ * Its own value is kept, so ticking the category again restores what the user chose.
+ */
+function syncOptions(): void {
+  document.querySelectorAll<HTMLInputElement>("#tab-plan input[data-opt]").forEach((cb) => {
+    const cat = OPT_CAT[cb.dataset.opt as keyof typeof opts];
+    if (!cat) return;
+    const reason = optOffReason(cat);
+    const label = cb.closest("label");
+    cb.disabled = !!reason;
+    label?.classList.toggle("is-off", !!reason);
+    if (reason) label?.setAttribute("title", reason);
+    else label?.removeAttribute("title");
+  });
+}
+
 function optionsCard(): HTMLElement {
   const box = (labelText: string, key: keyof typeof opts): HTMLElement =>
     h("label", {}, check({ "data-opt": key }, opts[key] === true, false, (v) => {
@@ -376,6 +574,7 @@ const recordTarget = (): OwnerTarget | null =>
 function updatePlanSummary(): void {
   const el = document.querySelector("#plan-summary");
   if (!el || !inventory) return;
+  syncOptions();
   const rows = estimateCounts(inventory, { categories: selectedCats, tables: selectedTables, ...opts });
   const total = rows.reduce((n, r) => n + r.count, 0);
   el.replaceChildren(
@@ -426,21 +625,46 @@ async function collectRecordIds(a: DataverseLike, inv: Inventory): Promise<Map<s
   return out;
 }
 
-function previewBody(plan: Plan): Node {
-  const big = plan.ops.length > LARGE_PLAN_WARNING;
+const opRows = (ops: Plan["ops"]): (Node | string)[][] => ops.map((op) => [op.label, op.detail, h("span", { class: "mono" }, CALL_TEXT(op.call))]);
+
+/** One category's operations, folded; past PREVIEW_ROWS the rest sit behind a "Show all N" button. */
+function previewCategory(c: Plan["counts"][number], ops: Plan["ops"], open: boolean): HTMLElement {
+  const list = h("div", { class: "preview-ops" }, table(["Target", "Change", "Call"], opRows(ops.slice(0, PREVIEW_ROWS)), undefined, "preview"));
+  if (ops.length > PREVIEW_ROWS) {
+    const more = h("button", { class: "btn btn-ghost btn-sm", type: "button", "data-show-all": c.category }, `Show all ${ops.length}`);
+    const note = h("div", { class: "row preview-more" }, h("span", { class: "count-caption" }, `First ${PREVIEW_ROWS} of ${ops.length} operations`), more);
+    more.addEventListener("click", () => {
+      list.replaceChildren(table(["Target", "Change", "Call"], opRows(ops), undefined, "preview"));
+      note.remove();
+    });
+    list.append(note);
+  }
   return h(
-    "div",
-    {},
-    h("p", {}, `${plan.ops.length} operation${plan.ops.length === 1 ? "" : "s"} against ${envName ?? "this environment"}.`),
-    big ? h("div", { class: "danger-box" }, `This is a large batch (over ${LARGE_PLAN_WARNING} writes). Narrow the table selection, or use the ToolBox "Ownership Mover" for bulk ownership changes.`) : h("span", {}),
-    table(["Category", "#Operations"], plan.counts.map((c) => [c.label, String(c.count)])),
-    plan.warnings.length ? h("div", { class: "warnings" }, h("ul", { class: "notes" }, ...plan.warnings.map((w) => h("li", {}, w)))) : h("span", {}),
-    plan.skipped.length ? h("ul", { class: "notes" }, ...plan.skipped.map((sk) => h("li", { class: "caption" }, sk))) : h("span", {}),
-    h("h3", { style: "margin-top:12px" }, `First ${Math.min(PREVIEW_ROWS, plan.ops.length)} operations`),
-    table(["Target", "Change", "Call"], plan.ops.slice(0, PREVIEW_ROWS).map((op) => [op.label, op.detail, h("span", { class: "mono" }, CALL_TEXT(op.call))]), undefined, "preview"),
+    "details",
+    { class: "preview-cat", "data-cat": c.category, open },
+    h("summary", { class: "chev" }, `${c.label} · ${c.count} operation${c.count === 1 ? "" : "s"}`),
+    list,
   );
 }
 
+/** Warnings first (open), then one fold per category with its operations, then the skipped items with their reasons. */
+function previewBody(plan: Plan): Node {
+  const big = plan.ops.length > LARGE_PLAN_WARNING;
+  const cats = plan.counts; // categories with at least one operation, in category order
+  return h(
+    "div",
+    { class: "preview-body" },
+    h("p", {}, `${plan.ops.length} operation${plan.ops.length === 1 ? "" : "s"} against ${envName ?? "this environment"}.`),
+    big ? h("div", { class: "danger-box" }, `This is a large batch (over ${LARGE_PLAN_WARNING} writes). Narrow the table selection, or use the ToolBox "Ownership Mover" for bulk ownership changes.`) : null,
+    plan.warnings.length
+      ? h("details", { class: "warnings", id: "preview-warnings", open: true }, h("summary", { class: "chev" }, `Warnings (${plan.warnings.length})`), h("ul", { class: "notes" }, ...plan.warnings.map((w) => h("li", {}, w))))
+      : null,
+    h("div", { class: "preview-cats" }, ...cats.map((c) => previewCategory(c, plan.ops.filter((op) => op.category === c.category), cats.length === 1))),
+    plan.skipped.length
+      ? h("details", { class: "skipped", id: "preview-skipped" }, h("summary", { class: "chev" }, `Skipped (${plan.skipped.length})`), h("ul", { class: "notes" }, ...plan.skipped.map((sk) => h("li", { class: "caption" }, sk))))
+      : null,
+  );
+}
 
 /**
  * Roles are business-unit scoped, so a role held by the leaver cannot be granted to a successor in
@@ -501,6 +725,7 @@ async function previewAndApply(): Promise<void> {
   control = null;
   clearProgress();
   lastResults = results;
+  resultView = null;
   const failed = results.filter((r) => !r.ok).length;
   await notify(failed ? "Applied with failures" : "Applied", `${results.length - failed} ok, ${failed} failed`, failed ? "warning" : "success");
   renderReport();
@@ -514,6 +739,75 @@ function exportButton(id: string, label: string, name: () => string, content: ()
     if (await saveText(name(), content(), mime)) await notify("Exported", name(), "success");
   });
   return b;
+}
+
+const ERR_PREVIEW = 80;
+
+/** Result cell: a compact badge, plus the error wrapped below it (folded behind a preview when long). */
+function resultCell(r: OpResult, openErrors: Set<OpResult>): HTMLElement {
+  if (r.ok) return badge("ok", "ok");
+  const err = r.error ?? "";
+  if (!err) return badge("failed", "bad");
+  if (err.length <= ERR_PREVIEW) return h("div", { class: "result-cell" }, badge("failed", "bad"), h("div", { class: "err" }, err));
+  const fold = h(
+    "details",
+    { class: "err-fold", open: openErrors.has(r) },
+    h("summary", { class: "chev" }, "error", h("span", { class: "err-preview" }, `: ${err.slice(0, ERR_PREVIEW).trimEnd()}…`)),
+    h("div", { class: "err" }, err),
+  );
+  // an error the user unfolded stays unfolded when the Failed / All view is switched
+  fold.addEventListener("toggle", () => (fold.open ? openErrors.add(r) : openErrors.delete(r)));
+  return h("div", { class: "result-cell" }, badge("failed", "bad"), fold);
+}
+
+/**
+ * The apply results with a Failed / All switch: one failure among thousands of rows would otherwise be
+ * buried in plan order. All lists failures first (plan order kept within each group). View only: the
+ * exports always carry every row and the full error text.
+ */
+function resultsView(results: OpResult[], failedCount: number): HTMLElement {
+  const okCount = results.length - failedCount;
+  const caption = h("span", { class: "count-caption", id: "result-count" });
+  const list = h("div", { class: "results-wrap" });
+  const openErrors = new Set<OpResult>();
+  const seg = (view: "failed" | "all", label: string): HTMLButtonElement => {
+    const b = h("button", { class: "seg-btn", type: "button", "data-view": view }, label);
+    b.disabled = view === "failed" && !failedCount;
+    b.addEventListener("click", () => show(view));
+    return b;
+  };
+  const segFailed = seg("failed", `Failed (${failedCount})`);
+  const segAll = seg("all", `All (${results.length})`);
+  const show = (view: "failed" | "all"): void => {
+    resultView = view;
+    const v = failedCount ? view : "all";
+    segFailed.setAttribute("aria-pressed", String(v === "failed"));
+    segAll.setAttribute("aria-pressed", String(v === "all"));
+    const failedRows = results.filter((r) => !r.ok);
+    const rows = v === "failed" ? failedRows : [...failedRows, ...results.filter((r) => r.ok)];
+    caption.textContent = shownOf(rows.length, results.length, "operations");
+    list.replaceChildren(
+      table(
+        ["Category", "Target", "Change", "Result"],
+        rows.map((r) => [categoryLabel(r.op.category), r.op.label, r.op.detail, resultCell(r, openErrors)]),
+        (i) => (rows[i].ok ? undefined : "is-failed"),
+        "results",
+      ),
+    );
+  };
+  const failedLink = h("button", { class: "linkbtn", type: "button", id: "result-failed-link", title: "Show only the failed operations" }, `${failedCount} failed`);
+  failedLink.addEventListener("click", () => {
+    show("failed");
+    segFailed.focus();
+  });
+  show(resultView ?? (failedCount ? "failed" : "all"));
+  return h(
+    "div",
+    { class: "stack results-view" },
+    h("p", { class: "caption", id: "result-summary" }, `${okCount} ok · `, failedCount ? failedLink : "0 failed"),
+    h("div", { class: "row" }, h("div", { class: "seg", role: "group", "aria-label": "Show results" }, segFailed, segAll), caption),
+    list,
+  );
 }
 
 function renderReport(): void {
@@ -544,13 +838,7 @@ function renderReport(): void {
           h(
             "div",
             {},
-            h("p", { class: "caption", id: "result-summary" }, `${results.length - failed.length} ok · ${failed.length} failed`),
-            table(
-              ["Category", "Target", "Change", "Result"],
-              results.map((r) => [categoryLabel(r.op.category), r.op.label, r.op.detail, r.ok ? badge("ok", "ok") : badge(r.error ?? "failed", "bad")]),
-              undefined,
-              "results",
-            ),
+            resultsView(results, failed.length),
           ),
           h(
             "span",
@@ -603,8 +891,8 @@ function wire(): void {
   $("#leaver-form .field").replaceChildren(h("label", { for: "leaver-q" }, "Leaver"), userPicker("leaver", (u) => void pickLeaver(u)));
   $("#leaver-form").addEventListener("submit", (e) => e.preventDefault());
   $("#btn-scan").addEventListener("click", () => void runScan());
-  $("#scan-filter").addEventListener("input", debounce(() => renderInventory(), 250));
-  $("#scan-hide-empty").addEventListener("change", () => renderInventory());
+  // #scan-filter only narrows which tables the next scan requests (read in runScan): nothing to re-render.
+  $("#scan-show-failed").addEventListener("change", () => renderInventory());
   $("#btn-cancel").addEventListener("click", () => {
     if (control) control.cancelled = true;
   });

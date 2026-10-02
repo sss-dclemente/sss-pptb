@@ -153,7 +153,20 @@ const MOCK = `
 
   const M = window.__mock = { envs, members, forms, views, queries: [], executes: [], updates: [], log: [], saved: [], notes: [], rrc: 0, managedFlip: false, nextText: null, nextBinary: null, FORM_A_XML, VIEW_FETCH, VIEW_LAYOUT, ids: { FORM_A, FORM_B, VIEW, FORM_FS, CHART, A, E, SOL },
     listeners: [], extraReq: {}, attrFail: false, formsFail: false, throttleOnce: false, throttled: 0, writeDelay: 0, inflight: 0, maxInflight: 0, byIdsCalls: 0 };
+  M.owners = owners;
   M.emit = (event) => { for (const cb of M.listeners) cb(null, { event }); };
+  // D2: many columns on account, msdyn_colNN owned by Field Service (they leave a shell), sss_colN yours (kept)
+  M.addMany = (msdyn, own) => {
+    const add = (name, i) => {
+      const id = g(7000 + i);
+      attrs.account.push({ LogicalName: name, MetadataId: id, RequiredLevel: { Value: 'None' }, IsCustomAttribute: true });
+      attrByName[name] = id;
+      catalog[id] = { type: 2, table: 'account', owners: name.startsWith('msdyn_') ? [SOL.fs] : [] };
+      members.push(row(id, 2, null, accRow.solutioncomponentid));
+    };
+    for (let i = 0; i < msdyn; i++) add('msdyn_col' + String(i).padStart(2, '0'), i);
+    for (let i = 0; i < own; i++) add('sss_col' + i, 500 + i);
+  };
   M.addExtra = () => { for (const [id, c] of Object.entries(extra)) { catalog[id] = c; members.push(row(id, c.type, null, accRow.solutioncomponentid)); } };
 
   const page = (q, target, rows) => {
@@ -214,6 +227,7 @@ const MOCK = `
       if ((m = q.match(/^RetrieveRequiredComponents\\(ObjectId=([^,]+),ComponentType=(\\d+)\\)$/))) {
         if (!isGuid(m[1])) throw new Error('mock: ObjectId must be an unquoted guid, got ' + m[1]);
         M.rrc++;
+        if (M.rrcFail) throw new Error('mock: RetrieveRequiredComponents unavailable');
         if (M.onRrc) { const f = M.onRrc; M.onRrc = null; f(); }
         return { '@odata.context': 'x#Microsoft.Dynamics.CRM.RetrieveRequiredComponentsResponse', EntityCollection: required(m[1], Number(m[2])) };
       }
@@ -339,6 +353,7 @@ await page.uncheck("#show-safe");
 await page.screenshot({ path: resolve(OUT, "01-diagnose.png"), fullPage: true });
 
 // ---- exports ----
+assert((await page.isVisible("#btn-export-json")) && (await page.isVisible("#btn-export-csv")), "D8: Findings JSON / CSV shown on the Diagnose tab");
 await page.click("#btn-export-csv");
 await page.click("#btn-export-json");
 let saved = await M(() => window.__mock.saved);
@@ -368,6 +383,26 @@ assert(leaving.includes("=Quick Create (nothing to strip: kept msdyn_serviceterr
 const diff = await page.$eval('pre[aria-label="formxml diff Account"]', (e) => ({ del: [...e.querySelectorAll(".del")].map((x) => x.textContent).join("\n"), add: e.querySelectorAll(".add").length }));
 assert(diff.del.includes('datafieldname="msdyn_workorderid"') && !diff.del.includes('datafieldname="name"'), "form diff shows the msdyn control removed, name kept");
 assert(await page.$('pre[aria-label="fetchxml diff Accounts with work orders"] .del'), "view fetchxml diff shown");
+
+// ---- D1: diff blocks are closed folds with line counts; expand / collapse all; open state survives a re-render ----
+const folds = () => page.$$eval("#ops details.diff-fold", (els) => els.map((d) => ({ open: d.open, summary: d.querySelector("summary").textContent, chev: d.querySelector("summary").classList.contains("chev"), del: d.querySelectorAll("pre .del").length, add: d.querySelectorAll("pre .add").length, label: d.querySelector("pre").getAttribute("aria-label") })));
+let fl = await folds();
+assert(fl.length === 3 && fl.every((f) => !f.open && f.chev), "D1: 3 diff folds (form + view fetch/layout), all closed by default: " + JSON.stringify(fl.map((f) => f.open)));
+const formFold = fl.find((f) => f.label === "formxml diff Account");
+assert(formFold && formFold.summary === `Show form XML diff (−${formFold.del} / +${formFold.add} lines)` && formFold.del > 0, "D1: summary counts the removed / added lines: " + formFold?.summary);
+assert(fl.some((f) => /^Show view FetchXML diff \(−[1-9]\d* \/ \+\d+ lines\)$/.test(f.summary)) && fl.some((f) => f.summary.startsWith("Show view LayoutXML diff")), "D1: view folds name FetchXML / LayoutXML: " + fl.map((f) => f.summary).join(" | "));
+assert(!(await page.isVisible('pre[aria-label="formxml diff Account"]')), "D1: closed fold hides the diff");
+await page.click("#ops-head .fold-all >> text=Expand all");
+assert((await folds()).every((f) => f.open), "D1: Expand all opens every diff");
+await page.click("#ops-head .fold-all >> text=Collapse all");
+assert((await folds()).every((f) => !f.open), "D1: Collapse all closes every diff");
+await page.click('#ops details.diff-fold:has(pre[aria-label="formxml diff Account"]) > summary');
+assert(await page.isVisible('pre[aria-label="formxml diff Account"]'), "D1: clicking the summary opens the diff");
+// a keep tick re-renders the operations list: the opened fold stays open, the others stay closed
+await page.check('input[aria-label="Keep =Quick Create"]');
+await page.uncheck('input[aria-label="Keep =Quick Create"]');
+fl = await folds();
+assert(fl.find((f) => f.label === "formxml diff Account").open && fl.filter((f) => f.open).length === 1, "D1: opened fold kept open after the ops re-render");
 
 // ---- backup gate ----
 assert(await page.isDisabled("#btn-confirm"), "confirm disabled before backup");
@@ -407,10 +442,15 @@ await page.screenshot({ path: resolve(OUT, "03-results.png"), fullPage: true });
 
 // ---- restore ----
 await page.click('.tab[data-tab="restore"]');
+assert((await page.isHidden("#btn-export-json")) && (await page.isHidden("#btn-export-csv")), "D8: Findings JSON / CSV hidden off the Diagnose tab (Restore, after Fix)");
 await page.evaluate((t) => { window.__mock.nextText = t; }, backup.content);
 await page.click("#btn-load-backup");
 await page.waitForSelector("#restore-ops li");
 const rops = await page.$$eval("#restore-ops > li .mono", (els) => els.map((e) => e.textContent));
+const rfolds = await page.$$eval("#restore-ops details.diff-fold", (els) => els.map((d) => d.open));
+assert(rfolds.length === 3 && rfolds.every((o) => !o) && (await page.$("#restore-ops-head .fold-all")), "D1: restore diffs closed by default, with Expand all / Collapse all");
+await page.click("#restore-ops-head .fold-all >> text=Expand all");
+assert((await page.$$eval("#restore-ops details.diff-fold", (els) => els.every((d) => d.open))) && (await page.$eval("#restore-ops pre.diff", (e) => e.querySelectorAll(".del, .add").length > 0)), "D1: restore Expand all opens the diffs");
 assert(rops[0] === "RemoveSolutionComponent Table account" && rops[1] === "AddSolutionComponent Table account" && rops.some((t) => t.startsWith("Update form Account")) && rops.some((t) => t.startsWith("Update view")) && rops.at(-1) === "PublishXml account", "restore plan: table back to all assets, XML back, publish: " + rops.join(" | "));
 await page.click("#btn-restore-apply");
 await page.waitForSelector("dialog[open]");
@@ -421,6 +461,7 @@ assert(after.form && after.fetch && after.layout, "restore writes original formx
 assert(after.members.includes(ids.E.acc + ":0") && after.members.length === 7, "restore puts account back with all assets (7 members)");
 assert(after.pubs === 2, "restore publishes");
 await page.click('.tab[data-tab="diagnose"]');
+assert((await page.isVisible("#btn-export-json")) && (await page.isVisible("#btn-export-csv")), "D8: Findings JSON / CSV shown again back on Diagnose");
 await page.click("#btn-run");
 await page.waitForFunction(() => document.querySelectorAll("#findings .finding").length === 5);
 assert(true, "after restore the 5 blockers are back");
@@ -449,6 +490,7 @@ await page.evaluate(() => { window.__mock.managedFlip = false; });
 
 // ---- offline ----
 await page.click('.tab[data-tab="offline"]');
+assert(await page.isHidden("#btn-export-json"), "D8: Findings JSON hidden on the Offline tab");
 await page.evaluate((b) => { window.__mock.nextBinary = b; }, zipBytes);
 await page.click("#btn-open-zip");
 await page.waitForSelector("#offline-summary");
@@ -458,6 +500,35 @@ const offCards = await page.$$eval("#offline-body .finding", (els) => els.map((e
 assert(JSON.stringify(offCards.sort()) === "[1,2]", "offline: grouped by dependent (form has 2 required)");
 await page.evaluate(() => document.documentElement.setAttribute("data-theme", "dark"));
 await page.screenshot({ path: resolve(OUT, "04-offline-dark.png"), fullPage: true });
+
+// ---- S5 / S4: only present-in-target findings → filtered empty state; "Show present in target" persisted ----
+await page.click('.tab[data-tab="diagnose"]');
+assert((await page.getAttribute('.tab[data-tab="diagnose"]', "aria-selected")) === "true" && (await page.getAttribute('.tab[data-tab="offline"]', "aria-selected")) === "false", "S6: tabs aria-selected follows the clicked tab");
+// the target gets Field Service and Sales too: every dependency is then present in the target
+await page.reload();
+await page.waitForFunction(() => document.querySelectorAll("#solution option[value]:not([value=''])").length > 0);
+await page.evaluate(() => {
+  const m = window.__mock;
+  for (const u of ["FieldService", "msdynce_Sales"]) m.envs.secondary.solutions.push({ ...m.envs.primary.solutions.find((s) => s.uniquename === u), solutionid: "00000000-0000-0000-0000-0000000009" + (u === "FieldService" ? "92" : "93") });
+  m.emit("connection:updated");
+});
+await page.waitForTimeout(300);
+await page.waitForFunction(() => !document.querySelector("#btn-run").disabled);
+await page.evaluate(() => document.querySelector("#diag-summary").replaceChildren());
+await page.click("#btn-run");
+await page.waitForSelector("#diag-summary .summary");
+const s5 = await page.$eval("#findings", (e) => ({ text: e.textContent, btn: !!e.querySelector(".empty-actions button"), cards: e.querySelectorAll(".finding").length }));
+assert(s5.cards === 0 && s5.btn && s5.text.includes("Tick “Show present in target”"), "S5: every finding present in target → filtered empty state with explanation + button: " + s5.text);
+await page.click("#findings .empty-actions button");
+const s5after = await page.$$eval("#findings .finding", (els) => els.map((e) => e.classList.contains("is-safe")));
+assert((await page.isChecked("#show-safe")) && s5after.length > 0 && s5after.every(Boolean), "S5: the button ticks “Show present in target” and shows the present-in-target findings: " + s5after.length);
+await page.reload();
+await page.waitForFunction(() => document.querySelectorAll("#solution option[value]:not([value=''])").length > 0);
+assert(await page.isChecked("#show-safe"), "S4: “Show present in target” is restored after reload");
+await page.uncheck("#show-safe");
+await page.reload();
+await page.waitForFunction(() => document.querySelectorAll("#solution option[value]:not([value=''])").length > 0);
+assert(!(await page.isChecked("#show-safe")), "S4: unticked again after reload");
 
 // ---- regression cases (fresh page each: the init script resets the mock) ----
 const fresh = async () => {
@@ -502,6 +573,63 @@ assert(keep.mainForm, "bug 1: shell keeps the customized System main form (rows 
 assert(!keep.fsForm && !keep.msdynCol && keep.ownCol, "B1: form owned by filtered FieldService and msdyn column leave; own-prefix column kept: " + JSON.stringify(keep));
 const b1ops = await opLabels();
 assert(b1ops.some((t) => t.startsWith("AddSolutionComponent Chart Accounts by Industry")) && b1ops.some((t) => t.startsWith("AddSolutionComponent Form =Quick Create")) && !b1ops.some((t) => t.includes("Work Order Summary")), "B1: re-add ops for kept chart and quick create form, none for the Field Service form");
+
+assert(!(await page.isChecked(".card.shell-card .shell-only")) && (await page.textContent(".card.shell-card .shell-count")) === "8 subcomponents shown", "D2: a short leaving list (8) opens with every row, Only leaving off");
+
+// ---- D2: shell leaving list: search, type filter, Only leaving, Keep / Drop all shown ----
+await fresh();
+await M(() => window.__mock.addMany(30, 6));
+await diagnoseNow();
+await selD(`2:${ids.A.woid}`, "shell");
+await previewNow();
+const SH = ".card.shell-card";
+const shown = () => page.$$eval(`${SH} .leaving label:not([hidden])`, (els) => els.map((e) => ({ name: e.querySelector(".mono").textContent, keep: e.querySelector("input").checked })));
+const shCount = () => page.textContent(`${SH} .shell-count`);
+const leaveBadge = () => page.textContent(`${SH} .card-head .badge`);
+const keepState = () => page.$$eval(`${SH} .leaving label`, (els) => Object.fromEntries(els.map((e) => [e.querySelector(".mono").textContent, e.querySelector("input").checked])));
+let rowsNow = await shown();
+assert(await page.isChecked(`${SH} .shell-only`), "D2: a long leaving list (42 > 30) opens on Only leaving");
+assert((await shCount()) === "32 of 42 subcomponents shown" && rowsNow.length === 32 && rowsNow.every((r) => !r.keep), "D2: Only leaving shows the 32 unticked rows: " + (await shCount()));
+assert((await leaveBadge()) === "32 leave", "D2: header badge counts the rows that leave");
+const typeOpts = await page.$$eval(`${SH} .shell-type option`, (els) => els.map((e) => e.textContent));
+assert(JSON.stringify(typeOpts) === JSON.stringify(["All types", "Column (39)", "View (1)", "Form (2)"]), "D2: type filter options derived from the rows: " + typeOpts.join(", "));
+await page.uncheck(`${SH} .shell-only`);
+assert((await shCount()) === "42 subcomponents shown", "D2: Only leaving off shows all 42");
+await page.selectOption(`${SH} .shell-type`, { label: "Form (2)" });
+rowsNow = await shown();
+assert((await shCount()) === "2 of 42 subcomponents shown" && rowsNow.map((r) => r.name).sort().join() === "=Quick Create,Account", "D2: type filter narrows to forms: " + rowsNow.map((r) => r.name).join());
+await page.selectOption(`${SH} .shell-type`, "");
+await page.fill(`${SH} .shell-search`, "sss_");
+rowsNow = await shown();
+assert((await shCount()) === "7 of 42 subcomponents shown" && rowsNow.every((r) => r.name.startsWith("sss_") && r.keep), "D2: search narrows to the 7 sss_ columns, all kept: " + (await shCount()));
+const beforeDrop = await keepState();
+await page.click(`${SH} button:text-is("Drop all shown")`);
+const afterDrop = await keepState();
+const changedRows = Object.keys(afterDrop).filter((k) => afterDrop[k] !== beforeDrop[k]);
+assert(changedRows.length === 7 && changedRows.every((k) => k.startsWith("sss_")) && afterDrop["Account"] && afterDrop["=Quick Create"] && afterDrop["Accounts with work orders"], "D2: Drop all shown unticks only the 7 shown rows; hidden forms / view stay ticked: " + changedRows.join());
+assert((await leaveBadge()) === "39 leave", "D2: badge follows Drop all shown: " + (await leaveBadge()));
+let d2ops = await opLabels();
+assert(!d2ops.some((t) => t.includes("sss_")) && d2ops.some((t) => t.startsWith("AddSolutionComponent Form Account")), "D2: dropped columns get no re-add; hidden kept form still re-added");
+await page.fill(`${SH} .shell-search`, "msdyn_col0");
+assert((await shCount()) === "10 of 42 subcomponents shown", "D2: search msdyn_col0 shows 10");
+await page.click(`${SH} button:text-is("Keep all shown")`);
+const afterKeep = await keepState();
+const kept = Object.keys(afterKeep).filter((k) => afterKeep[k] !== afterDrop[k]);
+assert(kept.length === 10 && kept.every((k) => k.startsWith("msdyn_col0")) && !afterKeep["msdyn_col10"] && !afterKeep["sss_col0"], "D2: Keep all shown ticks only the 10 shown rows: " + kept.join());
+d2ops = await opLabels();
+assert(d2ops.some((t) => t.startsWith("AddSolutionComponent Column msdyn_col05")) && !d2ops.some((t) => t.includes("msdyn_col15")), "D2: kept rows are re-added, hidden ones are not");
+// a tick does not re-filter: under Only leaving, a row just ticked stays in view
+await page.fill(`${SH} .shell-search`, "");
+await page.check(`${SH} .shell-only`);
+assert((await shCount()) === "29 of 42 subcomponents shown", "D2: Only leaving after the bulk changes: " + (await shCount()));
+await page.check('input[aria-label="Keep msdyn_col15"]');
+assert((await page.isVisible('input[aria-label="Keep msdyn_col15"]')) && (await shCount()) === "29 of 42 subcomponents shown", "D2: ticking a row under Only leaving keeps it shown until a filter changes");
+await page.fill(`${SH} .shell-search`, "zzz");
+assert((await page.isVisible(`${SH} .empty-state`)) && (await page.isHidden(`${SH} .leaving`)) && (await page.isDisabled(`${SH} button:text-is("Drop all shown")`)), "D2: no match → filtered empty state, bulk buttons disabled");
+await page.click(`${SH} .empty-state button`);
+assert((await shCount()) === "42 subcomponents shown" && (await page.inputValue(`${SH} .shell-search`)) === "" && !(await page.isChecked(`${SH} .shell-only`)) && (await page.isHidden(`${SH} .empty-state`)), "D2: Clear filters resets search, type and Only leaving");
+assert((await leaveBadge()) === "28 leave", "D2: filters never changed a tick: " + (await leaveBadge()));
+await page.screenshot({ path: resolve(OUT, "05-shell-filters.png"), fullPage: true });
 
 // ---- B2: shell on a column + remove on its table conflict; identical ops are deduped ----
 await fresh();
@@ -657,6 +785,145 @@ await page.waitForSelector("#rediag", { timeout: 15000 });
 await page.waitForTimeout(300);
 const b8 = await page.evaluate((w) => ({ updates: window.__mock.updates.length - w.updates, pubs: window.__mock.log.filter((x) => x === "PublishXml").length - w.pubs }), w6);
 assert(b8.updates === 1 && b8.pubs === 1, "bug 6: double-click on Confirm → one view update and one PublishXml: " + JSON.stringify(b8));
+
+// ---- D3: Diagnose find + type filter, applied to the results without re-running; "12 of 80"; Clear; persisted ----
+await fresh();
+await diagnoseNow();
+const diagCards = () => page.$$eval("#findings .finding", (els) => els.map((e) => e.querySelector(".head .name").textContent));
+const diagShown = () => page.textContent("#diag-shown");
+assert(await page.isVisible("#diag-tools"), "D3: find + type tools shown with the results");
+assert((await diagShown()) === "5 of 6 findings shown", "D3: summary counts the shown findings (the present-in-target one hidden): " + (await diagShown()));
+const d3types = await page.$$eval("#diag-type option", (els) => els.map((e) => e.textContent));
+assert(JSON.stringify(d3types) === JSON.stringify(["All types", "Column (3)", "View (1)", "Form (2)"]), "D3: type options built from the findings: " + d3types.join(", "));
+const rrcD3 = await M(() => window.__mock.rrc);
+const qD3 = await M(() => window.__mock.queries.length);
+await page.selectOption("#diag-type", { label: "Form (2)" });
+let d3 = await diagCards();
+assert(d3.length === 2 && d3.includes("=Quick Create") && d3.includes("Account") && (await diagShown()) === "2 of 6 findings shown", "D3: type Form narrows to the 2 forms: " + d3.join(", ") + " / " + (await diagShown()));
+await page.selectOption("#diag-type", "");
+await page.fill("#diag-find", "quick");
+d3 = await diagCards();
+assert(d3.length === 1 && d3[0] === "=Quick Create" && (await diagShown()) === "1 of 6 findings shown", "D3: find matches the component name: " + d3.join(", "));
+await page.fill("#diag-find", "msdyn_workorder");
+d3 = await diagCards();
+assert(d3.length === 3 && d3.includes("msdyn_workorderid") && d3.includes("Account") && d3.includes("Accounts with work orders"), "D3: find matches required components (msdyn_workorder): " + d3.join(", "));
+await page.fill("#diag-find", "msdyn_appcommon");
+assert((await diagCards()).length === 0 && (await page.textContent("#findings")).includes("Tick “Show present in target”"), "D3: a match only among present-in-target findings points to the toggle");
+await page.check("#show-safe");
+d3 = await diagCards();
+assert(d3.length === 1 && d3[0] === "sss_custom" && (await diagShown()) === "1 of 6 findings shown", "D3: find matches the required solution (msdyn_AppCommon): " + d3.join(", "));
+await page.uncheck("#show-safe");
+await page.fill("#diag-find", "account");
+assert((await diagCards()).length === 5, "D3: find matches the table (account)");
+assert((await M(() => window.__mock.rrc)) === rrcD3 && (await M(() => window.__mock.queries.length)) === qD3, "D3: filtering never re-runs the diagnosis (no new calls)");
+await page.fill("#diag-find", "zzz");
+const d3empty = await page.$eval("#findings", (e) => ({ text: e.textContent, btn: e.querySelector(".empty-actions button")?.textContent }));
+assert(d3empty.text.includes("No findings match") && d3empty.btn === "Clear filters" && (await diagShown()) === "0 of 6 findings shown", "D3: nothing matches → filtered empty state with Clear: " + JSON.stringify(d3empty));
+await page.click("#findings .empty-actions button");
+assert((await page.inputValue("#diag-find")) === "" && (await page.inputValue("#diag-type")) === "" && (await diagCards()).length === 5 && (await diagShown()) === "5 of 6 findings shown", "D3: Clear empties find and type and shows the findings again");
+// persisted: the type and search come back after reopening the tool, once a diagnosis offers the type
+await page.selectOption("#diag-type", { label: "Form (2)" });
+await page.fill("#diag-find", "quick");
+await fresh();
+assert((await page.inputValue("#diag-find")) === "quick", "D3: search restored after reload");
+await diagnoseNow();
+assert((await page.inputValue("#diag-type")) === "60" && (await diagCards()).join() === "=Quick Create", "D3: type restored once the new diagnosis offers it, results filtered");
+await page.fill("#diag-find", "");
+await page.selectOption("#diag-type", "");
+assert((await diagCards()).length === 5, "D3: back to every blocker");
+
+// ---- D7: owning solutions revealed inline by the chip (button, aria-expanded), title kept; same for connection chips ----
+await M(() => { const m = window.__mock; m.owners[m.ids.E.wo].push(m.ids.SOL.sales); });
+await diagnoseNow();
+const woChip = `.finding[data-key="2:${ids.A.woid}"] button.req:has-text("Table msdyn_workorder")`;
+const chipState = () => page.$eval(woChip, (b) => { const line = document.getElementById(b.getAttribute("aria-controls")); return { expanded: b.getAttribute("aria-expanded"), title: b.title, hidden: line?.hidden, line: line?.textContent, inCard: !!line && b.closest(".finding").contains(line) }; });
+let d7 = await chipState();
+assert(d7.expanded === "false" && d7.hidden === true && d7.inCard && d7.title === "FieldService, msdynce_Sales", "D7: required-solution chip is a button, collapsed, title kept: " + JSON.stringify(d7));
+await page.click(woChip);
+d7 = await chipState();
+assert(d7.expanded === "true" && d7.hidden === false && d7.line.includes("2 managed solutions") && d7.line.includes("FieldService, msdynce_Sales"), "D7: click reveals every owning solution inline: " + JSON.stringify(d7));
+await page.fill("#diag-find", "workorder");
+d7 = await chipState();
+assert(d7.expanded === "true" && d7.hidden === false, "D7: the revealed line stays open when a filter re-renders the findings");
+await page.fill("#diag-find", "");
+await page.click(woChip);
+d7 = await chipState();
+assert(d7.expanded === "false" && d7.hidden === true, "D7: a second click hides the line");
+const connState = () => page.$eval("#conn .connchip", (b) => { const line = document.getElementById(b.getAttribute("aria-controls")); return { tag: b.tagName, expanded: b.getAttribute("aria-expanded"), title: b.title, hidden: line?.hidden, line: line?.textContent }; });
+let d7c = await connState();
+assert(d7c.tag === "BUTTON" && d7c.expanded === "false" && d7c.hidden && d7c.title === "https://sss-dev.crm4.dynamics.com", "D7: connection chip is a button with the URL in its title: " + JSON.stringify(d7c));
+await page.click("#conn .connchip >> nth=0");
+d7c = await connState();
+assert(d7c.expanded === "true" && !d7c.hidden && d7c.line === "https://sss-dev.crm4.dynamics.com", "D7: clicking the connection chip shows its URL inline: " + JSON.stringify(d7c));
+
+// ---- D6: failed lookups: the first 3 inline, all of them behind "Show all N" ----
+await fresh();
+await M(() => { window.__mock.rrcFail = true; });
+await diagnoseNow();
+const d6 = await page.$eval("#diag-summary .error-list", (e) => ({ text: e.firstChild.textContent, summary: e.querySelector("details > summary")?.textContent, chev: e.querySelector("details > summary")?.classList.contains("chev"), open: e.querySelector("details")?.open, n: e.querySelectorAll("details li").length }));
+assert(d6.text.startsWith("RetrieveRequiredComponents failed for 7 component(s): ") && d6.text.split("(mock: RetrieveRequiredComponents unavailable)").length - 1 === 3 && d6.text.endsWith("; …"), "D6: the first 3 failures inline: " + d6.text);
+assert(d6.summary === "Show all 7" && d6.chev && !d6.open && d6.n === 7, "D6: “Show all 7” fold (chevron, closed) lists every failure: " + JSON.stringify(d6));
+await page.click("#diag-summary .error-list details > summary");
+assert(await page.isVisible("#diag-summary .error-list details li >> nth=6"), "D6: opening it shows the seventh failure");
+await page.check("#show-safe");
+assert(await page.$eval("#diag-summary .error-list details", (d) => d.open), "D6: “Show all” stays open across a re-render");
+await page.uncheck("#show-safe");
+
+// ---- D4 + D3 offline: "Show present in target" twin (off by default), find + type, count, Clear ----
+await fresh();
+await page.evaluate(() => {
+  const m = window.__mock;
+  m.envs.secondary.solutions.push({ ...m.envs.primary.solutions.find((s) => s.uniquename === "FieldService"), solutionid: "00000000-0000-0000-0000-000000000992" });
+  m.emit("connection:updated");
+});
+await page.waitForTimeout(300);
+const openOffline = async () => {
+  await page.click('.tab[data-tab="offline"]');
+  await page.evaluate(() => document.querySelector("#offline-head").replaceChildren());
+  await page.evaluate((b) => { window.__mock.nextBinary = b; }, zipBytes);
+  await page.click("#btn-open-zip");
+  await page.waitForSelector("#offline-summary");
+};
+await openOffline();
+const offNames = () => page.$$eval("#offline-list .finding", (els) => els.map((e) => e.querySelector(".head .name").textContent + (e.classList.contains("is-safe") ? ":safe" : "")));
+const offShown = () => page.textContent("#offline-shown");
+assert(!(await page.isChecked("#off-show-safe")) && (await page.isVisible("#off-tools")), "D4: Offline “Show present in target” off by default");
+let d4 = await offNames();
+assert(d4.join() === "sss_lookup" && (await offShown()) === "1 of 2 dependents shown" && (await page.textContent("#offline-summary")).includes("1 blocking"), "D4: the dependent whose solution the target has (FieldService) is hidden: " + d4.join() + " / " + (await offShown()));
+await page.check("#off-show-safe");
+d4 = await offNames();
+assert(d4.length === 2 && d4.includes("Account:safe") && (await offShown()) === "2 dependents shown", "D4: ticking it shows the present-in-target dependent too: " + d4.join());
+assert(!(await page.isChecked("#show-safe")), "D4: the Offline toggle is its own, Diagnose's stays as it was");
+const offTypes = await page.$$eval("#off-type option", (els) => els.map((e) => e.textContent));
+assert(JSON.stringify(offTypes) === JSON.stringify(["All types", "Column (1)", "Form (1)"]), "D3 offline: type options from the dependents: " + offTypes.join(", "));
+await page.selectOption("#off-type", { label: "Form (1)" });
+assert((await offNames()).join() === "Account:safe" && (await offShown()) === "1 of 2 dependents shown", "D3 offline: type filter");
+await page.selectOption("#off-type", "");
+await page.fill("#off-find", "anchor");
+assert((await offNames()).join() === "sss_lookup", "D3 offline: find matches the required solution (msdynce_Anchor)");
+await page.fill("#off-find", "zzz");
+const offEmpty = await page.$eval("#offline-list", (e) => ({ text: e.textContent, btn: e.querySelector(".empty-actions button")?.textContent }));
+assert(offEmpty.text.includes("No dependents match") && offEmpty.btn === "Clear filters" && (await offShown()) === "0 of 2 dependents shown", "D3 offline: nothing matches → filtered empty state: " + JSON.stringify(offEmpty));
+await page.click("#offline-list .empty-actions button");
+assert((await page.inputValue("#off-find")) === "" && (await offNames()).length === 2 && (await page.isChecked("#off-show-safe")), "D3 offline: Clear empties the search, keeps the toggle");
+// persisted toggle; with every dependent present in the target the empty state offers the toggle
+await page.reload();
+await page.waitForFunction(() => document.querySelectorAll("#solution option[value]:not([value=''])").length > 0);
+assert(await page.isChecked("#off-show-safe"), "D4: Offline toggle restored after reload");
+await page.evaluate(() => {
+  const m = window.__mock;
+  for (const u of ["FieldService", "msdynce_Anchor"]) m.envs.secondary.solutions.push({ solutionid: "00000000-0000-0000-0000-00000000099" + (u === "FieldService" ? "4" : "5"), uniquename: u, friendlyname: u, version: "1.0", ismanaged: true, _publisherid_value: null });
+  m.emit("connection:updated");
+});
+await page.waitForTimeout(300);
+await openOffline();
+assert((await offNames()).length === 2, "D4: toggle on → both present-in-target dependents listed");
+await page.uncheck("#off-show-safe");
+const allSafe = await page.$eval("#offline-list", (e) => ({ text: e.textContent, btn: e.querySelector(".empty-actions button")?.textContent }));
+assert(allSafe.text.includes("No blocking dependencies") && allSafe.btn === "Show present in target" && (await page.textContent("#offline-summary")).includes("0 blocking"), "D4: every dependent present in target → empty state offers the toggle: " + JSON.stringify(allSafe));
+await page.click("#offline-list .empty-actions button");
+assert((await page.isChecked("#off-show-safe")) && (await offNames()).every((n) => n.endsWith(":safe")) && (await offNames()).length === 2, "D4: the button ticks the Offline toggle and lists them");
+await page.uncheck("#off-show-safe");
 
 // ---- debug mode: calls, results, failures and notifications; secrets redacted ----
 await page.click('.tab[data-tab="diagnose"]');

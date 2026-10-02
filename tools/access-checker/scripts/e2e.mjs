@@ -23,6 +23,8 @@ const MOCK = `
   const EVA = 'a0000000-0000-0000-0000-000000000005', PLUS = 'a0000000-0000-0000-0000-000000000006';
   const R_CREADER = 'c0000000-0000-0000-0000-000000000006', R_CAPP = 'c0000000-0000-0000-0000-000000000007';
   const T_READERS = 'd0000000-0000-0000-0000-000000000002';
+  // "Report Viewer" (held by Ana directly) grants nothing on any table: the Roles table hides it by default.
+  const R_NOPRIV = 'c0000000-0000-0000-0000-000000000008';
   const CON_E = 'e1000000-0000-0000-0000-000000000001', ACC_T = 'e0000000-0000-0000-0000-000000000004';
   const ANA = 'a0000000-0000-0000-0000-000000000001', BRUNO = 'a0000000-0000-0000-0000-000000000002', CARLA = 'a0000000-0000-0000-0000-000000000003', DIEGO = 'a0000000-0000-0000-0000-000000000004';
   const R_SALES = 'c0000000-0000-0000-0000-000000000001', R_SHARER = 'c0000000-0000-0000-0000-000000000002', R_TEAMONLY = 'c0000000-0000-0000-0000-000000000003', R_ROOTAPP = 'c0000000-0000-0000-0000-000000000004', R_ADMIN = 'c0000000-0000-0000-0000-000000000005';
@@ -58,6 +60,7 @@ const MOCK = `
     [R_ADMIN]: privNames.map((n) => [n, 'Global']),
     [R_CREADER]: [['prvReadContact','Local'],['prvWriteContact','Deep']],
     [R_CAPP]: [['prvAppendContact','Local']],
+    [R_NOPRIV]: [],
   };
   const users = [
     { systemuserid: ANA, fullname: 'Ana Silva', domainname: 'ana@sss.test', internalemailaddress: 'ana@sss.test', _businessunitid_value: BU_SALES, _parentsystemuserid_value: CARLA, isdisabled: false, applicationid: null },
@@ -77,18 +80,21 @@ const MOCK = `
     [R_ADMIN]: role(R_ADMIN, 'Administrador do Sistema', BU_ROOT, 1, SYSADMIN_TEMPLATE),
     [R_CREADER]: role(R_CREADER, 'Contact Reader', BU_SALES, 1),
     [R_CAPP]: role(R_CAPP, 'Contact Appender', BU_SALES, 1),
+    [R_NOPRIV]: role(R_NOPRIV, 'Report Viewer', BU_SALES, 1),
   };
   const teams = [{ teamid: T_EU, name: 'Sales EU', teamtype: 0, _businessunitid_value: BU_SALES }];
   const readers = { teamid: T_READERS, name: 'Sales Readers', teamtype: 0, _businessunitid_value: BU_SALES };
+  // Plus User belongs to 7 role-less teams: the user details show 5 and a "+2 more" button.
+  const many = Array.from({ length: 7 }, (_, i) => ({ teamid: 'd1000000-0000-0000-0000-' + String(i + 1).padStart(12, '0'), name: 'Team ' + (i + 1), teamtype: 0, _businessunitid_value: BU_SALES }));
   const expand = {
-    systemuserroles_association: { [ANA]: [roles[R_SALES], roles[R_ROOTAPP]], [DIEGO]: [roles[R_ADMIN]], [EVA]: [roles[R_CAPP]] },
-    teammembership_association: { [ANA]: teams, [EVA]: [readers] },
+    systemuserroles_association: { [ANA]: [roles[R_SALES], roles[R_ROOTAPP], roles[R_NOPRIV]], [DIEGO]: [roles[R_ADMIN]], [EVA]: [roles[R_CAPP]] },
+    teammembership_association: { [ANA]: teams, [EVA]: [readers], [PLUS]: many },
     systemuserprofiles_association: { [ANA]: [] },
     teamroles_association: { [T_EU]: [roles[R_SHARER], roles[R_TEAMONLY]], [T_READERS]: [roles[R_CREADER]] },
     teamprofiles_association: { [T_EU]: [{ fieldsecurityprofileid: FSP, name: 'Margin Readers' }] },
   };
   // Roles a user holds directly or through teams, for RetrieveUserPrivilegeByPrivilegeName.
-  const heldBy = { [ANA]: [R_SALES, R_ROOTAPP, R_SHARER, R_TEAMONLY], [DIEGO]: [R_ADMIN], [EVA]: [R_CAPP, R_CREADER] };
+  const heldBy = { [ANA]: [R_SALES, R_ROOTAPP, R_SHARER, R_TEAMONLY, R_NOPRIV], [DIEGO]: [R_ADMIN], [EVA]: [R_CAPP, R_CREADER] };
   // Tests mutate these to model a role change between two checks.
   window.__mock = { rolePrivs, R_SALES };
   const acc = (accountid, name, owner, ownerName, bu) => ({ accountid, name, _ownerid_value: owner, '_ownerid_value@Microsoft.Dynamics.CRM.lookuplogicalname': 'systemuser', '_ownerid_value@OData.Community.Display.V1.FormattedValue': ownerName, _owningbusinessunit_value: bu });
@@ -199,6 +205,7 @@ const MOCK = `
         return { RolePrivileges: best === null ? [] : [{ PrivilegeId: P(want), Depth: best, BusinessUnitId: BU_SALES }] };
       }
       case 'RetrievePrincipalAccess': {
+        if (window.__failPrincipalAccess) throw new Error('mock: RetrievePrincipalAccess unavailable');
         const id = req.parameters.Target.id;
         if (req.parameters.Target.entityLogicalName === 'contact') return { AccessRights: id === CON_E && req.entityId === EVA ? 'ReadAccess, WriteAccess, AppendAccess' : 'None' };
         if (req.parameters.Target.entityLogicalName !== 'account') throw new Error('mock: bad target');
@@ -274,12 +281,118 @@ assert((await chip("Assign")).includes("granted") && (await chip("Assign")).incl
 const why1 = await text("#why");
 assert(why1.includes("Deep via Sales Person") && why1.includes("Local via Sharer (team Sales EU)"), "why summaries name roles and team");
 assert(why1.includes("agrees") && !why1.includes("platform says otherwise"), "tool agrees with RetrieveUserPrivilegeByPrivilegeName");
+// Why rows: chevron cue, denied rights open by default, granted closed, expand/collapse all.
+{
+  const whyOpen = (right) => page.$eval(`#why li[data-right="${right}"] details`, (d) => d.open);
+  assert(await page.$$eval("#why summary", (s) => s.length > 0 && s.every((x) => x.classList.contains("chev"))), "why: summaries carry the chev class");
+  assert(await page.$eval("#why summary", (s) => getComputedStyle(s, "::before").content !== "none" && getComputedStyle(s).display === "flex"), "why: chevron rendered, summary still flex");
+  assert((await whyOpen("Delete")) === true && (await whyOpen("Read")) === false, "why: denied Delete open by default, granted Read closed");
+  const card = page.locator(".card", { has: page.locator("#why") });
+  await card.locator(".fold-all button", { hasText: "Expand all" }).click();
+  assert(await page.$$eval("#why details", (d) => d.every((x) => x.open)), "why: Expand all opens every row");
+  await card.locator(".fold-all button", { hasText: "Collapse all" }).click();
+  assert(await page.$$eval("#why details", (d) => d.every((x) => !x.open)), "why: Collapse all closes every row");
+}
+// A8: depth names and verdicts explain themselves; depth legend under Roles; one-path Why rows don't repeat the summary.
+{
+  const title = (sel) => page.getAttribute(sel, "title");
+  assert((await title('#verdicts .verdict[data-right="Read"] .depth')).startsWith("Deep (Parent: Child Business Units): records in the user's business unit and its child"), "legend: chip depth carries a tooltip");
+  assert((await title('#verdicts .verdict[data-right="Read"] .badge')).startsWith("Platform verdict"), "legend: platform verdict badge carries a tooltip");
+  const cellTitles = await page.$$eval("#tab-check table.roles td span[title]", (s) => Object.fromEntries(s.map((x) => [x.textContent, x.title])));
+  assert(cellTitles.Global === undefined && cellTitles.Deep.includes("child business units") && cellTitles.Basic.startsWith("Basic (User): records the user") && cellTitles.Local.startsWith("Local (Business Unit): records in the user's business unit") && cellTitles["—"].startsWith("None"), "legend: Roles depth cells carry tooltips: " + JSON.stringify(cellTitles));
+  const legend = "#card-roles #depth-legend";
+  assert(await page.$eval(legend, (d) => d.tagName === "DETAILS" && !d.open && d.querySelector(":scope > summary").classList.contains("chev") && d.querySelector(":scope > summary").textContent === "Depth legend"), "legend: Roles card has a collapsed 'Depth legend' fold with a chevron");
+  const legendText = await text(legend);
+  assert(["Basic (User)", "Local (Business Unit)", "Deep (Parent: Child Business Units)", "Global (Organization)", "— (None)", "every record in the organisation"].every((t) => legendText.includes(t)), "legend: lists every depth name with its meaning");
+  await page.click(`${legend} > summary`);
+  assert(await page.$eval(legend, (d) => d.open), "legend: opens on click");
+  await page.uncheck("#hide-irrelevant-roles");
+  assert(await page.$eval(legend, (d) => d.open), "legend: stays open when the roles toggle re-renders the table");
+  await page.check("#hide-irrelevant-roles");
+  await page.click(`${legend} > summary`);
+  // One path, no share: the row's summary is that path's sentence; the detail adds only depth and how it is held.
+  const detail = (r) => page.$eval(`#why-${r} .detail`, (d) => d.textContent.replace(/\s+/g, " ").trim());
+  const meta = (r) => page.$eval(`#why-${r} .detail > :first-child`, (d) => d.textContent);
+  assert((await detail("Read")) === "Deep depth · held directlyPlatform effective depth: Deep" && (await meta("Read")) === "Deep depth · held directly", "why: one-path Read detail shows only depth and how it is held (+ platform depth)");
+  assert((await meta("Share")) === "Local depth · held via team Sales EU (owner team)", "why: one-path Share detail names the team");
+  assert(!(await detail("Read")).includes("Sales Person") && (await text("#why-Read summary")).includes("Deep via Sales Person"), "why: role named once, in the summary");
+  assert((await page.$$("#why-AppendTo .detail li")).length === 2 && (await detail("AppendTo")).includes("Root Appender (direct)") && (await detail("AppendTo")).includes("Sales Person (direct)"), "why: several paths still list each one");
+  assert((await detail("Delete")).includes("No role grants prvDeleteAccount."), "why: no path keeps its 'no role grants' line");
+  assert((await title("#why-Read .detail span[title]")).startsWith("Deep"), "why: depth in the detail carries a tooltip");
+  // Teams in the user details: one team, no "+N more".
+  assert((await text("#teams")) === "Sales EU" && !(await page.$("#btn-more-teams")), "teams: short list shown whole");
+  // Notes banner: first note shown, the other folded behind "1 more note".
+  assert((await page.$$("#notes > ul.notes > li")).length === 1, "notes: one note shown up front");
+  assert(await page.$eval("#notes details.more-notes", (d) => !d.open && d.querySelector(":scope > summary.chev").textContent === "1 more note"), "notes: the rest behind a closed '1 more note' chevron fold");
+  await page.click("#notes details.more-notes > summary");
+  assert(await page.$eval("#notes details.more-notes", (d) => d.open && d.textContent.includes("Team privileges only")) && (await text("#notes > ul.notes")).includes("Direct role Root Appender"), "notes: opening the fold shows the other note");
+}
 // The point of moving off RetrieveUserPrivileges: prvShareAccount comes from a role held
 // through a team, and its real depth is Local. The old message reports team-inherited
 // privileges as Basic, which would have shown "Basic" here and flagged a disagreement.
 assert((await chip("Share")).includes("Local") && !(await chip("Share")).includes("Basic"), "team-inherited depth is the real depth, not Basic");
 assert((await text("#tab-check table.roles")).includes("via team Sales EU (owner team)"), "roles table shows team role");
 assert((await text("#tab-check table.roles")).includes("Team Assigner") && (await text("#tab-check table.roles")).includes("team privileges only"), "roles table flags the isinherited = 0 team role");
+// Roles with no privilege on the table are hidden by default (team-held roles that grant one stay).
+{
+  const roleNames = () => page.$$eval("#tab-check table.roles tbody tr td:first-child", (t) => t.map((x) => x.textContent));
+  assert(await page.$eval("#hide-irrelevant-roles", (b) => b.checked), "roles: 'Hide roles with no privilege' on by default");
+  const shown = await roleNames();
+  assert(shown.length === 4 && !shown.includes("Report Viewer") && shown.includes("Sharer") && shown.includes("Team Assigner"), "roles: no-privilege role hidden, team-held roles kept: " + shown.join(","));
+  assert((await text("#roles-count")) === "4 of 5 roles", "roles: count caption '4 of 5 roles'");
+  await page.click('#why li[data-right="Write"] summary');
+  await page.evaluate(() => (document.querySelector("#why").__marker = 1));
+  await page.uncheck("#hide-irrelevant-roles");
+  assert((await roleNames()).includes("Report Viewer") && (await roleNames()).length === 5, "roles: unticking shows the no-privilege role");
+  assert((await text("#roles-count")) === "5 roles", "roles: count caption '5 roles' when nothing is hidden");
+  assert(await page.evaluate(() => document.querySelector("#why").__marker === 1 && document.querySelector('#why li[data-right="Write"] details').open), "roles: toggling re-renders only the Roles table (Why kept)");
+  await page.check("#hide-irrelevant-roles");
+  assert((await roleNames()).length === 4, "roles: ticking hides it again");
+  await page.click('#why li[data-right="Write"] summary');
+}
+// A4: verdict chips are buttons that open their Why row, scroll to it and highlight the right's column in Roles.
+{
+  const focusCols = () => page.$$eval("#tab-check table.roles tr", (trs) => [...new Set(trs.flatMap((tr) => [...tr.children].map((c, j) => (c.classList.contains("is-focus") ? j : -1)).filter((j) => j >= 0)))]);
+  const focusCount = () => page.$$eval("#tab-check table.roles .is-focus", (c) => c.length);
+  const rows = await page.$$eval("#tab-check table.roles tr", (r) => r.length);
+  assert(await page.$$eval("#verdicts .verdict", (v) => v.every((x) => x.tagName === "BUTTON" && x.type === "button" && document.getElementById(x.getAttribute("aria-controls"))?.tagName === "DETAILS")), "chips: every applicable verdict is a button whose aria-controls is its Why <details>");
+  assert(!(await page.$eval("#why-Read", (d) => d.open)), "chips: Read Why row closed before the click");
+  await page.evaluate(() => (document.querySelector(".main").scrollTop = document.querySelector(".main").scrollHeight));
+  await page.click('#verdicts .verdict[data-right="Read"]');
+  assert(await page.$eval("#why-Read", (d) => d.open), "chips: clicking Read opens its Why row");
+  assert(await page.$eval("#why-Read", (d) => { const r = d.getBoundingClientRect(), m = document.querySelector(".main").getBoundingClientRect(); return r.top >= m.top - 1 && r.top < m.bottom; }), "chips: the Read Why row is scrolled into view");
+  assert((await page.getAttribute('#verdicts .verdict[data-right="Read"]', "aria-pressed")) === "true", "chips: Read chip pressed");
+  assert(JSON.stringify(await focusCols()) === "[3]" && (await focusCount()) === rows && (await page.textContent("#tab-check table.roles th.is-focus")) === "Read", "chips: Read column (th + every td) highlighted in Roles");
+  await page.click('#verdicts .verdict[data-right="Write"]');
+  assert(JSON.stringify(await focusCols()) === "[4]" && (await page.textContent("#tab-check table.roles th.is-focus")) === "Write" && (await page.getAttribute('#verdicts .verdict[data-right="Read"]', "aria-pressed")) === "false", "chips: another chip moves the highlight to its column");
+  await page.uncheck("#hide-irrelevant-roles");
+  assert(JSON.stringify(await focusCols()) === "[4]", "chips: highlight survives the roles toggle re-render");
+  await page.check("#hide-irrelevant-roles");
+  await page.click('#verdicts .verdict[data-right="Write"]');
+  assert((await focusCount()) === 0 && (await page.$$eval("#verdicts button.verdict", (b) => b.every((x) => x.getAttribute("aria-pressed") === "false"))), "chips: clicking the pressed chip again clears the highlight");
+  assert(await page.$eval("#why-Write", (d) => d.open), "chips: clearing the highlight leaves the Why row open");
+  await page.evaluate(() => document.querySelectorAll("#why details").forEach((d) => (d.open = false)));
+  await page.click('#why li[data-right="Delete"] summary');
+}
+// A7: Roles / Ownership / Shares cards fold (open by default); controls in the Roles fold header do not toggle it.
+{
+  const isOpen = (id) => page.$eval(id, (d) => d.tagName === "DETAILS" && d.open);
+  assert((await isOpen("#card-roles")) && (await isOpen("#card-ownership")) && (await isOpen("#card-shares")), "folds: Roles, Ownership, Shares are fold cards open by default");
+  assert(await page.$eval("#card-roles summary", (s) => s.contains(document.querySelector("#hide-irrelevant-roles")) && s.contains(document.querySelector("#roles-count"))), "folds: roles toggle + count sit in the Roles fold header");
+  await page.click("#hide-irrelevant-roles");
+  assert((await isOpen("#card-roles")) && !(await page.$eval("#hide-irrelevant-roles", (b) => b.checked)) && (await text("#roles-count")) === "5 roles", "folds: clicking the roles checkbox in the header toggles it, not the fold");
+  await page.click("#card-roles summary label.check", { position: { x: 40, y: 5 } });
+  assert((await isOpen("#card-roles")) && (await page.$eval("#hide-irrelevant-roles", (b) => b.checked)) && (await text("#roles-count")) === "4 of 5 roles", "folds: clicking the roles label text in the header toggles it, not the fold");
+  await page.focus("#hide-irrelevant-roles");
+  await page.keyboard.press("Space");
+  assert((await isOpen("#card-roles")) && !(await page.$eval("#hide-irrelevant-roles", (b) => b.checked)), "folds: Space on the header checkbox toggles it, not the fold");
+  await page.keyboard.press("Space");
+  assert(await page.$eval("#hide-irrelevant-roles", (b) => b.checked), "folds: Space again re-ticks it");
+  await page.click("#card-ownership summary h3");
+  assert(!(await isOpen("#card-ownership")), "folds: clicking the Ownership title collapses it");
+  await page.click("#card-roles summary h3");
+  assert(!(await isOpen("#card-roles")), "folds: clicking the Roles title collapses it");
+}
 // Privilege names now come from EntityDefinitions(...)/Privileges; privileges list is paged (10 per page).
 assert((await page.evaluate(() => window.__calls)).includes("EntityDefinitions(LogicalName='account')?$select=Privileges"), "privilege names read from entity metadata");
 assert((await page.evaluate(() => window.__calls)).some((c) => c.startsWith("privileges?") && c.includes("$skiptoken=")), "privilege list follows @odata.nextLink");
@@ -288,6 +401,24 @@ const cols = await text("#tab-columns table.columns");
 assert(cols.includes("sss_margin") && cols.includes("Margin Readers (team Sales EU)"), "column security via team profile");
 const colCells = await page.$$eval("#tab-columns table.columns tbody td .badge", (b) => b.map((x) => x.textContent));
 assert(colCells.join(",") === "yes,no,no", "column read yes / update no / create no");
+// A6: column search, "Only columns with a denied right", n of N, filtered empty with Clear.
+{
+  const colRowsN = () => page.$$eval("#tab-columns table.columns tbody tr", (r) => r.length);
+  await page.click(".tab[data-tab='columns']");
+  assert(!(await page.$eval("#columns-only", (b) => b.checked)) && (await text("#columns-count")) === "", "columns: toggle off by default, no n-of-N caption unfiltered");
+  await page.fill("#columns-q", "sss_");
+  assert((await colRowsN()) === 1, "columns: search matches the logical name");
+  await page.fill("#columns-q", "zzz");
+  assert(!(await page.$("#tab-columns table.columns")) && (await text("#tab-columns .empty-state")).includes("No columns match") && (await text("#columns-count")) === "0 of 1 secured column", "columns: no match shows a filtered empty state and '0 of 1 secured column'");
+  assert((await page.$eval("#columns-q", (e) => document.activeElement === e)), "columns: focus stays in the search box while filtering");
+  await page.click("#tab-columns .empty-actions button");
+  assert((await colRowsN()) === 1 && (await page.inputValue("#columns-q")) === "", "columns: Clear empties the search and restores the rows");
+  await page.check("#columns-only");
+  assert((await colRowsN()) === 1, "columns: 'Only denied' keeps a column with a denied right (update/create no)");
+  await page.uncheck("#columns-only");
+  await page.fill("#columns-q", "margin");
+  await page.click(".tab[data-tab='check']");
+}
 
 // record check: Bruno's account (same BU, Ana is Bruno's manager)
 await page.fill("#record-q", "bruno");
@@ -298,13 +429,34 @@ assert((await text("#record-sel")).includes("Bruno Corp"), "record selected");
 await page.click("#btn-check");
 await page.waitForFunction(() => document.querySelector("#tab-check h2")?.textContent.includes("Bruno Corp"));
 assert((await chip("Read")).includes("granted") && (await chip("Write")).includes("denied") && (await chip("Share")).includes("granted") && (await chip("Append")).includes("granted"), "record verdicts from platform");
+assert(await page.$eval('#why li[data-right="Write"] details', (d) => d.open) && !(await page.$eval('#why li[data-right="Read"] details', (d) => d.open)), "why: a new record check starts from defaults (denied Write open, granted Read closed)");
 const why2 = await text("#why");
 assert(why2.includes("Deep depth: record BU Sales is under Sales"), "Read reach explained");
 assert(why2.includes("Basic depth covers only records the user"), "Write miss explained");
 assert(why2.includes("Sharer via team Sales EU: Local depth: record is in the same BU"), "Share via team explained");
+{
+  const detail = (r) => page.$eval(`#why-${r} .detail`, (d) => d.textContent.replace(/\s+/g, " ").trim());
+  assert((await detail("Read")) === "Deep depth · held directly" && (await text("#why-Read summary")).includes("Sales Person: Deep depth: record BU Sales is under Sales"), "why (record): one-path Read keeps the reason in the summary only");
+  const appendTo = await detail("AppendTo");
+  assert((await page.$$("#why-AppendTo .detail li")).length === 2 && appendTo.includes("Root Appender (direct) · Local · Local depth covers only Root; record is in Sales"), "why (record): several paths keep each reason, misses included: " + appendTo);
+  assert(await page.$eval("#notes details.more-notes", (d) => d.open), "notes: 'more notes' fold opened on one check stays open on the next");
+}
 assert(!why2.includes("platform says otherwise"), "tool agrees with RetrievePrincipalAccess");
 assert((await text("#relation")).includes("record in the user's BU"), "BU relation");
 assert((await text("#hierarchy")).includes("direct manager"), "hierarchy hint for manager");
+assert(await page.$eval("#card-hierarchy", (d) => d.tagName === "DETAILS" && !d.open), "folds: Hierarchy is a fold card, closed by default");
+{
+  const isOpen = (id) => page.$eval(id, (d) => d.open);
+  assert(!(await isOpen("#card-ownership")) && !(await isOpen("#card-roles")) && (await isOpen("#card-shares")), "folds: cards collapsed on the previous check stay collapsed on the next");
+  await page.click("#card-ownership summary h3");
+  await page.click("#card-roles summary h3");
+  assert((await isOpen("#card-ownership")) && (await isOpen("#card-roles")), "folds: reopened");
+  await page.click(".tab[data-tab='columns']");
+  assert((await page.inputValue("#columns-q")) === "margin" && (await page.$$("#tab-columns table.columns tbody tr")).length === 1, "columns: search kept for the next check");
+  await page.fill("#columns-q", "");
+  await page.click(".tab[data-tab='check']");
+}
+assert(await page.$eval("#card-shares", (d) => d.open && d.querySelector(".card-head .count .badge")?.textContent === "0"), "folds: Shares affecting this user shows its count");
 assert(!why2.includes("platform says otherwise") && !(await text("#tab-check")).includes("Platform verdict differs"), "no disagreement on a clean case");
 assert((await text("#tab-check .warnings")).includes("Team privileges only") && (await text("#tab-check .warnings")).includes("Direct role Root Appender belongs to BU Root"), "notes explain team-only role and cross-BU direct role");
 // organization.maxdepthforhierarchicalsecuritymodel = 1: the chain above Bruno stops at Ana, Carla (Ana's manager) is never fetched.
@@ -330,8 +482,24 @@ assert((await chip("AppendTo")).includes("granted") && why3.includes("Root Appen
 assert((await text("#relation")).includes("outside the user's BU subtree"), "BU relation outside");
 assert((await text("#tab-check")).includes("Shares affecting this user") && (await text("#tab-check")).includes("team Sales EU"), "share affecting user listed");
 await page.click(".tab[data-tab='shares']");
+assert(await page.$$eval(".tab", (t) => t.every((x) => x.getAttribute("role") === "tab" && x.getAttribute("aria-selected") === String(x.dataset.tab === "shares"))), "tabs: aria-selected follows the active tab");
 const sharesRows = await page.$$eval("#tab-shares table.shares tbody tr", (r) => r.map((x) => x.textContent));
 assert(sharesRows.length === 2 && sharesRows[0].includes("Sales EU") && sharesRows[0].includes("via team") && sharesRows[1].includes("Bruno Costa") && !sharesRows[1].includes("via"), "shares table with affects badge");
+// A5: affecting shares first and counted, principal search, "Only shares affecting <user>", filtered empty with Clear.
+{
+  const shareNames = () => page.$$eval("#tab-shares table.shares tbody tr td:first-child", (t) => t.map((x) => x.textContent));
+  assert((await text("#tab-shares .card-head h3")) === "2 principals · 1 affects Ana Silva", "shares: title counts principals and those affecting the user");
+  assert(!(await page.$eval("#shares-only", (b) => b.checked)) && (await text("label:has(#shares-only)")).includes("Only shares affecting Ana Silva"), "shares: toggle off by default, names the user");
+  await page.check("#shares-only");
+  assert(JSON.stringify(await shareNames()) === '["Sales EU"]' && (await text("#shares-count")) === "1 of 2 principals", "shares: toggle keeps only the affecting share, '1 of 2 principals'");
+  await page.uncheck("#shares-only");
+  await page.fill("#shares-q", "BRUNO");
+  assert(JSON.stringify(await shareNames()) === '["Bruno Costa"]' && (await text("#shares-count")) === "1 of 2 principals", "shares: search by principal name (case-insensitive)");
+  await page.check("#shares-only");
+  assert(!(await page.$("#tab-shares table.shares")) && (await text("#tab-shares .empty-state")).includes("No shares match"), "shares: search + toggle hiding everything shows a filtered empty state");
+  await page.click("#tab-shares .empty-actions button");
+  assert((await shareNames()).length === 2 && (await page.inputValue("#shares-q")) === "" && !(await page.$eval("#shares-only", (b) => b.checked)), "shares: Clear resets search and toggle");
+}
 
 // exports
 await page.click("#btn-export-shares");
@@ -360,6 +528,15 @@ assert(!why4.includes("platform says otherwise"), "tool agrees with RetrievePrin
 await page.click(".tab[data-tab='shares']");
 const dummyRows = await page.$$eval("#tab-shares table.shares tbody tr", (r) => r.map((x) => x.textContent));
 assert(dummyRows.length === 60 && dummyRows.every((r) => r.includes("Dummy ")) && dummyRows.some((r) => r.includes("Dummy 60")), "60 share principals resolved by name");
+{
+  assert((await text("#tab-shares .card-head h3")) === "60 principals · 0 affect Ana Silva", "shares: '60 principals · 0 affect Ana Silva'");
+  await page.fill("#shares-q", "dummy 0");
+  assert((await page.$$("#tab-shares table.shares tbody tr")).length === 9 && (await text("#shares-count")) === "9 of 60 principals", "shares: search 'dummy 0' → Dummy 01..09, '9 of 60 principals'");
+  await page.fill("#shares-q", "");
+  await page.check("#shares-only");
+  assert((await text("#tab-shares .empty-state")).includes("No share on this record affects Ana Silva.") && (await text("#shares-count")) === "0 of 60 principals", "shares: toggle on with nothing affecting explains why it is empty");
+  assert((await page.evaluate(() => JSON.parse(localStorage.getItem("sss-view:access-checker") ?? "{}").sharesOnlyAffecting)) === true, "shares: toggle saved in view state");
+}
 {
   const c = await page.evaluate(() => window.__calls);
   const byId = c.filter((q) => q.startsWith("systemusers?") && (q.match(/systemuserid eq /g) ?? []).length > 1);
@@ -412,6 +589,11 @@ await page.waitForFunction(() => document.querySelector("#tab-check h2")?.textCo
 assert((await text("#tab-check .warnings")).includes("User holds System Administrator"), "sysadmin by role template, not name");
 await page.waitForFunction(() => document.querySelector("#tab-columns table.columns"));
 assert((await text("#tab-columns table.columns")).includes("System Administrator (bypasses column security)"), "column security bypass for template-detected sysadmin");
+await page.click(".tab[data-tab='columns']");
+await page.check("#columns-only");
+assert((await text("#tab-columns .empty-state")).includes("Diego Admin has every right on every secured column.") && (await text("#columns-count")) === "0 of 1 secured column", "columns: 'Only denied' for a sysadmin explains nothing is denied");
+await page.uncheck("#columns-only");
+await page.click(".tab[data-tab='check']");
 
 // ---------- regression cases ----------
 const until = (fn, arg, timeout = 4000) => page.waitForFunction(fn, arg, { timeout }).then(() => true, () => false);
@@ -485,13 +667,31 @@ await page.click("#btn-check");
 await page.waitForFunction(() => document.querySelector("#tab-check h2")?.textContent.includes("Ana Silva on table Account"));
 await settle();
 assert((await chip("Delete")).includes("denied"), "before role change: Delete denied");
+await page.click('#why li[data-right="Read"] summary');
 await page.evaluate(() => window.__mock.rolePrivs[window.__mock.R_SALES].push(["prvDeleteAccount", "Local"]));
 await page.click("#btn-check");
 await page.waitForTimeout(100);
 await settle();
+assert(await page.$eval('#why li[data-right="Read"] details', (d) => d.open), "why: a row the user opened stays open when the same check re-runs");
 assert((await chip("Delete")).includes("granted") && (await chip("Delete")).includes("Local"), "after role change: platform Delete Local (not cached)");
 assert(!(await text("#why")).includes("platform says otherwise"), "after role change: role depth re-read, tool agrees");
 await page.evaluate(() => window.__mock.rolePrivs[window.__mock.R_SALES].pop());
+
+// A8: platform verdict unavailable → starred tool verdicts, each explained by a tooltip.
+await pickRecord("bruno", "Bruno Corp");
+await page.evaluate(() => (window.__failPrincipalAccess = true));
+await page.click("#btn-check");
+await page.waitForFunction(() => document.querySelector("#tab-check h2")?.textContent.includes("Bruno Corp"));
+await settle();
+{
+  const badgeOf = (r) => page.$eval(`#verdicts .verdict[data-right="${r}"] .badge`, (b) => ({ t: b.textContent, title: b.title }));
+  const read = await badgeOf("Read");
+  const write = await badgeOf("Write");
+  assert(read.t === "granted*" && read.title === "granted*: platform verdict unavailable; this is the tool's computed result", "starred: granted* explained, got " + JSON.stringify(read));
+  assert(write.t === "denied*" && write.title.startsWith("denied*: platform verdict unavailable"), "starred: denied* explained");
+  assert((await text("#notes")).includes("RetrievePrincipalAccess failed"), "starred: notes say why the platform verdict is missing");
+}
+await page.evaluate(() => (window.__failPrincipalAccess = false));
 
 // Local/Deep include Basic: the user's own record in another BU than the role's base BU.
 await pickUser("eva", "Eva Nunes");
@@ -507,7 +707,62 @@ await settle();
   assert(why.includes("Deep depth includes Basic: user owns the record") && why.includes("Contact Appender: Local depth includes Basic"), "own record reached by Deep and by a direct role from another BU");
 }
 
+// Roles: a user whose roles all miss the table gets a one-line caption, not an empty table; the toggle survives a reload.
+await pickUser("eva", "Eva Nunes");
+await page.selectOption("#table", "account");
+await page.click("#btn-check");
+await page.waitForFunction(() => document.querySelector("#tab-check h2")?.textContent.includes("Eva Nunes on table Account"));
+await settle();
+assert(!(await page.$("#tab-check table.roles")) && (await text("#roles-body")).includes("None of the user's 2 roles grants a privilege on Account."), "roles: all-hidden caption instead of an empty table");
+assert((await text("#roles-count")) === "0 of 2 roles", "roles: count caption '0 of 2 roles'");
+await page.click("#btn-show-all-roles");
+assert(!(await page.$eval("#hide-irrelevant-roles", (b) => b.checked)) && (await page.$$("#tab-check table.roles tbody tr")).length === 2, "roles: 'Show all roles' unticks the toggle and lists both roles");
+await page.waitForFunction(() => document.querySelector("#columns-only"));
+await page.click(".tab[data-tab='columns']");
+await page.check("#columns-only");
+await page.click(".tab[data-tab='check']");
+await page.reload();
+await page.waitForFunction(() => document.querySelectorAll("#table option").length > 1);
+await pickUser("eva", "Eva Nunes");
+await page.selectOption("#table", "account");
+await page.click("#btn-check");
+await page.waitForFunction(() => document.querySelector("#tab-check h2")?.textContent.includes("Eva Nunes on table Account"));
+await settle();
+assert(!(await page.$eval("#hide-irrelevant-roles", (b) => b.checked)) && (await page.$$("#tab-check table.roles tbody tr")).length === 2, "roles: unticked toggle survives a reload");
+await page.waitForFunction(() => document.querySelector("#columns-only"));
+assert(await page.$eval("#columns-only", (b) => b.checked), "columns: 'Only columns with a denied right' survives a reload");
+await page.click(".tab[data-tab='columns']");
+await page.uncheck("#columns-only");
+await page.click(".tab[data-tab='check']");
+await page.check("#hide-irrelevant-roles");
+assert((await text("#roles-body")).includes("None of the user's 2 roles"), "roles: re-ticking hides them again");
+
+// A8: a long team list shows 5 names and a "+2 more" button that reveals the rest in place.
+await pickUser("plus user", "Plus User");
+await page.click("#btn-check");
+await page.waitForFunction(() => document.querySelector("#tab-check h2")?.textContent.includes("Plus User on table Account"));
+await settle();
+{
+  assert((await text("#teams")) === "Team 1, Team 2, Team 3, Team 4, Team 5 +2 more" && (await page.getAttribute("#btn-more-teams", "title")) === "Team 6, Team 7", "teams: first 5 then '+2 more' (rest in its tooltip)");
+  await page.click("#btn-more-teams");
+  assert((await text("#teams")) === "Team 1, Team 2, Team 3, Team 4, Team 5, Team 6, Team 7" && !(await page.$("#btn-more-teams")), "teams: '+2 more' reveals the rest inline");
+  assert(await page.evaluate(() => document.querySelector("#teams").contains(document.activeElement)), "teams: focus stays in the list after revealing");
+  assert((await page.$$("#notes > ul.notes > li")).length === 1 && !(await page.$("#notes details")), "notes: a single note has no 'more notes' fold");
+}
+
 // ---- debug mode: the switch survives a reload, so start-up calls are in the log ----
+// Shares toggle saved on Ana Ventures (left ticked) survived the reload above.
+await pickUser("ana silva", "Ana Silva");
+await pickRecord("ventures", "Ana Ventures");
+await page.click("#btn-check");
+await page.waitForFunction(() => document.querySelector("#tab-check h2")?.textContent.includes("Ana Ventures"));
+await settle();
+await page.click(".tab[data-tab='shares']");
+assert(await page.$eval("#shares-only", (b) => b.checked), "shares: 'Only shares affecting' survives a reload");
+await page.uncheck("#shares-only");
+assert((await page.$$("#tab-shares table.shares tbody tr")).length === 60 && (await page.evaluate(() => JSON.parse(localStorage.getItem("sss-view:access-checker") ?? "{}").sharesOnlyAffecting)) === undefined, "shares: unticking shows all 60 and drops the saved value");
+await page.click(".tab[data-tab='check']");
+
 await checkDebugLog(page, assert, {
   tool: "access-checker",
   act: async () => {

@@ -1,5 +1,5 @@
 /** "Upgrade blockers" tab: docs/UPGRADE-BLOCKERS-PLAN.md. Dev = primary connection, target = secondary. */
-import { $, badge, emptyState, foldCard, h, type Child } from "../../_shared/dom";
+import { $, badge, emptyState, foldAllButtons, foldCard, h, keepFold, type Child } from "../../_shared/dom";
 import { backupFileName, buildUpgradeBackup } from "./deps/backup";
 import { Cancelled } from "./deps/diagnose";
 import { csvCell, safeFileName } from "./deps/export";
@@ -7,6 +7,7 @@ import { fetchSolutionManaged, MetaCache, type DataverseLike } from "./deps/fetc
 import { typeName, type SolutionInfo } from "./deps/types";
 import { analyzeUpgrade, locationLabel, planUpgradeFixes, upgradeMarkdown, type Blocker, type BlockerFix, type BlockerLocation, type UComponent, type UpgradeAnalysis, type UpgradePlan } from "./deps/upgrade";
 import { executeOps, opLabel, type OpResult } from "./deps/write";
+import { errorList } from "./error-list";
 import { notify, saveText, type LiveConnection } from "./host";
 
 export interface UpgradeContext {
@@ -153,14 +154,45 @@ function blockerCard(b: Blocker): HTMLElement {
       badge(b.required.kind ?? typeName(b.required.type), "neutral"),
       h("span", { class: "name mono" }, b.required.name),
       badge(b.owner === "Active" ? "unmanaged" : b.owner, b.location === "dev" ? "warn" : "bad"),
-      sel,
+      sel ?? reportBadge(b),
     ),
     h("div", { class: "cause" }, b.note),
-    h("div", { class: "caption" }, `Layers in target (top first): ${b.layers.join(" › ") || "none"}${b.layerSource === "membership" ? " · from solution membership, order unknown" : ""}`),
+    layersFold(b),
   );
 }
 
-function section(loc: BlockerLocation, list: Blocker[], a: UpgradeAnalysis): HTMLElement | null {
+/** No fix to pick: say so where the select would be ("Fix by hand in Dev", "Report only"). */
+function reportBadge(b: Blocker): HTMLElement | null {
+  const report = b.fixes.find((f) => f.kind === "report");
+  if (!report) return null;
+  const el = badge(report.label, b.location === "dev" ? "warn" : "neutral");
+  el.classList.add("report-only");
+  return el;
+}
+
+/** Target layers, folded; open when they come from solution membership (order unknown), which is worth a look. */
+function layersFold(b: Blocker): HTMLElement {
+  const membership = b.layerSource === "membership";
+  const el = h(
+    "details",
+    { class: "layers-fold" },
+    h("summary", { class: "chev" }, "Layers"),
+    h("div", { class: "caption" }, `In target, top first: ${b.layers.join(" › ") || "none"}${membership ? " · from solution membership, order unknown" : ""}`),
+  );
+  return keepFold(el, `ub-layers:${b.key}`, membership);
+}
+
+/** Runtime breaks open by default up to this many rows; a longer list starts folded. */
+const RUNTIME_OPEN_MAX = 10;
+
+/** A keyed fold card (Expand all / Collapse all reach it through its `ub:` key), with a stable id for links and tests. */
+function section(id: string, title: string, count: number, body: Child[], open: boolean): HTMLElement {
+  const el = foldCard(title, count, h("div", { class: "ub-section" }, ...body), open, { key: `ub:${id}` });
+  el.id = `ub-${id}`;
+  return el;
+}
+
+function blockerSection(loc: BlockerLocation, list: Blocker[], a: UpgradeAnalysis): HTMLElement | null {
   if (!list.length) return null;
   const title = loc === "dev" ? `Fix in Dev (${a.solution.uniqueName})` : loc === "release" ? "Release first" : `Target unmanaged (${a.target.name})`;
   const body: Child[] = [];
@@ -169,7 +201,7 @@ function section(loc: BlockerLocation, list: Blocker[], a: UpgradeAnalysis): HTM
     body.push(h("p", { class: "caption", id: "ub-order" }, `Release order: ${[...owners, a.solution.uniqueName].join(" → ")}. Each needs a new version without the reference, upgraded before ${a.solution.uniqueName}.`));
   }
   if (loc === "target") body.push(h("p", { class: "caption" }, "Not fixable from Dev: open the component in the target, See solution layers, and remove the unmanaged layer or edit it to drop the reference."));
-  return h("div", { class: "ub-section", id: `ub-${loc}` }, h("h3", {}, `${title} · ${list.length}`), ...body, h("ul", { class: "findings" }, ...list.map(blockerCard)));
+  return section(loc, title, list.length, [...body, h("ul", { class: "findings" }, ...list.map(blockerCard))], true);
 }
 
 function list(items: Child[]): HTMLElement {
@@ -209,26 +241,26 @@ function render(): void {
     ),
   );
   for (const w of a.warnings) sum.append(h("div", { class: "warnings" }, w));
-  if (a.errors.length) sum.append(h("div", { class: "warnings" }, `RetrieveDependenciesForDelete failed for ${a.errors.length} component(s): ${a.errors.slice(0, 3).map((e) => `${e.component} (${e.error})`).join("; ")}`));
+  if (a.errors.length) sum.append(errorList(`RetrieveDependenciesForDelete failed for ${a.errors.length} component(s)`, a.errors, "ub-errors"));
   if (!a.removed) body.append(emptyState("Nothing removed", `Dev's ${a.solution.uniqueName} contains everything the target's version does. The upgrade deletes nothing.`));
   else if (!a.blockers.length) body.append(emptyState("No blockers", a.deleted.length ? `${a.deleted.length} component(s) will be deleted and nothing references them.` : "Every removed component survives in another solution."));
-  for (const loc of ["dev", "release", "target"] as BlockerLocation[]) {
-    const s = section(loc, by(loc), a);
-    if (s) body.append(s);
-  }
-  if (a.runtime.length)
-    body.append(
-      h(
-        "div",
-        { class: "ub-section", id: "ub-runtime" },
-        h("h3", {}, `Runtime breaks · ${a.runtime.length}`),
-        h("p", { class: "caption" }, "Not tracked as dependencies: the upgrade succeeds, then these fail when they run."),
-        list(a.runtime.map((r) => `${r.whereType} ${r.where} → ${cLabel(r.component)}`)),
-      ),
-    );
-  if (a.resolved.length) body.append(foldCard("Resolved by the new version", a.resolved.length, list(a.resolved.map((r) => `${cLabel(r.dependent)} → ${cLabel(r.required)}`))));
-  if (a.survivors.length) body.append(foldCard("Survives (held by another managed solution)", a.survivors.length, list(a.survivors.map((s) => `${cLabel(s.component)} · ${s.holders.join(", ")}`))));
-  if (a.deleted.length) body.append(foldCard("Deleted by the upgrade", a.deleted.length, list(a.deleted.map(cLabel))));
+  const folds = [
+    ...(["dev", "release", "target"] as BlockerLocation[]).map((loc) => blockerSection(loc, by(loc), a)),
+    a.runtime.length
+      ? section(
+          "runtime",
+          "Runtime breaks",
+          a.runtime.length,
+          [h("p", { class: "caption" }, "Not tracked as dependencies: the upgrade succeeds, then these fail when they run."), list(a.runtime.map((r) => `${r.whereType} ${r.where} → ${cLabel(r.component)}`))],
+          a.runtime.length <= RUNTIME_OPEN_MAX,
+        )
+      : null,
+    a.resolved.length ? foldCard("Resolved by the new version", a.resolved.length, list(a.resolved.map((r) => `${cLabel(r.dependent)} → ${cLabel(r.required)}`)), false, { key: "ub:resolved" }) : null,
+    a.survivors.length ? foldCard("Survives (held by another managed solution)", a.survivors.length, list(a.survivors.map((s) => `${cLabel(s.component)} · ${s.holders.join(", ")}`)), false, { key: "ub:survives" }) : null,
+    a.deleted.length ? foldCard("Deleted by the upgrade", a.deleted.length, list(a.deleted.map(cLabel)), false, { key: "ub:deleted" }) : null,
+  ].filter((x): x is HTMLElement => !!x);
+  if (folds.length >= 2) body.append(h("div", { class: "ub-folds-head", id: "ub-folds-head" }, foldAllButtons(body, "details.card[data-fold-key^='ub:']")));
+  body.append(...folds);
   renderSelection();
   renderPlan();
 }

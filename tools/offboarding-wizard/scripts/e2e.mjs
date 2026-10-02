@@ -4,7 +4,8 @@
 //   - 3 accounts + 2 contacts (two scanned tables; a third table "sss_locked" rejects the owner filter)
 //   - 1 active modern flow + 1 draft classic workflow, plus an activation copy the OData filter excludes
 //   - 1 personal view, 1 personal chart, 1 owned queue, 1 queue membership
-//   - 1 owner team ("Sales EU") and 1 Entra group team (skipped by the planner)
+//   - 1 owner team ("Sales EU"), 1 Entra group team and the business unit default team ("Sales");
+//     the last two are skipped by the planner
 //   - 3 security roles, 1 field security profile, 1 connection reference, 1 connection, 1 direct report
 // Successor: Bruno Costa. One account (ACC_3) always fails its update so a failed row surfaces.
 //
@@ -16,6 +17,9 @@
 //           parentrootroleid, and already holding one role, one field security profile and one team;
 //           "share to previous owner on assign" OFF; OwnershipType as the metadata API's flags integer.
 //   v=big   one table with more rows than a single page, so @odata.count saturates at 5 000.
+//   v=sparse the leaver holds no personal chart and no connection: two empty categories.
+//   v=many  24 personal views (past the 20 that earn a card its own filter), 3 connection references
+//           sharing one note, and no field security profile (so the profile options are moot).
 //
 // Run: npm run build && node scripts/e2e.mjs   (needs playwright + chromium available)
 // Set E2E_SHOTS=1 to refresh docs/img/*.png from this run.
@@ -40,7 +44,7 @@ const MOCK = `
   const ACC = (n) => 'e0000000-0000-0000-0000-00000000000' + n;
   const CON = (n) => 'e1000000-0000-0000-0000-00000000000' + n;
   const BIG = (n) => 'e2000000-0000-0000-0000-' + String(n).padStart(12, '0');
-  const T_EU = 'd0000000-0000-0000-0000-000000000001', T_AAD = 'd0000000-0000-0000-0000-000000000002';
+  const T_EU = 'd0000000-0000-0000-0000-000000000001', T_AAD = 'd0000000-0000-0000-0000-000000000002', T_DEF = 'd0000000-0000-0000-0000-000000000003';
   // The leaver's roles live in Sales; the same roles exist once more in Ops sharing a root role id.
   // The root ids deliberately start with a digit: a $filter on them must not parse as a number.
   const R_SALES = 'c0000000-0000-0000-0000-000000000001', R_BASIC = 'c0000000-0000-0000-0000-000000000002';
@@ -54,7 +58,7 @@ const MOCK = `
   const QUEUE_OWNED = '40000000-0000-0000-0000-000000000001', QUEUE_MEMBER = '40000000-0000-0000-0000-000000000002';
   const CONNREF = '50000000-0000-0000-0000-000000000001', CONN = '60000000-0000-0000-0000-000000000001';
   const ORG = '70000000-0000-0000-0000-000000000001';
-  window.__ids = { ANA, BRUNO, T_EU, T_AAD, R_SALES, R_BASIC, R_LOCAL, R_SALES_OPS, R_BASIC_OPS, FSP, FLOW_MODERN, VIEW, CHART, QUEUE_OWNED, CONNREF, CONN, DANI, ACC3: ACC(3) };
+  window.__ids = { ANA, BRUNO, T_EU, T_AAD, T_DEF, R_SALES, R_BASIC, R_LOCAL, R_SALES_OPS, R_BASIC_OPS, FSP, FLOW_MODERN, VIEW, CHART, QUEUE_OWNED, CONNREF, CONN, DANI, ACC3: ACC(3) };
 
   const user = (id, name, mgr, bu, extra) => Object.assign({
     systemuserid: id, fullname: name, domainname: name.split(' ')[0].toLowerCase() + '@sss.test',
@@ -75,7 +79,12 @@ const MOCK = `
     systemusers: { key: 'systemuserid', rows: users },
     businessunits: { key: 'businessunitid', rows: [{ businessunitid: BU_SALES, name: 'Sales' }, { businessunitid: BU_OPS, name: 'Operations' }] },
     organizations: { key: 'organizationid', rows: [{ organizationid: ORG, name: 'SSS Dev', sharetopreviousowneronassign: !OTHER_BU }] },
-    teams: { key: 'teamid', rows: [{ teamid: T_EU, name: 'Sales EU', teamtype: 0, _businessunitid_value: BU_SALES }, { teamid: T_AAD, name: 'Entra Sales', teamtype: 2, _businessunitid_value: BU_SALES }] },
+    teams: { key: 'teamid', rows: [
+      { teamid: T_EU, name: 'Sales EU', teamtype: 0, isdefault: false, _businessunitid_value: BU_SALES },
+      { teamid: T_AAD, name: 'Entra Sales', teamtype: 2, isdefault: false, _businessunitid_value: BU_SALES },
+      // Every user belongs to their business unit's default team; Dataverse refuses to remove them from it.
+      { teamid: T_DEF, name: 'Sales', teamtype: 0, isdefault: true, _businessunitid_value: BU_SALES },
+    ] },
     roles: { key: 'roleid', rows: [
       { roleid: R_SALES, name: 'Sales Person', _businessunitid_value: BU_SALES, _parentrootroleid_value: ROOT_SALES },
       { roleid: R_BASIC, name: 'Basic User', _businessunitid_value: BU_SALES, _parentrootroleid_value: ROOT_BASIC },
@@ -100,7 +109,7 @@ const MOCK = `
   // In the other-business-unit variant the successor already holds the Ops copy of "Basic User", the
   // field security profile and the owner team: each of those must be skipped rather than planned.
   const expand = {
-    teammembership_association: Object.assign({ [ANA]: [sets.teams.rows[0], sets.teams.rows[1]] }, OTHER_BU ? { [BRUNO]: [sets.teams.rows[0]] } : {}),
+    teammembership_association: Object.assign({ [ANA]: [sets.teams.rows[0], sets.teams.rows[1], sets.teams.rows[2]] }, OTHER_BU ? { [BRUNO]: [sets.teams.rows[0]] } : {}),
     systemuserroles_association: Object.assign({ [ANA]: sets.roles.rows.slice(0, 3) }, OTHER_BU ? { [BRUNO]: [sets.roles.rows[4]] } : {}),
     systemuserprofiles_association: Object.assign({ [ANA]: [{ fieldsecurityprofileid: FSP, name: 'Margin Readers' }] }, OTHER_BU ? { [BRUNO]: [{ fieldsecurityprofileid: FSP, name: 'Margin Readers' }] } : {}),
     queuemembership_association: { [ANA]: [{ queueid: QUEUE_MEMBER, name: 'Support triage' }] },
@@ -166,6 +175,21 @@ const MOCK = `
     { LogicalName: 'sss_config', DisplayName: lbl('Config'), EntitySetName: 'sss_configs', PrimaryIdAttribute: 'sss_configid', OwnershipType: ORG_OWNED, IsIntersect: false, IsPrivate: false, IsLogicalEntity: false },
     { LogicalName: 'accountleads', DisplayName: lbl('Account Leads'), EntitySetName: 'accountleadscollection', PrimaryIdAttribute: 'accountleadid', OwnershipType: NO_OWNER, IsIntersect: true, IsPrivate: false, IsLogicalEntity: false },
   ];
+  if (VARIANT === 'sparse') {
+    sets.userqueryvisualizations.rows = [];
+    sets.connections.rows = [];
+  }
+  if (VARIANT === 'many') {
+    sets.userqueries.rows = Array.from({ length: 24 }, (_, i) => ({
+      userqueryid: '20000000-0000-0000-0000-' + String(i + 1).padStart(12, '0'), name: 'View ' + String(i + 1).padStart(2, '0'),
+      returnedtypecode: i % 2 ? 'contact' : 'account', _ownerid_value: ANA,
+    }));
+    sets.connectionreferences.rows = [1, 2, 3].map((n) => ({
+      connectionreferenceid: '50000000-0000-0000-0000-00000000000' + n, connectionreferencedisplayname: 'Ref ' + n,
+      connectionreferencelogicalname: 'sss_ref' + n, connectorid: '/providers/Microsoft.PowerApps/apis/shared_office365', _ownerid_value: ANA,
+    }));
+    expand.systemuserprofiles_association[ANA] = [];
+  }
   if (VARIANT === 'big') {
     sets.sss_bigs = { key: 'sss_bigid', rows: Array.from({ length: PAGE_LIMIT + 1 }, (_, i) => ({ sss_bigid: BIG(i), sss_name: 'Big ' + i, _ownerid_value: ANA })) };
     entities.push({ LogicalName: 'sss_big', DisplayName: lbl('Big table'), EntitySetName: 'sss_bigs', PrimaryNameAttribute: 'sss_name', PrimaryIdAttribute: 'sss_bigid', OwnershipType: OWNED, IsIntersect: false, IsPrivate: false, IsLogicalEntity: false });
@@ -178,7 +202,8 @@ const MOCK = `
     getAllEntitiesMetadata: async () => ({ value: entities }),
     update: async (entity, id, record) => {
       window.__writes.push({ op: 'update', entity, id, record });
-      if (id === ACC(3)) throw new Error('privilege denied on Account 3');
+      // a real Dataverse privilege error: long, with long unbroken tokens, so the report must wrap it
+      if (id === ACC(3)) throw new Error('privilege denied on Account 3: Principal user (Id=' + window.__ids.BRUNO + ', type=8, roleCount=3, privilegeCount=812, accessMode=0), is missing prvAssignAccount privilege (Id=7c1e4d2b-0000-0000-0000-000000000001) on OTC=1 for entity "account" (LocalizedName="Account"). context.Caller=' + window.__ids.ANA + '. Trace: Microsoft.Crm.Extensibility.OrganizationSdkServiceInternal.Update/Microsoft.Crm.BusinessEntities.SecurityLibrary.ValidatePrivilege/Microsoft.Crm.Caching.PrivilegeCacheLoader.LoadCacheData');
     },
     associate: async (entity, id, relationship, relatedEntity, relatedId) => { window.__writes.push({ op: 'associate', entity, id, relationship, relatedEntity, relatedId }); },
     disassociate: async (entity, id, relationship, relatedId) => { window.__writes.push({ op: 'disassociate', entity, id, relationship, relatedId }); },
@@ -233,6 +258,61 @@ assert(inv.includes("SharePoint (Ana)") && inv.includes("re-authenticate"), "con
 assert(inv.includes("Ana SharePoint connection") && inv.includes("does not re-authenticate it"), "connection listed with its sign-in caveat");
 assert(inv.includes("Dani Lopes"), "direct report listed");
 assert(inv.includes("Not scanned yet"), "records category starts unscanned");
+assert(inv.includes("business unit default team — membership managed by Dataverse"), "business unit default team listed and flagged, not hidden");
+
+// ---- O9: a category-wide note said once, technical names as tooltips, read-only reason, aria-live ----
+const o9 = await page.evaluate(() => {
+  const card = (k) => document.querySelector(`#inventory-cards details[data-cat='${k}']`);
+  const notes = (k) => [...card(k).querySelectorAll("tbody td:last-child")].map((td) => ({ text: td.textContent, title: td.querySelector(".flag")?.title ?? "" }));
+  const hint = (k) => card(k).querySelector("summary .hint");
+  const detail = (k) => card(k).querySelector("tbody td:nth-child(2) span");
+  const q = document.querySelector("input[data-cat='queuemembership']");
+  return {
+    refNote: card("connectionreferences").querySelectorAll(".cat-note").length === 1 ? card("connectionreferences").querySelector(".cat-note").textContent : null,
+    connNote: card("connections").querySelector(".cat-note")?.textContent ?? null,
+    refRows: notes("connectionreferences"),
+    connRows: notes("connections"),
+    teamsHint: { text: hint("teams").textContent, title: hint("teams").title },
+    rolesHint: { text: hint("roles").textContent, title: hint("roles").title },
+    headers: [...document.querySelectorAll("#inventory-cards summary")].map((x) => x.textContent).join(" | "),
+    connector: { text: detail("connectionreferences").textContent, title: detail("connectionreferences").title },
+    view: { text: detail("userqueries").textContent, title: detail("userqueries").title },
+    queue: { disabled: q.disabled, title: q.title },
+    workflowsNote: card("workflows").querySelector(".cat-note"),
+    progressLive: document.querySelector("#progress").getAttribute("aria-live"),
+    filters: document.querySelectorAll("#inventory-cards [data-cat-filter]").length,
+  };
+});
+assert(o9.refNote?.startsWith("Note: the underlying connection stays with the leaver") && o9.refNote.includes("only supported route"), "connection reference note said once, in full, in the card: " + o9.refNote);
+assert(o9.connNote?.includes("does not re-authenticate it"), "connection note said once in the card");
+assert(o9.refRows.length === 1 && o9.refRows[0].text === "see note" && o9.refRows[0].title.includes("only supported route"), "connection reference row keeps a short “see note” flag with the full text as its tooltip");
+assert(o9.connRows.every((r) => r.text === "see note"), "connection rows say “see note”, not the long text");
+assert(o9.teamsHint.text === "teams the leaver is a member of" && o9.teamsHint.title === "teammembership_association", "team card header: friendly hint, relationship name as tooltip");
+assert(o9.rolesHint.title === "systemuserroles_association" && !o9.headers.includes("_association") && !o9.headers.includes("userqueryvisualizations"), "no raw relationship or entity set name in any card header");
+assert(o9.connector.text === "sharepointonline connector" && o9.connector.title === "shared_sharepointonline", "connector id shown friendly, raw id as tooltip: " + JSON.stringify(o9.connector));
+assert(o9.view.text === "Account" && o9.view.title === "account", "a view's table shown by display name, logical name as tooltip: " + JSON.stringify(o9.view));
+assert(o9.queue.disabled && o9.queue.title.includes("this tool does not change them") && o9.queue.title.includes("manual steps"), "disabled Queue memberships checkbox says why: " + o9.queue.title);
+assert(o9.workflowsNote === null, "no note caption on a category whose flags differ per row");
+assert(o9.progressLive === "polite", "#progress is a polite live region");
+assert(o9.filters === 0, "no per-card filter on categories of 20 items or fewer");
+
+// ---- inventory folds: flagged categories open, state kept across re-renders ----
+const isOpen = (cat) => page.$eval(`#inventory-cards details[data-cat='${cat}']`, (d) => d.open);
+const head = (cat) => page.textContent(`#inventory-cards details[data-cat='${cat}'] summary`);
+assert((await isOpen("workflows")) && (await head("workflows")).includes("1 flagged"), "a category with a flagged item starts open with an “n flagged” badge");
+assert((await isOpen("teams")) && (await head("teams")).includes("3 flagged"), "team memberships open: owner, Entra and default teams all flagged");
+assert(!(await isOpen("userqueries")) && !(await head("userqueries")).includes("flagged"), "a category with nothing flagged starts closed, no badge");
+assert(!(await isOpen("records")), "records card closed before a scan");
+await page.click("#inventory-cards details[data-cat='userqueries'] summary .label");
+assert(await isOpen("userqueries"), "user opens the personal views card");
+await page.fill("#scan-filter", "acc");
+await page.waitForTimeout(400);
+await page.fill("#scan-filter", "");
+await page.check("#scan-show-failed");
+await page.uncheck("#scan-show-failed");
+assert((await isOpen("userqueries")) && (await isOpen("teams")), "opened cards stay open after typing in the scan filter and toggling the checkbox (re-render)");
+const showFailedLabel = await page.$eval("#scan-show-failed", (e) => e.closest("label").textContent.trim());
+assert(showFailedLabel === "show tables that could not be scanned" && !(await page.isChecked("#scan-show-failed")), "checkbox labelled for what it does, off by default: " + showFailedLabel);
 
 // ---- records scan ----
 await page.click("#btn-scan");
@@ -244,10 +324,34 @@ const note = await text("#scan-note");
 assert(note.includes("3 of 3 tables scanned") && note.includes("2 with records") && note.includes("1 not scanned"), "scan summary: " + note);
 const scanRows = await page.$$eval("table.scan tbody tr", (r) => r.map((x) => x.textContent.replace(/\s+/g, " ").trim()));
 assert(scanRows.length === 2 && scanRows[0].includes("Account") && scanRows[0].includes("3") && scanRows[1].includes("Contact"), "scan rows sorted by count");
-await page.uncheck("#scan-hide-empty");
+assert((await isOpen("records")) && (await isOpen("userqueries")) && (await isOpen("teams")), "after the scan the records card opens and the cards the user opened stay open");
+// records card "Filter tables": narrows the rows shown, keeps focus, says when ticked rows are hidden
+assert((await text("#scan-rows-count")) === "2 tables", "records card count caption unfiltered");
+await page.fill("#scan-rows-filter", "contact");
+await page.waitForFunction(() => document.querySelectorAll("table.scan tbody tr").length === 1);
+assert((await text("table.scan")).includes("Contact") && !(await text("table.scan")).includes("Account"), "records card filter narrows the table rows");
+const filteredCount = await text("#scan-rows-count");
+assert(filteredCount.startsWith("1 of 2 tables") && filteredCount.includes("1 ticked table hidden by the filter stays in the plan"), "filtered caption: " + filteredCount);
+assert(await page.$eval("#scan-rows-filter", (e) => e === document.activeElement), "filter input keeps focus while typing");
+assert(await isOpen("userqueries"), "opened card stays open after typing in the records filter");
+await page.fill("#scan-rows-filter", "zzz");
+await page.waitForFunction(() => document.querySelector("#inventory-cards")?.textContent.includes("No tables match"));
+await page.click("#inventory-cards .empty-state button:has-text('Clear filters')");
+await page.waitForFunction(() => document.querySelectorAll("table.scan tbody tr").length === 2);
+assert((await page.inputValue("#scan-rows-filter")) === "", "Clear filters empties the records filter");
+await page.check("#scan-show-failed");
 await page.waitForFunction(() => document.querySelectorAll("table.scan tbody tr").length === 3);
 assert((await text("table.scan")).includes("not scanned: owner filter not supported"), "failing table listed as not scanned, run not broken");
+assert((await isOpen("records")) && (await isOpen("userqueries")), "folds survive the show-failed re-render after the scan");
 await shot("inventory");
+// expand all / collapse all above the inventory cards
+const allOpen = () => page.$$eval("#inventory-cards details.card", (d) => d.map((x) => x.open));
+await page.click("#tab-inventory .fold-all button:has-text('Collapse all')");
+assert((await allOpen()).every((o) => !o), "Collapse all closes every inventory card");
+await page.click("#tab-inventory .fold-all button:has-text('Expand all')");
+const opened = await allOpen();
+assert(opened.length === 12 && opened.every((o) => o), "Expand all opens every inventory card");
+assert(!(await page.$("#show-empty-cats")) && !(await page.$("#empty-cats-caption")), "no empty-category switch or caption when every category holds something");
 
 // ---- 3. plan ----
 await tab("plan");
@@ -261,6 +365,20 @@ assert(!(await page.$eval("#btn-preview", (b) => b.disabled)), "preview enabled 
 // default options: copy roles + profiles, remove from teams, do not remove from leaver
 const summary = await text("#plan-summary");
 assert(summary.includes("Security roles") && summary.includes("Team memberships"), "summary lists the selected categories");
+// O9: an option whose category is not ticked is disabled with the reason; ticking it back restores the choice
+const optState = (k) => page.$eval(`input[data-opt='${k}']`, (e) => ({ disabled: e.disabled, checked: e.checked, title: e.closest("label").title }));
+assert(!(await optState("roleCopy")).disabled && (await optState("roleCopy")).title === "", "role options enabled while roles are ticked");
+await tab("inventory");
+await page.uncheck("input[data-cat='roles']");
+await tab("plan");
+let rc = await optState("roleCopy");
+assert(rc.disabled && rc.checked && rc.title === "Security roles is not ticked on the Inventory tab" && (await optState("roleRemove")).disabled, "role options disabled with the reason once roles are unticked: " + JSON.stringify(rc));
+assert(!(await optState("teamRemove")).disabled && !(await optState("profileCopy")).disabled, "options of other ticked categories stay enabled");
+await tab("inventory");
+await page.check("input[data-cat='roles']");
+await tab("plan");
+rc = await optState("roleCopy");
+assert(!rc.disabled && rc.checked && rc.title === "", "re-ticking roles re-enables the options with the choice kept");
 await page.check("input[data-opt='roleRemove']");
 await page.check("input[data-opt='teamAdd']");
 await shot("plan");
@@ -275,10 +393,35 @@ assert(dlg.includes("Records") && dlg.includes("Flows & classic processes") && d
 assert(dlg.includes('update account(') && dlg.includes('"ownerid@odata.bind":"/systemusers('), "preview shows the exact owner update call");
 assert(dlg.includes("associate systemuser(") && dlg.includes("systemuserroles_association"), "preview shows the role associate call");
 assert(dlg.includes("Entra ID and cannot be changed"), "Entra team skip explained in the preview");
+assert(dlg.includes('Team "Sales": business unit default team') && !dlg.includes(`team(${await page.evaluate(() => window.__ids.T_DEF)})`), "business unit default team skipped with its reason, never planned");
 assert(dlg.includes("connection behind them still belongs to the leaver"), "connection reference warning in the preview");
 assert(dlg.includes('"share to previous owner on assign" enabled') && dlg.includes("shared back to the leaver with full rights"), "share-back warning when the organization row has the setting on");
 assert(dlg.includes("deactivates any workflow or business rule currently active on it"), "record moves warn that active workflows and business rules are deactivated");
 assert(dlg.includes("only solution-aware cloud flows can change owner this way") && dlg.includes("remains a co-owner") && dlg.includes("up to 7 days"), "flow moves warn about solution-aware flows, co-ownership and the licensing lag");
+// grouping: warnings first and open, one closed fold per category, then "Skipped (n)" closed
+const pv = await page.$eval("#dlg-body .preview-body", (b) => {
+  const kids = [...b.children];
+  const at = (sel) => kids.findIndex((k) => k.matches(sel));
+  const cats = [...b.querySelectorAll("details.preview-cat")].map((d) => ({ cat: d.dataset.cat, open: d.open, head: d.querySelector("summary").textContent, rows: d.querySelectorAll("table.preview tbody tr").length }));
+  const sk = b.querySelector("details#preview-skipped");
+  const w = b.querySelector("details#preview-warnings");
+  return {
+    order: [at("#preview-warnings"), at(".preview-cats"), at("#preview-skipped")],
+    warnOpen: w?.open, warnHead: w?.querySelector("summary").textContent, warnN: w?.querySelectorAll("li").length,
+    cats, skOpen: sk?.open, skHead: sk?.querySelector("summary").textContent, skN: sk?.querySelectorAll("li").length,
+    showAll: b.querySelectorAll("[data-show-all]").length,
+  };
+});
+assert(pv.order[0] >= 0 && pv.order[0] < pv.order[1] && pv.order[1] < pv.order[2], "preview order: warnings, categories, skipped " + JSON.stringify(pv.order));
+assert(pv.warnOpen === true && pv.warnHead === `Warnings (${pv.warnN})`, "warnings fold open with its count: " + pv.warnHead);
+assert(pv.cats.length > 1 && pv.cats.every((c) => !c.open), "several categories: every category fold starts closed");
+assert(pv.cats.every((c) => c.head === `${c.head.split(" · ")[0]} · ${c.rows} operation${c.rows === 1 ? "" : "s"}`), "category summary reads “Category · N operations” and lists all its operations: " + pv.cats.map((c) => c.head).join(" | "));
+assert(pv.cats.reduce((n, c) => n + c.rows, 0) === planned, "the category folds list every planned operation, no 25 cap");
+assert(pv.cats.find((c) => c.cat === "records")?.head === "Records · 5 operations", "records fold: " + pv.cats.find((c) => c.cat === "records")?.head);
+assert(pv.skOpen === false && pv.skHead === `Skipped (${pv.skN})` && pv.skN >= 2, "skipped items in their own closed “Skipped (n)” fold: " + pv.skHead);
+assert(pv.showAll === 0, "no “Show all” button when no category exceeds 25 operations");
+await page.click("#preview-skipped > summary");
+assert(await page.$eval("#preview-skipped", (d) => d.open && d.textContent.includes("Entra ID and cannot be changed")), "Skipped fold opens on its reasons");
 assert(planned > 0 && estimated === planned, `the estimate matches the plan, Entra group team excluded: ${estimated} vs ${planned}`);
 assert(await page.$eval("#dlg-ok", (b) => b.className.includes("btn-danger")), "confirm button uses danger styling");
 assert((await page.textContent("#dlg-ok")).startsWith("Apply "), "confirm labels the op count");
@@ -314,14 +457,36 @@ assert(has({ op: "associate", entity: "systemuser", id: ids.BRUNO, relationship:
 assert(has({ op: "associate", entity: "team", id: ids.T_EU, relationship: "teammembership_association", relatedEntity: "systemuser", relatedId: ids.BRUNO }), "successor added to the owner team");
 assert(has({ op: "disassociate", entity: "team", id: ids.T_EU, relationship: "teammembership_association", relatedId: ids.ANA }), "leaver removed from the owner team");
 assert(!writes.some((w) => w.id === ids.T_AAD), "Entra group team never touched");
+assert(!writes.some((w) => w.id === ids.T_DEF), "business unit default team never touched (Dataverse would refuse the removal)");
 assert(!writes.some((w) => w.entity === "systemuser" && w.id === ids.ANA && w.op === "update"), "the leaver's own user row is never updated (no disable, no licence)");
 
-// ---- failed row ----
-const resultRows = await page.$$eval("table.results tbody tr", (r) => r.map((x) => x.textContent.replace(/\s+/g, " ").trim()));
-const failedRow = resultRows.find((r) => r.includes("privilege denied on Account 3"));
-assert(!!failedRow, "the failing write surfaces as a failed row");
+// ---- failed row: the report opens on Failed, All lists failures first ----
+const rowTexts = () => page.$$eval("table.results tbody tr", (r) => r.map((x) => x.textContent.replace(/\s+/g, " ").trim()));
+const pressed = () => page.$$eval(".seg-btn", (b) => Object.fromEntries(b.map((x) => [x.dataset.view, x.getAttribute("aria-pressed")])));
+let resultRows = await rowTexts();
+assert(resultRows.length === 1 && resultRows[0].includes("privilege denied on Account 3"), "report opens on Failed, showing only the failed row: " + resultRows.length);
+assert(JSON.stringify(await pressed()) === JSON.stringify({ failed: "true", all: "false" }), "Failed is the pressed view by default");
+assert((await text(".seg-btn[data-view='failed']")) === "Failed (1)" && (await text(".seg-btn[data-view='all']")) === `All (${writes.length})`, "segmented control labels carry the counts");
+assert((await text("#result-count")) === `1 of ${writes.length} operations`, "count caption while filtered: " + (await text("#result-count")));
 assert((await text("#result-summary")).match(/^\d+ ok · 1 failed$/), "result summary counts one failure: " + (await text("#result-summary")));
-assert(resultRows.length === writes.length, "one result row per operation");
+// the error: a compact "failed" badge, the full text folded in a wrapping <details>
+const badgeText = await page.$eval("table.results tbody tr td:last-child .badge", (b) => b.textContent);
+assert(badgeText === "failed", "result badge says failed, not the error: " + badgeText);
+assert(await page.$eval("table.results tbody tr td:last-child details.err-fold", (d) => !d.open && d.querySelector("summary.chev") != null && d.querySelector(".err").textContent.includes("LoadCacheData")), "long error sits folded inside <details> with a chev summary, full text kept");
+await page.click("table.results details.err-fold > summary");
+const fit = await page.$eval(".results-wrap", (w) => ({ table: w.querySelector("table").scrollWidth, box: w.clientWidth, errH: w.querySelector(".err").getBoundingClientRect().height }));
+assert(fit.table <= fit.box, `long error wraps, no sideways overflow: table ${fit.table} <= ${fit.box}`);
+assert(fit.errH > 20, "unfolded error spans several lines: " + fit.errH);
+await page.click(".seg-btn[data-view='all']");
+resultRows = await rowTexts();
+assert(resultRows.length === writes.length, "All: one result row per operation");
+assert(resultRows[0].includes("privilege denied on Account 3") && resultRows.slice(1).every((r) => !r.includes("privilege denied")), "All lists the failure first");
+assert(JSON.stringify(await pressed()) === JSON.stringify({ failed: "false", all: "true" }), "All is pressed after the click");
+assert((await text("#result-count")) === `${writes.length} operations`, "count caption unfiltered: " + (await text("#result-count")));
+assert(await page.$eval("table.results details.err-fold", (d) => d.open), "an unfolded error stays open across a view switch");
+await page.click("#result-failed-link");
+assert((await rowTexts()).length === 1 && (await pressed()).failed === "true", "the summary's “1 failed” link switches back to Failed");
+await page.click(".seg-btn[data-view='all']"); // the export must not depend on the view: export from All, then Failed
 
 // ---- exports ----
 await page.click("#btn-export-inv-json");
@@ -329,6 +494,10 @@ await page.click("#btn-export-inv-csv");
 await page.click("#btn-export-res-json");
 await page.click("#btn-export-res-csv");
 await page.waitForFunction(() => window.__saved.length === 4);
+await page.click(".seg-btn[data-view='failed']");
+await page.click("#btn-export-res-json");
+await page.click("#btn-export-res-csv");
+await page.waitForFunction(() => window.__saved.length === 6);
 const saved = await page.evaluate(() => window.__saved);
 const invJson = JSON.parse(saved[0].content);
 const cat = (k) => invJson.categories.find((c) => c.key === k);
@@ -343,6 +512,9 @@ const resJson = JSON.parse(saved[2].content);
 assert(resJson.summary.failed === 1 && resJson.summary.ok === writes.length - 1 && resJson.successor.name === "Bruno Costa", "results JSON summary");
 assert(resJson.operations.some((o) => o.call.startsWith("associate systemuser(") && o.ok), "results JSON keeps the exact call");
 assert(saved[3].content.startsWith("category,kind,target,detail,call,result,error") && saved[3].content.includes("privilege denied on Account 3"), "results CSV");
+assert(resJson.operations.length === writes.length && resJson.operations.find((o) => !o.ok).error.endsWith("PrivilegeCacheLoader.LoadCacheData"), "results JSON: every row and the full error");
+assert(saved[3].content.trim().split("\n").length === writes.length + 1 && saved[3].content.includes("PrivilegeCacheLoader.LoadCacheData"), "results CSV: every row and the full error");
+assert(JSON.stringify(JSON.parse(saved[4].content).operations) === JSON.stringify(resJson.operations) && saved[5].content === saved[3].content, "results exports identical whichever view (Failed / All) is shown");
 
 // ---- theme ----
 await page.evaluate(() => window.__emit({ event: "settings:updated", data: { theme: "dark" } }));
@@ -352,7 +524,7 @@ await shot("report-dark");
 
 // ---- other fixture variants ----
 /** A fresh page on one fixture variant, walked from the leaver to an open preview dialog. */
-const previewRun = async (variant, { cap = null, options = ["roleRemove", "teamAdd"] } = {}) => {
+const previewRun = async (variant, { cap = null, options = ["roleRemove", "teamAdd"], inspect = null } = {}) => {
   const ctx = await browser.newContext({ viewport: { width: 1400, height: 900 } });
   await ctx.addInitScript(MOCK);
   const p = await ctx.newPage();
@@ -387,8 +559,10 @@ const previewRun = async (variant, { cap = null, options = ["roleRemove", "teamA
   await p.waitForSelector("dialog[open]");
   const body = await p.textContent("#dlg-body");
   const calls = await p.$$eval("table.preview tbody tr td:last-child", (c) => c.map((x) => x.textContent));
+  const okLabel = await p.textContent("#dlg-ok");
+  const inspected = inspect ? await inspect(p) : null;
   await ctx.close();
-  return { scanDialog, rows, body, calls, errs };
+  return { scanDialog, rows, body, calls, okLabel, inspected, errs };
 };
 
 // ---- 5. successor in another business unit: role remapping, duplicates, setting off, int metadata ----
@@ -412,11 +586,133 @@ assert(bu.scanDialog.includes("3 requests"), "OwnershipType as the flags integer
 assert(bu.rows.length === 2 && JSON.stringify(bu.rows) === JSON.stringify(scanRows), "OwnershipType as the flags integer: the scan finds the same tables and counts");
 
 // ---- 6. a table whose @odata.count saturated at the page limit ----
-const big = await previewRun("big", { cap: 5 });
+// cap 30: 30 + 3 accounts + 2 contacts = 35 record operations, past the 25 listed before "Show all"
+const recRows = (p) => p.$$eval("details.preview-cat[data-cat='records'] table.preview tbody tr", (r) => r.length);
+const big = await previewRun("big", {
+  cap: 30,
+  inspect: async (p) => {
+    const before = { rows: await recRows(p), btn: await p.textContent("details.preview-cat[data-cat='records'] [data-show-all]"), head: await p.textContent("details.preview-cat[data-cat='records'] > summary") };
+    await p.click("details.preview-cat[data-cat='records'] > summary");
+    await p.click("details.preview-cat[data-cat='records'] [data-show-all]");
+    return { before, after: await recRows(p), btnGone: !(await p.$("details.preview-cat[data-cat='records'] [data-show-all]")) };
+  },
+});
 assert(big.errs.length === 0, "no errors in the saturated-count run: " + big.errs.join(" | "));
 const bigRow = big.rows.find((r) => r.includes("Big table"));
 assert(!!bigRow && bigRow.includes("5000+"), "a count saturated at the page limit is marked approximate in the inventory, not shown as an exact 5000");
-assert(big.body.includes("Big table: 5000 or more records owned, only the first 5 are in this plan"), "the plan reports a saturated count as “or more”");
+assert(big.body.includes("Big table: 5000 or more records owned, only the first 30 are in this plan"), "the plan reports a saturated count as “or more”");
+const bi = big.inspected;
+assert(bi.before.head === "Records · 35 operations" && bi.before.rows === 25 && bi.before.btn === "Show all 35", "a category over 25 operations lists 25 and offers “Show all 35”: " + JSON.stringify(bi.before));
+assert(bi.after === 35 && bi.btnGone, "“Show all” lists every operation of the category: " + bi.after);
+assert(big.okLabel === `Apply ${opCount(big.body)}`, "the confirm button still counts every planned operation: " + big.okLabel);
+
+// ---- 7. empty categories: hidden behind one caption, switch remembered across a reload ----
+{
+  const ctx = await browser.newContext({ viewport: { width: 1400, height: 900 } });
+  await ctx.addInitScript(MOCK);
+  const p = await ctx.newPage();
+  const errs = [];
+  p.on("pageerror", (e) => errs.push("pageerror: " + e.message));
+  const open = async () => {
+    await p.goto(`file://${TOOL}/dist/index.html?v=sparse`);
+    await p.fill("#leaver-q", "ana");
+    await p.waitForSelector("#leaver-results li button");
+    await p.click("#leaver-results li button");
+    await p.waitForFunction(() => document.querySelector("#leaver-kv")?.textContent.includes("Ana Silva"));
+    await p.click(".tab[data-tab='inventory']");
+    await p.waitForSelector("#inventory-cards");
+  };
+  const view = () =>
+    p.evaluate(() => {
+      const card = (k) => document.querySelector(`#inventory-cards details[data-cat='${k}']`);
+      const cap = document.querySelector("#empty-cats-caption");
+      return {
+        charts: card("usercharts") && !card("usercharts").hidden,
+        conns: card("connections") && !card("connections").hidden,
+        views: !card("userqueries").hidden,
+        caption: cap && !cap.hidden ? cap.textContent : null,
+        checked: document.querySelector("#show-empty-cats")?.checked,
+        chartsHead: card("usercharts")?.querySelector("summary").textContent ?? "",
+      };
+    });
+  await open();
+  let v = await view();
+  assert(!v.charts && !v.conns && v.views, "empty categories hidden by default, others shown");
+  assert(v.caption === "Nothing held in: Personal charts, Connections" && v.checked === false, "one caption names the hidden empty categories: " + v.caption);
+  await p.click("#tab-inventory .fold-all button:has-text('Expand all')");
+  assert(await p.$eval("#inventory-cards details[data-cat='usercharts']", (d) => !d.open), "Expand all leaves hidden empty cards alone");
+  await p.check("#show-empty-cats");
+  v = await view();
+  assert(v.charts && v.conns && v.caption === null && v.chartsHead.includes("0"), "Show empty categories reveals the 0 cards and drops the caption");
+  assert(await p.$eval("#show-empty-cats", (e) => e === document.activeElement), "the switch keeps focus (no re-render)");
+  await p.reload();
+  await open();
+  v = await view();
+  assert(v.checked === true && v.charts && v.conns && v.caption === null, "Show empty categories remembered across a reload");
+  await p.uncheck("#show-empty-cats");
+  await p.reload();
+  await open();
+  v = await view();
+  assert(v.checked === false && !v.charts && !v.conns && v.caption?.startsWith("Nothing held in:"), "switching it off is remembered too");
+  assert(errs.length === 0, "no errors in the empty-categories run: " + errs.join(" | "));
+  await ctx.close();
+}
+
+// ---- 8. many items: per-card filter, one note for many rows, options moot for an empty category ----
+{
+  const ctx = await browser.newContext({ viewport: { width: 1400, height: 900 } });
+  await ctx.addInitScript(MOCK);
+  const p = await ctx.newPage();
+  const errs = [];
+  p.on("pageerror", (e) => errs.push("pageerror: " + e.message));
+  await p.goto(`file://${TOOL}/dist/index.html?v=many`);
+  await p.fill("#leaver-q", "ana");
+  await p.waitForSelector("#leaver-results li button");
+  await p.click("#leaver-results li button");
+  await p.waitForFunction(() => document.querySelector("#leaver-kv")?.textContent.includes("Ana Silva"));
+  await p.click(".tab[data-tab='inventory']");
+  await p.waitForSelector("#inventory-cards");
+  const F = "input[data-cat-filter='userqueries']";
+  const rows = () => p.$$eval("#inventory-cards details[data-cat='userqueries'] tbody tr", (r) => r.length);
+  const cnt = () => p.textContent("[data-cat-count='userqueries']");
+  const clearHidden = () => p.$eval("[data-cat-clear='userqueries']", (b) => b.hidden);
+  assert((await p.$$("[data-cat-filter]")).length === 1, "only the category over 20 items gets a filter");
+  await p.click("#inventory-cards details[data-cat='userqueries'] summary .label");
+  assert((await rows()) === 24 && (await cnt()) === "24 items" && (await clearHidden()), "unfiltered: every item, “24 items”, no Clear");
+  await p.fill(F, "view 1");
+  assert((await rows()) === 10 && (await cnt()) === "10 of 24 items" && !(await clearHidden()), "card filter narrows its items, “10 of 24 items”, Clear shown: " + (await cnt()));
+  assert(await p.$eval(F, (e) => e === document.activeElement), "card filter keeps focus while typing");
+  await p.click("[data-cat-clear='userqueries']");
+  assert((await rows()) === 24 && (await p.inputValue(F)) === "" && (await clearHidden()), "Clear restores every item");
+  await p.fill(F, "contact");
+  assert((await rows()) === 12, "card filter also matches the detail column (table display name)");
+  await p.fill(F, "zzz");
+  assert((await p.textContent("#inventory-cards details[data-cat='userqueries']")).includes("No items match"), "filtered-out card shows the filtered empty state");
+  await p.click("#inventory-cards details[data-cat='userqueries'] .empty-state button:has-text('Clear filters')");
+  assert((await rows()) === 24, "the empty state's Clear filters restores the items");
+  await p.fill(F, "view 2");
+  await p.check("#scan-show-failed"); // re-renders the inventory
+  assert((await p.inputValue(F)) === "view 2" && (await cnt()) === "5 of 24 items" && (await p.$eval("#inventory-cards details[data-cat='userqueries']", (d) => d.open)), "card filter text and fold survive a re-render");
+  const refs = await p.$eval("#inventory-cards details[data-cat='connectionreferences']", (d) => ({
+    notes: d.querySelectorAll(".cat-note").length,
+    flags: [...d.querySelectorAll("tbody td:last-child")].map((td) => td.textContent),
+    head: d.querySelector("summary").textContent,
+    detail: d.querySelector("tbody td:nth-child(2) span").textContent,
+  }));
+  assert(refs.notes === 1 && refs.flags.length === 3 && refs.flags.every((f) => f === "see note") && refs.head.includes("3 flagged"), "three references: one note, three short flags, still counted as flagged");
+  assert(refs.detail === "office365 connector", "full connector path shortened to its name: " + refs.detail);
+  await p.click(".tab[data-tab='plan']");
+  const prof = await p.$eval("input[data-opt='profileCopy']", (e) => ({ disabled: e.disabled, title: e.closest("label").title }));
+  assert(prof.disabled && prof.title === "The leaver holds no field security profiles", "profile options disabled when the leaver holds none: " + JSON.stringify(prof));
+  assert(!(await p.$eval("input[data-opt='roleCopy']", (e) => e.disabled)), "role options stay enabled");
+  await p.click(".tab[data-tab='report']");
+  await p.click("#btn-export-inv-csv");
+  await p.waitForFunction(() => window.__saved.length === 1);
+  const csvOut = await p.evaluate(() => window.__saved[0].content);
+  assert(csvOut.includes("/providers/Microsoft.PowerApps/apis/shared_office365") && csvOut.split("only supported route").length - 1 === 3, "exports keep the raw connector id and the full note on every row");
+  assert(errs.length === 0, "no errors in the many-items run: " + errs.join(" | "));
+  await ctx.close();
+}
 
 // ---- no host: the tool still renders ----
 const bareCtx = await browser.newContext();

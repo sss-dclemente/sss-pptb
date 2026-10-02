@@ -113,3 +113,6 @@ export async function runInstalls(o: RunOptions): Promise<void> {
   });
   await Promise.all(workers);
 }
+
+/** The items "Only problems" keeps: everything that did not succeed (failed, stopped, canceled, still queued or running). A run without any is clean. */
+export const runProblems = (items: RunItem[]): RunItem[] => items.filter((i) => i.status !== "succeeded");

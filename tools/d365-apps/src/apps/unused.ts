@@ -424,3 +424,26 @@ export function unusedCsv(r: UnusedReport, envName: string): string {
   );
   return [head.join(","), ...lines].join("\r\n") + "\r\n";
 }
+
+// ---------- view ----------
+/** Verdicts hidden unless Show all is ticked or their badge is pressed. */
+export const QUIET: readonly Verdict[] = ["in-use", "platform"];
+/** One badge per group: "not found" counts as "no signal". */
+export const verdictGroup = (v: Verdict): Verdict => (v === "not-found" ? "no-signal" : v);
+
+export interface UnusedView {
+  /** Show all (in use, platform) */
+  all: boolean;
+  /** pressed verdict badges (groups); any of them */
+  verdicts: ReadonlySet<Verdict>;
+  /** name filter */
+  query: string;
+}
+
+/** The report rows shown: pressed verdict badges win over Show all (else in use / platform only with Show all), then the name filter. */
+export function unusedShown(packages: PackageUse[], v: UnusedView): PackageUse[] {
+  const q = v.query.trim().toLowerCase();
+  return packages.filter(
+    (p) => (v.verdicts.size ? v.verdicts.has(verdictGroup(p.verdict)) : v.all || !QUIET.includes(p.verdict)) && (!q || `${p.pkg.name} ${p.pkg.uniqueName}`.toLowerCase().includes(q)),
+  );
+}

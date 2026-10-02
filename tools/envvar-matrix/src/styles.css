@@ -28,23 +28,42 @@
 
 .matrix-wrap { overflow: auto; flex: 1; }
 table.matrix { min-width: 100%; }
-table.matrix thead th { position: sticky; top: 0; background: var(--bg); z-index: 1; }
+table.matrix thead th { position: sticky; top: 0; background: var(--bg); z-index: 2; }
+/* select + name columns stay in view while the environment columns scroll sideways (.sticky-col) */
+table.matrix thead th.sticky-col { z-index: 3; }
+table.matrix .sel { width: 32px; min-width: 32px; max-width: 32px; }
+table.matrix .name.sticky-col { left: 32px; }
 table.matrix th.col { min-width: 220px; }
 table.matrix th.col .env { display: block; font-size: var(--fs-caption); text-transform: none; letter-spacing: 0; color: var(--fg-primary); }
 table.matrix td.name { white-space: nowrap; }
 table.matrix td.name .display { display: block; font-size: var(--fs-micro); color: var(--fg-muted); }
-table.matrix tr.differs td.name { border-left: 3px solid var(--status-warn-fg); }
-table.matrix tr.missing td.name { border-left: 3px solid var(--status-bad-fg); }
+/* inset shadow, not border-left: a collapsed border stays behind when the sticky cell moves */
+table.matrix tr.differs td.name { box-shadow: inset 3px 0 0 var(--status-warn-fg); }
+table.matrix tr.missing td.name { box-shadow: inset 3px 0 0 var(--status-bad-fg); }
 table.matrix td.cell { font-family: var(--font-mono); font-size: var(--fs-caption); max-width: 360px; }
-table.matrix td.cell .val { display: block; white-space: pre-wrap; word-break: break-all; color: var(--fg-primary); }
+/* long values (JSON, Key Vault references) clamp to 3 lines; the cell's "more" toggle (.val-more) shows the rest */
+table.matrix td.cell .val {
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; line-clamp: 3; overflow: hidden;
+  white-space: pre-wrap; word-break: break-all; color: var(--fg-primary);
+}
+table.matrix td.cell.is-expanded .val { display: block; -webkit-line-clamp: none; line-clamp: none; overflow: visible; }
+table.matrix td.cell .val-more {
+  font: inherit; font-family: var(--font-sans); font-size: var(--fs-micro); color: var(--accent);
+  background: none; border: none; padding: 0 var(--s-1); cursor: pointer; text-decoration: underline;
+}
+table.matrix td.cell .val-more:focus-visible { outline: none; box-shadow: var(--shadow-teal); border-radius: var(--radius-sm); }
+/* a cell whose value differs from the first visible column (the row marker only says "somewhere in this row") */
+table.matrix td.cell.differs { background: color-mix(in srgb, var(--status-warn-bg) 55%, transparent); }
 table.matrix td.cell.absent { background: var(--bg-subtle); color: var(--fg-muted); }
 table.matrix td.cell.error { background: var(--status-bad-bg); color: var(--fg-muted); }
 table.matrix th.col .col-error { display: flex; flex-direction: column; gap: 2px; margin-top: 2px; text-transform: none; letter-spacing: 0; font-weight: normal; white-space: normal; }
 table.matrix td.cell .meta { display: flex; flex-wrap: wrap; gap: var(--s-1); align-items: center; margin-top: 2px; }
 table.matrix td.cell .btn-icon { opacity: 0; font-size: var(--fs-caption); }
-table.matrix tr:hover td.cell .btn-icon { opacity: 1; }
-table.matrix td.sel { width: 1%; }
+table.matrix tr:hover td.cell .btn-icon,
+table.matrix td.cell .btn-icon:focus-visible { opacity: 1; }
 table.matrix input[type="checkbox"] { accent-color: var(--accent); }
+/* Compact: badges that say nothing is wrong (value, bound, managed) are hidden; the value itself stays */
+#matrix-body.compact table.matrix td.cell .badge.is-ok { display: none; }
 
 .bulkbar {
   display: flex; flex-wrap: wrap; gap: var(--s-2); align-items: center;
@@ -68,6 +87,9 @@ dialog textarea, dialog input[type="text"] {
 .btn-danger { background: var(--status-bad-fg); border-color: var(--status-bad-fg); color: var(--fg-on-accent); }
 .btn-danger:hover { filter: brightness(0.9); }
 .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+dialog .dlg-tools { display: flex; flex-wrap: wrap; gap: var(--s-3); align-items: center; margin: var(--s-2) 0; font-size: var(--fs-caption); color: var(--fg-muted); }
+dialog .dlg-tools label { display: inline-flex; gap: var(--s-1); align-items: center; }
+dialog .dlg-tools input[type="checkbox"] { accent-color: var(--accent); }
 .status { padding: var(--s-2) var(--s-5); font-size: var(--fs-caption); color: var(--fg-muted); }
 
 /* ---- consolidate view ---- */
@@ -75,10 +97,28 @@ dialog textarea, dialog input[type="text"] {
 .cons-head .spacer { flex: 1; }
 .cons-groups { display: flex; flex-direction: column; gap: var(--s-3); padding: var(--s-3) var(--s-5); }
 .cons-groups .card-head { display: flex; align-items: center; gap: var(--s-2); }
+.cons-groups .card-head .count, .cons-flags { display: inline-flex; gap: var(--s-1); align-items: center; }
+.cons-actions { display: flex; flex-wrap: wrap; gap: var(--s-2); justify-content: flex-end; margin-bottom: var(--s-2); }
 .cons-groups table { width: 100%; }
 .cons-groups td.pick { width: 1%; white-space: nowrap; text-align: center; }
 .cons-groups tr.keep td { background: var(--status-ok-bg); }
 .cons-groups tr.merge td { background: var(--status-warn-bg); }
 .cons-groups input { accent-color: var(--accent); }
 .changes { font-family: var(--font-mono); font-size: var(--fs-micro); }
+.cons-actions .cons-only-ready { margin-right: auto; display: inline-flex; gap: var(--s-1); align-items: center; font-size: var(--fs-caption); color: var(--fg-muted); }
 .cons-groups td.name .display { display: block; font-size: var(--fs-micro); color: var(--fg-muted); }
+
+/* ---- columns menu (show / hide environment columns) ---- */
+.colmenu { position: relative; }
+.colmenu > summary { display: inline-flex; align-items: center; cursor: pointer; user-select: none; }
+.colmenu.is-filtered > summary { border-color: var(--accent); color: var(--accent); }
+.colmenu-panel {
+  position: absolute; top: calc(100% + var(--s-1)); left: 0; z-index: 10; min-width: 240px;
+  display: flex; flex-direction: column; gap: var(--s-1); padding: var(--s-2) var(--s-3);
+  background: var(--bg-card); border: 1px solid var(--border-color); border-radius: var(--radius-sm); box-shadow: var(--shadow-xs);
+}
+.toolbar .colmenu-panel label.check { color: var(--fg-primary); white-space: nowrap; }
+.colmenu-panel .kind { color: var(--fg-muted); }
+.colmenu-panel input[type="checkbox"] { accent-color: var(--accent); }
+.colmenu-panel .caption { white-space: normal; max-width: 280px; }
+.colchip.is-hidden { opacity: 0.6; }

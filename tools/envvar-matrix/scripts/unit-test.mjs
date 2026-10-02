@@ -14,7 +14,7 @@ const TOOL = new URL("..", import.meta.url).pathname.replace(/\/$/, "");
 const esbuild = createRequire(resolve(TOOL, "package.json"))("esbuild");
 const out = esbuild.buildSync({
   stdin: {
-    contents: ["consolidate", "bind", "settings", "ppconnections", "runlog"].map((m) => `export * from "./src/matrix/${m}";`).join("\n"),
+    contents: ["consolidate", "bind", "settings", "ppconnections", "runlog", "matrix"].map((m) => `export * from "./src/matrix/${m}";`).join("\n"),
     resolveDir: TOOL,
     loader: "ts",
   },
@@ -361,4 +361,118 @@ test("RunLog CSV neutralises formulas and quotes; JSON carries every entry", () 
   const j = JSON.parse(log.json());
   assert.equal(j.kind, "sss-envvar-matrix-runlog");
   assert.equal(j.entries.length, 1);
+});
+
+test("buildMatrix: hidden columns keep their cells but are not shown or compared", () => {
+  const ev = (schemaName, value, defaultValue = null) => ({ definitionId: schemaName, schemaName, displayName: schemaName, typeCode: 100000000, type: "String", defaultValue, value, valueId: null, isManaged: false });
+  const crec = (logicalName, connectionId) => ({ id: logicalName, logicalName, displayName: logicalName, connectorId: "/apis/shared_sql", connector: "shared_sql", connectionId, isManaged: false });
+  const col = (key, envVars, connRefs = []) => ({ meta: { key, kind: "live", target: key, name: key, url: "", environment: key, takenAt: "" }, envVars, connRefs });
+  const cols = [
+    col("primary", [ev("a", "1"), ev("b", "x"), ev("c", null)], [crec("r", "c1")]),
+    col("secondary", [ev("a", "2"), ev("b", "x"), ev("d", "only")], [crec("r", null)]),
+    col("snap:1", [ev("a", "1"), ev("b", "y")], [crec("r", "c9")]),
+  ];
+  const row = (m, k) => m.envVars.find((r) => r.key === k);
+  const all = M.buildMatrix(cols);
+  assert.deepEqual(all.columns.map((c) => c.key), ["primary", "secondary", "snap:1"]);
+  assert.deepEqual(all.envVars.filter((r) => r.differs).map((r) => r.key), ["a", "b", "c", "d"]);
+  assert.equal(all.connRefs[0].anyUnbound, true);
+
+  const m = M.buildMatrix(cols, new Set(["secondary"]));
+  assert.deepEqual(m.columns.map((c) => c.key), ["primary", "snap:1"], "hidden column not in Matrix.columns");
+  assert.equal(row(m, "a").differs, false, "a only differed because of secondary");
+  assert.equal(row(m, "b").differs, true, "b still differs between primary and snapshot");
+  assert.equal(row(m, "d").differs, false, "absent from every visible column is not a difference");
+  assert.equal(row(m, "a").cells.secondary.effective, "2", "hidden column still has cells (copy from / bind read them)");
+  assert.equal(m.connRefs[0].anyUnbound, false, "unbound only in the hidden column");
+  assert.equal(m.connRefs[0].differs, false);
+
+  const only = M.buildMatrix(cols, new Set(["secondary", "snap:1"]));
+  assert.equal(only.envVars.some((r) => r.differs), false, "one visible column: nothing differs");
+  assert.equal(row(only, "c").anyMissing && !row(only, "c").anyAbsent, true, "missing still flagged in the visible column");
+  assert.equal(row(only, "d").anyAbsent, true, "absent in the visible column");
+});
+
+test("filters: 'Missing value / unbound' and 'Not deployed' are separate; both on shows either gap", () => {
+  const ev = (schemaName, value, defaultValue = null) => ({ definitionId: schemaName, schemaName, displayName: schemaName, typeCode: 100000000, type: "String", defaultValue, value, valueId: null, isManaged: false });
+  const crec = (logicalName, connectionId) => ({ id: logicalName, logicalName, displayName: logicalName, connectorId: "/apis/shared_sql", connector: "shared_sql", connectionId, isManaged: false });
+  const col = (key, envVars, connRefs) => ({ meta: { key, kind: "live", target: key, name: key, url: "", environment: key, takenAt: "" }, envVars, connRefs });
+  const m = M.buildMatrix([
+    col("primary", [ev("ok", "1"), ev("nov", null), ev("onlyp", "x")], [crec("bound", "c1"), crec("unb", null), crec("onlyp", "c2")]),
+    col("secondary", [ev("ok", "1"), ev("nov", "2")], [crec("bound", "c1"), crec("unb", "c3")]),
+  ]);
+  const f = (o) => ({ text: "", onlyDiff: false, onlyMissing: false, onlyAbsent: false, scope: null, ...o });
+  const ev3 = (o) => M.filterEnvVars(m.envVars, f(o)).map((r) => r.key);
+  const cr3 = (o) => M.filterConnRefs(m.connRefs, f(o)).map((r) => r.key);
+  assert.deepEqual(ev3({}), ["nov", "ok", "onlyp"]);
+  assert.deepEqual(ev3({ onlyMissing: true }), ["nov"], "missing value only, not the absent row");
+  assert.deepEqual(ev3({ onlyAbsent: true }), ["onlyp"], "not deployed only");
+  assert.deepEqual(ev3({ onlyMissing: true, onlyAbsent: true }), ["nov", "onlyp"], "both: either gap");
+  assert.deepEqual(cr3({ onlyMissing: true }), ["unb"], "unbound only, not the absent reference");
+  assert.deepEqual(cr3({ onlyAbsent: true }), ["onlyp"]);
+  assert.deepEqual(cr3({ onlyMissing: true, onlyAbsent: true, text: "only" }), ["onlyp"], "still combined with the text filter");
+});
+
+// ---------- E9 / E10: per-cell differences, run log filters, off-flow filters ----------
+
+test("envVarDiffCells / connRefDiffCells: cells that differ from the first compared visible column", () => {
+  const ev = (schemaName, value, defaultValue = null, typeCode = 100000000) => ({ definitionId: schemaName, schemaName, displayName: schemaName, typeCode, type: "String", defaultValue, value, valueId: null, isManaged: false });
+  const crec = (logicalName, connectionId, connector = "shared_sql") => ({ id: logicalName, logicalName, displayName: logicalName, connectorId: "/apis/" + connector, connector, connectionId, isManaged: false });
+  const col = (key, envVars, connRefs = [], error) => ({ meta: { key, kind: "live", target: key, name: key, url: "", environment: key, takenAt: "", error }, envVars, connRefs });
+  const cols = [
+    col("a", [ev("same", "1"), ev("val", "1"), ev("dflt", null, "1"), ev("sec", "kv1", null, 100000005), ev("gone", "x")], [crec("b", "c1"), crec("u", "c1"), crec("k", "c1")]),
+    col("b", [ev("same", "1"), ev("val", "2"), ev("dflt", "1"), ev("sec", "kv2", null, 100000005)], [crec("b", "c2"), crec("u", null), crec("k", "c1", "shared_teams")]),
+    col("c", [ev("same", "1"), ev("val", "1"), ev("dflt", null, null), ev("sec", null, null, 100000005), ev("gone", "x")], [crec("b", "c3")]),
+  ];
+  const m = M.buildMatrix(cols);
+  const evd = (k, columns = m.columns) => [...M.envVarDiffCells(m.envVars.find((r) => r.key === k), columns)].sort();
+  const crd = (k, columns = m.columns) => [...M.connRefDiffCells(m.connRefs.find((r) => r.key === k), columns)].sort();
+  assert.deepEqual(evd("same"), [], "equal everywhere: nothing tinted");
+  assert.deepEqual(evd("val"), ["b"], "only the column with another value; the reference column itself never");
+  assert.deepEqual(evd("dflt"), ["c"], "same effective value through a default is not a difference; missing is");
+  assert.deepEqual(evd("sec"), ["c"], "secrets compare by presence, not value");
+  assert.deepEqual(evd("gone"), ["b"], "absent differs from a value");
+  assert.deepEqual(evd("val", [m.columns[1], m.columns[2]]), ["c"], "reference is the first visible column passed");
+  assert.deepEqual(evd("val", [{ ...m.columns[0], error: "503" }, m.columns[1], m.columns[2]]), ["c"], "a failed column is skipped as reference");
+  assert.deepEqual(evd("val", [m.columns[0]]), [], "one column: nothing to compare");
+  assert.deepEqual(crd("b"), [], "bound to different connection ids in each environment is not a difference");
+  assert.deepEqual(crd("u"), ["b", "c"], "unbound and absent differ from bound");
+  assert.deepEqual(crd("k"), ["b", "c"], "other connector differs");
+});
+
+test("filterRunLog / runLogFacets: action, environment (by url), only failures", () => {
+  const log = new M.RunLog(null);
+  const add = (action, environment, url, ok) => log.add({ action, environment, url, item: "i", detail: "d", ok, error: ok ? undefined : "x" });
+  add("bind", "Dev", "https://dev.crm4.dynamics.com", true);
+  add("bind", "Dev", "https://dev.crm4.dynamics.com", false);
+  add("turn on flow", "Test", "https://test.crm4.dynamics.com", false);
+  add("set env var", "Dev", "https://dev2.crm4.dynamics.com", true);
+  const f = (o) => M.filterRunLog(log.all, { action: "", url: "", onlyFailures: false, ...o }).length;
+  assert.equal(f({}), 4);
+  assert.equal(f({ action: "bind" }), 2);
+  assert.equal(f({ url: "https://dev.crm4.dynamics.com" }), 2, "by url: another org with the same name is not mixed in");
+  assert.equal(f({ onlyFailures: true }), 2);
+  assert.equal(f({ action: "bind", onlyFailures: true }), 1);
+  assert.equal(f({ action: "turn on flow", url: "https://dev.crm4.dynamics.com" }), 0);
+  const facets = M.runLogFacets(log.all);
+  assert.deepEqual(facets.actions, ["bind", "set env var", "turn on flow"]);
+  assert.deepEqual(facets.environments.map((e) => e.label), ["Dev (dev.crm4.dynamics.com)", "Dev (dev2.crm4.dynamics.com)", "Test"], "a shared name gets the host");
+});
+
+test("filterOffFlows: solution flow ids, text, only ready", () => {
+  const list = [
+    { flowId: "F1", name: "Ready one", isManaged: false, refs: ["sss_a"], ready: true, reason: "" },
+    { flowId: "f2", name: "Blocked", isManaged: false, refs: ["sss_b"], ready: false, reason: "" },
+    { flowId: "f3", name: "Ready other", isManaged: false, refs: [], ready: true, reason: "" },
+  ];
+  const f = (o) => {
+    const r = M.filterOffFlows(list, { text: "", flowIds: null, onlyReady: false, ...o });
+    return [r.scoped.map((x) => x.flowId).join(), r.shown.map((x) => x.flowId).join()];
+  };
+  assert.deepEqual(f({}), ["F1,f2,f3", "F1,f2,f3"]);
+  assert.deepEqual(f({ onlyReady: true }), ["F1,f2,f3", "F1,f3"], "only ready narrows what is shown, not the total");
+  assert.deepEqual(f({ flowIds: new Set(["f1", "f2"]) }), ["F1,f2", "F1,f2"], "solution scope by flow id, case-insensitive");
+  assert.deepEqual(f({ flowIds: new Set(["f1", "f2"]), onlyReady: true }), ["F1,f2", "F1"]);
+  assert.deepEqual(f({ text: "sss_b" }), ["f2", "f2"], "text matches reference names");
+  assert.deepEqual(f({ flowIds: new Set() }), ["", ""], "solution without flows: none");
 });

@@ -41,6 +41,8 @@
       <section id="tab-inventory" class="panel" role="tabpanel">
         <div class="toolbar">
           <label>Solution <select id="inv-select"></select></label>
+          <input id="inv-q" type="search" placeholder="Find component…" aria-label="Find component" />
+          <label class="check" title="Hide tables whose schema name does not start with the solution publisher's prefix (e.g. account, contact)"><input type="checkbox" id="inv-hide-sys" /> Hide system tables</label>
           <button id="inv-export" class="btn btn-ghost btn-sm" type="button">Export JSON</button>
         </div>
         <div id="inv-body" class="panel-body"></div>
@@ -50,6 +52,10 @@
         <div class="toolbar">
           <label>Base (A) <select id="cmp-a"></select></label>
           <label>Target (B) <select id="cmp-b"></select></label>
+          <label class="check"><input type="checkbox" id="cmp-added" checked /> Added</label>
+          <label class="check"><input type="checkbox" id="cmp-changed" checked /> Changed</label>
+          <label class="check"><input type="checkbox" id="cmp-removed" checked /> Removed</label>
+          <input id="cmp-q" type="search" placeholder="Filter by name…" aria-label="Filter by name" />
           <label class="check"><input type="checkbox" id="cmp-hide-root" checked /> Hide root-component rows</label>
           <button id="cmp-export" class="btn btn-ghost btn-sm" type="button">Export JSON</button>
         </div>

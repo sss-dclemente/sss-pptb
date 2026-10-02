@@ -1,13 +1,15 @@
 import { mountDebug } from "../../_shared/debug-ui";
-import { $, append, badge, emptyState, h, showDialog, wireTabs, type Child } from "../../_shared/dom";
+import { $, append, badge, emptyState, filteredEmpty, foldAllButtons, h, keepFold, showDialog, shownOf, wireTabs, type Child } from "../../_shared/dom";
+import { persistControls, type PersistedControls } from "../../_shared/view-state";
 import { backupFileName, buildBackup, parseBackup, planRestore, type Backup, type RestorePlan } from "./deps/backup";
 import { parseFilter } from "./deps/classify";
 import { Cancelled, diagnose, reqKey } from "./deps/diagnose";
 import { findingsCsv, findingsJson, safeFileName } from "./deps/export";
 import { fetchEnvironmentId, fetchSolutionManaged, fetchSolutions, MetaCache, type DataverseLike, type DependencyRow } from "./deps/fetch";
-import { readSolutionZip, refName, type OfflineResult } from "./deps/offline";
+import { readSolutionZip, refName, type OfflineGroup, type OfflineResult } from "./deps/offline";
 import { CT, DEFAULT_FILTER, typeName, type Diagnosis, type Finding, type FixKind, type SolutionInfo } from "./deps/types";
-import { buildOps, executeOps, opLabel, prepare, xmlDiff, type Op, type OpResult, type Prepared } from "./deps/write";
+import { buildOps, executeOps, opLabel, prepare, xmlDiff, type Op, type OpResult, type Prepared, type ShellPlan } from "./deps/write";
+import { errorList } from "./error-list";
 import { initUpgrade, upgradeOnConnections } from "./upgrade-ui";
 import { dataverse, getConnections, initTheme, inToolbox, notify, onConnectionChange, openText, pickBinary, saveText, type LiveConnection } from "./host";
 
@@ -37,6 +39,23 @@ let running = false;
 let applying = false;
 /** url: the primary connection the restore plan was compared against */
 let restore: { backup: Backup; plan: RestorePlan | null; url: string | null } | null = null;
+/** per shell root id: the leaving list's search, type filter and "Only leaving" toggle, kept across re-renders of one preview */
+interface ShellView {
+  q: string;
+  type: string;
+  only: boolean;
+}
+const shellViews = new Map<string, ShellView>();
+/** the zip read on the Offline tab */
+let offline: OfflineResult | null = null;
+/** the diagnosis / zip the type selects were filled from */
+let diagTypesOf: Diagnosis | null = null;
+let offlineTypesOf: OfflineResult | null = null;
+/** Diagnose / Offline find + type, saved per viewer; Clear resets these and not the "Show present in target" toggles */
+let diagCtl: PersistedControls;
+let offCtl: PersistedControls;
+/** a leaving list longer than this opens on "Only leaving" */
+const ONLY_LEAVING_OVER = 30;
 
 const api = (): DataverseLike | undefined => dataverse() as unknown as DataverseLike | undefined;
 const primary = (): LiveConnection | undefined => conns.find((c) => c.target === "primary");
@@ -58,6 +77,7 @@ const clearPlan = (): void => {
   backupDone = false;
   previewError = null;
   planConn = null;
+  shellViews.clear();
 };
 const filter = (): string[] => {
   const f = parseFilter($<HTMLInputElement>("#filter").value);
@@ -70,10 +90,37 @@ function setStatus(msg: string | null): void {
   el.textContent = msg ?? "";
 }
 
-function connChip(c: LiveConnection, label: string): HTMLElement {
+/**
+ * A chip that reveals `detail` on a line of its own (`line`, placed by the caller) when clicked; `title` keeps the hover.
+ * aria-expanded / aria-controls tell assistive tech what the click shows.
+ */
+let revealSeq = 0;
+/** keys of the revealed lines, so a re-render (find, type filter, toggle) keeps them open */
+const revealed = new Set<string>();
+function revealChip(chip: HTMLButtonElement, line: HTMLElement, key?: string): HTMLButtonElement {
+  line.id ||= `reveal-${++revealSeq}`;
+  const sync = (open: boolean) => {
+    line.hidden = !open;
+    chip.setAttribute("aria-expanded", String(open));
+  };
+  sync(!!key && revealed.has(key));
+  chip.setAttribute("aria-controls", line.id);
+  chip.addEventListener("click", () => {
+    const open = line.hidden;
+    sync(open);
+    if (!key) return;
+    if (open) revealed.add(key);
+    else revealed.delete(key);
+  });
+  return chip;
+}
+
+function connChip(c: LiveConnection, label: string): HTMLElement[] {
   const dot = h("span", { class: "dot" });
   if (c.conn.environmentColor) dot.style.background = c.conn.environmentColor;
-  return h("span", { class: "connchip", title: c.conn.url }, dot, h("span", { class: "env" }, c.conn.name), h("span", { class: "kind" }, `${label} · ${c.conn.environment}`));
+  const line = h("span", { class: "conn-url mono" }, c.conn.url);
+  const chip = h("button", { type: "button", class: "connchip", title: c.conn.url }, dot, h("span", { class: "env" }, c.conn.name), h("span", { class: "kind" }, `${label} · ${c.conn.environment}`));
+  return [revealChip(chip, line), line];
 }
 
 function solutionLink(): string {
@@ -107,8 +154,8 @@ async function loadConnections(): Promise<void> {
   wrap.replaceChildren();
   const p = primary();
   const s = secondary();
-  if (p) wrap.append(connChip(p, "dev"));
-  if (s) wrap.append(connChip(s, "target"));
+  if (p) wrap.append(...connChip(p, "dev"));
+  if (s) wrap.append(...connChip(s, "target"));
   if (!p) wrap.append(h("span", { class: "caption" }, inToolbox() ? "No connection. Pick a primary (dev) connection in ToolBox." : "Standalone: Offline tab only."));
   const a = api();
   solutions = [];
@@ -193,9 +240,15 @@ async function runDiagnosis(solutionId?: string): Promise<void> {
   renderDiagnosis();
 }
 
-function requiredChip(r: Finding["required"][number]): HTMLElement {
+/** The chip, and (when Dataverse named any) the line it reveals with every managed solution that contains the component. */
+function requiredChip(f: Finding, r: Finding["required"][number]): { chip: HTMLElement; line: HTMLElement | null } {
   const safe = !!r.solution && !!targetSolutions?.has(r.solution.uniqueName.toLowerCase());
-  return h("span", { class: `req${safe ? " is-safe" : ""}`, title: r.solutions.join(", ") }, h("span", { class: "sol" }, r.solution?.uniqueName ?? "unknown solution"), `${typeName(r.type)} ${r.name}`, safe ? " · in target" : "");
+  const cls = `req${safe ? " is-safe" : ""}`;
+  const content: Child[] = [h("span", { class: "sol" }, r.solution?.uniqueName ?? "unknown solution"), `${typeName(r.type)} ${r.name}`, safe ? " · in target" : ""];
+  if (!r.solutions.length) return { chip: h("span", { class: cls }, ...content), line: null };
+  const line = h("div", { class: "req-line caption" }, `${typeName(r.type)} ${r.name} is in ${r.solutions.length} managed solution${r.solutions.length === 1 ? "" : "s"}: `, h("span", { class: "mono" }, r.solutions.join(", ")));
+  const chip = h("button", { type: "button", class: cls, title: r.solutions.join(", ") }, ...content);
+  return { chip: revealChip(chip, line, `${f.key}>${r.type}:${r.id}`), line };
 }
 
 function findingCard(f: Finding): HTMLElement {
@@ -208,6 +261,7 @@ function findingCard(f: Finding): HTMLElement {
     renderSelCount();
   });
   const report = f.fixes.find((x) => x.kind === "report");
+  const chips = f.required.map((r) => requiredChip(f, r));
   return h(
     "li",
     { class: `finding${f.status === "safe" ? " is-safe" : ""}`, "data-key": f.key },
@@ -222,7 +276,8 @@ function findingCard(f: Finding): HTMLElement {
       sel,
     ),
     h("div", { class: "cause" }, f.cause),
-    h("div", { class: "chips" }, ...f.required.map(requiredChip)),
+    h("div", { class: "chips" }, ...chips.map((c) => c.chip)),
+    ...chips.map((c) => c.line),
     report?.link ? h("div", { class: "caption" }, report.note ?? "", " ", h("a", { href: report.link, target: "_blank", rel: "noopener" }, "Open solution in maker portal")) : null,
   );
 }
@@ -232,21 +287,45 @@ function renderSelCount(): void {
   $<HTMLButtonElement>("#btn-to-fix").disabled = selections.size === 0;
 }
 
+/** Type `<select>` options from the rows shown ("Form (3)"); re-applies the saved choice once it is offered. */
+function fillTypes(sel: HTMLSelectElement, types: number[], ctl: PersistedControls): void {
+  const counts = new Map<number, number>();
+  for (const t of types) counts.set(t, (counts.get(t) ?? 0) + 1);
+  sel.replaceChildren(h("option", { value: "" }, "All types"), ...[...counts].sort((a, b) => a[0] - b[0]).map(([t, n]) => h("option", { value: String(t) }, `${typeName(t)} (${n})`)));
+  ctl.restore();
+}
+
+/** Search text of a finding: dependent name and table, required components, their tables and owning solutions. */
+const findText = (f: Finding): string =>
+  [f.dependent.name, f.dependent.table, f.dependent.rootTable, ...f.required.flatMap((r) => [r.name, r.table, r.solution?.uniqueName, r.solution?.friendlyName])]
+    .filter(Boolean)
+    .join("\n")
+    .toLowerCase();
+
 function renderDiagnosis(): void {
   const list = $("#findings");
   const sum = $("#diag-summary");
   list.replaceChildren();
   sum.replaceChildren();
   $("#diag-actions").hidden = !diagnosis;
+  $("#diag-tools").hidden = !diagnosis?.findings.length;
   for (const id of ["#btn-export-json", "#btn-export-csv"]) $(id).toggleAttribute("disabled", !diagnosis);
   if (!diagnosis) {
     list.append(emptyState("No diagnosis yet", primary() ? "Pick an unmanaged solution and run Diagnose." : "Connect a dev environment in ToolBox, or use the Offline tab."));
     return;
   }
   const d = diagnosis;
+  if (diagTypesOf !== d) {
+    fillTypes($<HTMLSelectElement>("#diag-type"), d.findings.map((f) => f.dependent.type), diagCtl);
+    diagTypesOf = d;
+  }
   const blockers = d.findings.filter((f) => f.status === "blocker");
   const safe = d.findings.length - blockers.length;
   const showSafe = $<HTMLInputElement>("#show-safe").checked;
+  const q = $<HTMLInputElement>("#diag-find").value.trim().toLowerCase();
+  const type = $<HTMLSelectElement>("#diag-type").value;
+  const matching = d.findings.filter((f) => (!type || String(f.dependent.type) === type) && (!q || findText(f).includes(q)));
+  const shown = matching.filter((f) => showSafe || f.status === "blocker");
   sum.append(
     h(
       "div",
@@ -256,25 +335,43 @@ function renderDiagnosis(): void {
       badge(`${blockers.length} blocker${blockers.length === 1 ? "" : "s"}`, blockers.length ? "bad" : "ok"),
       d.target ? badge(`${safe} present in target`, "ok") : h("span", { class: "caption" }, "No target connection: every dependency matching the filter counts."),
       d.errors.length ? badge(`${d.errors.length} lookups failed`, "warn") : null,
+      d.findings.length ? h("span", { class: "count-caption", id: "diag-shown", "aria-live": "polite" }, `${shownOf(shown.length, d.findings.length, "findings")} shown`) : null,
     ),
   );
   for (const w of d.warnings ?? []) sum.append(h("div", { class: "warnings" }, w));
-  if (d.errors.length) sum.append(h("div", { class: "warnings" }, `RetrieveRequiredComponents failed for ${d.errors.length} component(s): ${d.errors.slice(0, 3).map((e) => `${e.component} (${e.error})`).join("; ")}`));
-  const shown = d.findings.filter((f) => showSafe || f.status === "blocker");
+  if (d.errors.length) sum.append(errorList(`RetrieveRequiredComponents failed for ${d.errors.length} component(s)`, d.errors, "diag:errors"));
   if (!shown.length) {
-    list.append(emptyState("No blocking dependencies", d.findings.length ? "Everything found is present in the target. Tick “Show present in target” to see it." : "Nothing in this solution depends on the filtered solutions."));
+    list.append(
+      !d.findings.length
+        ? emptyState("No blocking dependencies", "Nothing in this solution depends on the filtered solutions.")
+        : !matching.length
+          ? filteredEmpty("No findings match", `The search or type filter hides all ${d.findings.length} findings. The diagnosis is kept: clearing shows them again.`, () => {
+              diagCtl.reset();
+              renderDiagnosis();
+            })
+          : filteredEmpty("No blocking dependencies", `Everything ${q || type ? "that matches " : ""}found is present in the target. Tick “Show present in target” to see it.`, () => {
+              const safeBox = $<HTMLInputElement>("#show-safe");
+              safeBox.checked = true;
+              safeBox.dispatchEvent(new Event("change")); // saves the toggle and re-renders
+            }, "Show present in target"),
+    );
   } else list.append(h("ul", { class: "findings" }, ...shown.map(findingCard)));
   renderSelCount();
 }
 
 // ---------- fix ----------
-function diffBlock(before: string, after: string, label: string): HTMLElement {
+/** A closed-by-default fold over one XML diff; `key` keeps it open across re-renders once the user opens it. */
+function diffBlock(before: string, after: string, label: string, what: string, key: string): HTMLElement {
+  const lines = xmlDiff(before, after);
   const pre = h("pre", { class: "diff", "aria-label": label });
-  for (const l of xmlDiff(before, after)) pre.append(h("span", { class: l.t === "-" ? "del" : l.t === "+" ? "add" : l.t === "…" ? "gap" : "ctx" }, l.t === "…" ? "…" : `${l.t} ${l.s}`));
-  return pre;
+  for (const l of lines) pre.append(h("span", { class: l.t === "-" ? "del" : l.t === "+" ? "add" : l.t === "…" ? "gap" : "ctx" }, l.t === "…" ? "…" : `${l.t} ${l.s}`));
+  const del = lines.filter((l) => l.t === "-").length;
+  const add = lines.filter((l) => l.t === "+").length;
+  return keepFold(h("details", { class: "diff-fold" }, h("summary", { class: "chev" }, `Show ${what} diff (−${del} / +${add} lines)`), pre), key);
 }
 
-function opItem(op: Op): HTMLElement {
+/** `scope` ("fix" / "restore") keeps the two tabs' diff folds apart when they show the same form or view. */
+function opItem(op: Op, scope: string): HTMLElement {
   const li = h("li", { class: "op", "data-kind": op.kind }, h("span", { class: "mono" }, opLabel(op)));
   if (op.kind === "remove" || op.kind === "add") li.append(" ", h("span", { class: "why" }, op.reason));
   if (op.kind === "update-form") {
@@ -284,7 +381,7 @@ function opItem(op: Op): HTMLElement {
       e.removed.length ? h("div", { class: "caption" }, `Removes: ${e.removed.join(", ")}`) : null,
       e.kept.length ? h("div", { class: "caption" }, `Kept: ${e.kept.map((k) => `${k.name} (${k.reason})`).join(", ")}`) : null,
       e.warnings.length ? h("div", { class: "warnings" }, e.warnings.join(" ")) : null,
-      diffBlock(e.form.formxml, e.after, `formxml diff ${e.form.name}`),
+      diffBlock(e.form.formxml, e.after, `formxml diff ${e.form.name}`, "form XML", `${scope}:diff:form:${e.form.id}`),
     );
   }
   if (op.kind === "update-view") {
@@ -293,11 +390,17 @@ function opItem(op: Op): HTMLElement {
       li,
       e.removed.length ? h("div", { class: "caption" }, `Removes: ${e.removed.join(", ")}`) : null,
       e.warnings.length ? h("div", { class: "warnings" }, e.warnings.join(" ")) : null,
-      diffBlock(e.view.fetchxml, e.after.fetchxml, `fetchxml diff ${e.view.name}`),
-      diffBlock(e.view.layoutxml, e.after.layoutxml, `layoutxml diff ${e.view.name}`),
+      diffBlock(e.view.fetchxml, e.after.fetchxml, `fetchxml diff ${e.view.name}`, "view FetchXML", `${scope}:diff:fetchxml:${e.view.id}`),
+      diffBlock(e.view.layoutxml, e.after.layoutxml, `layoutxml diff ${e.view.name}`, "view LayoutXML", `${scope}:diff:layoutxml:${e.view.id}`),
     );
   }
   return li;
+}
+
+/** Ops list heading with Expand all / Collapse all for its diff folds when it has at least `minDiffs` of them. */
+function opsHead(id: string, title: string, list: HTMLElement, minDiffs: number): HTMLElement {
+  const n = list.querySelectorAll("details.diff-fold").length;
+  return h("div", { class: "ops-head", id }, h("h3", {}, title), n >= minDiffs ? foldAllButtons(list, "details.diff-fold") : null);
 }
 
 function managedRefused(): boolean {
@@ -330,44 +433,128 @@ function renderFix(): void {
   if (isProd(primary())) banners.append(h("div", { class: "danger-banner" }, `This connection (${primary()!.conn.name}) looks like Production. Dependencies are fixed in dev.`));
   $("#prod-ack-wrap").hidden = !isProd(primary());
 
-  for (const sh of prepared.shells) {
-    const boxes = sh.leaving.map((l) => {
-      const cb = h("input", { type: "checkbox", "aria-label": `Keep ${l.component.name}` }) as HTMLInputElement;
-      cb.checked = l.keep;
-      cb.addEventListener("change", () => {
-        l.keep = cb.checked;
-        ops = buildOps(prepared!);
-        renderOps();
-      });
-      return h("label", { title: l.why }, cb, badge(typeName(l.component.type), "neutral"), h("span", { class: "mono" }, l.component.name ?? l.component.objectId), h("span", { class: "caption" }, l.why));
-    });
-    body.append(
-      h(
-        "div",
-        { class: "card" },
-        h("div", { class: "card-head" }, h("h3", {}, `Shell conversion: ${sh.root.name}`), badge(`${sh.leaving.filter((l) => !l.keep).length} leave`, "warn")),
-        h(
-          "div",
-          { class: "card-body" },
-          h("p", { class: "caption" }, "The table is removed and added back without subcomponents. Every subcomponent below leaves the solution unless ticked to re-add. Other developers may rely on them."),
-          sh.leaving.length ? h("div", { class: "leaving" }, ...boxes) : h("p", { class: "caption" }, "No subcomponent rows."),
-        ),
-      ),
-    );
-  }
+  for (const sh of prepared.shells) body.append(shellCard(sh));
   if (prepared.skipped.length)
     body.append(h("div", { class: "warnings" }, "Not changed: ", prepared.skipped.map((x) => `${x.name} (${x.reason})`).join("; ")));
   body.append(h("div", { id: "ops-wrap" }));
   renderOps();
 }
 
+/**
+ * One shell conversion: its subcomponents, ticked = re-added (kept), unticked = leaves the solution.
+ * Search, type and "Only leaving" decide which rows show; they never change a hidden row's tick.
+ * Rows are re-filtered when a filter changes, not when a tick changes, so a row just ticked stays in view.
+ */
+function shellCard(sh: ShellPlan): HTMLElement {
+  const total = sh.leaving.length;
+  let v = shellViews.get(sh.root.id);
+  if (!v) shellViews.set(sh.root.id, (v = { q: "", type: "", only: total > ONLY_LEAVING_OVER }));
+  const view = v;
+  const leaveBadge = badge("", "warn");
+  const syncBadge = () => (leaveBadge.textContent = `${sh.leaving.filter((l) => !l.keep).length} leave`);
+  syncBadge();
+  const changed = () => {
+    syncBadge();
+    ops = buildOps(prepared!);
+    renderOps();
+  };
+  const rows = sh.leaving.map((l) => {
+    const cb = h("input", { type: "checkbox", "aria-label": `Keep ${l.component.name}` }) as HTMLInputElement;
+    cb.checked = l.keep;
+    cb.addEventListener("change", () => {
+      l.keep = cb.checked;
+      changed();
+    });
+    const name = l.component.name ?? l.component.objectId;
+    const el = h("label", { title: l.why, "data-type": String(l.component.type) }, cb, badge(typeName(l.component.type), "neutral"), h("span", { class: "mono" }, name), h("span", { class: "caption" }, l.why));
+    return { l, cb, el, name: `${name} ${l.component.objectId}`.toLowerCase() };
+  });
+  const head = h("div", { class: "card-head" }, h("h3", {}, `Shell conversion: ${sh.root.name}`), leaveBadge);
+  const intro = h("p", { class: "caption" }, "The table is removed and added back without subcomponents. Every subcomponent below leaves the solution unless ticked to re-add. Other developers may rely on them.");
+  if (!total) return h("div", { class: "card shell-card" }, head, h("div", { class: "card-body" }, intro, h("p", { class: "caption" }, "No subcomponent rows.")));
+
+  const search = h("input", { type: "text", class: "shell-search", placeholder: "Search name", "aria-label": `Search subcomponents of ${sh.root.name}` }) as HTMLInputElement;
+  search.value = view.q;
+  const types = [...new Set(sh.leaving.map((l) => l.component.type))].sort((a, b) => a - b);
+  const typeSel = h(
+    "select",
+    { class: "shell-type", "aria-label": `Subcomponent type of ${sh.root.name}` },
+    h("option", { value: "" }, "All types"),
+    ...types.map((t) => h("option", { value: String(t) }, `${typeName(t)} (${sh.leaving.filter((l) => l.component.type === t).length})`)),
+  ) as HTMLSelectElement;
+  typeSel.value = types.some((t) => String(t) === view.type) ? view.type : "";
+  const only = h("input", { type: "checkbox", class: "shell-only" }) as HTMLInputElement;
+  only.checked = view.only;
+  const caption = h("span", { class: "count-caption shell-count", "aria-live": "polite" });
+  const bulk = (label: string, keep: boolean, title: string) => {
+    const b = h("button", { class: "btn btn-ghost btn-sm", type: "button", title }, label);
+    b.addEventListener("click", () => {
+      let n = 0;
+      for (const r of rows)
+        if (!r.el.hidden && r.l.keep !== keep) {
+          r.l.keep = r.cb.checked = keep;
+          n++;
+        }
+      if (n) changed();
+    });
+    return b;
+  };
+  const keepAll = bulk("Keep all shown", true, "Tick every subcomponent shown: each is added back to the solution");
+  const dropAll = bulk("Drop all shown", false, "Untick every subcomponent shown: each leaves the solution");
+  const grid = h("div", { class: "leaving" }, ...rows.map((r) => r.el));
+  const empty = filteredEmpty("No subcomponents match", "The search, type or “Only leaving” hide every subcomponent of this table.", () => {
+    view.q = search.value = "";
+    view.type = typeSel.value = "";
+    view.only = only.checked = false;
+    apply();
+  });
+  const apply = () => {
+    const q = view.q.trim().toLowerCase();
+    let shown = 0;
+    for (const r of rows) {
+      const show = (!view.only || !r.l.keep) && (!view.type || String(r.l.component.type) === view.type) && (!q || r.name.includes(q));
+      r.el.hidden = !show;
+      if (show) shown++;
+    }
+    caption.textContent = `${shownOf(shown, total, "subcomponents")} shown`;
+    grid.hidden = !shown;
+    empty.hidden = !!shown;
+    keepAll.disabled = dropAll.disabled = !shown;
+  };
+  search.addEventListener("input", () => {
+    view.q = search.value;
+    apply();
+  });
+  typeSel.addEventListener("change", () => {
+    view.type = typeSel.value;
+    apply();
+  });
+  only.addEventListener("change", () => {
+    view.only = only.checked;
+    apply();
+  });
+  apply();
+  return h(
+    "div",
+    { class: "card shell-card", "data-root": sh.root.id },
+    head,
+    h(
+      "div",
+      { class: "card-body" },
+      intro,
+      h("div", { class: "leaving-tools" }, search, typeSel, h("label", { class: "check", title: "Show only the unticked subcomponents, the ones that leave the solution" }, only, " Only leaving"), caption, h("span", { class: "spacer" }), keepAll, dropAll),
+      grid,
+      empty,
+    ),
+  );
+}
+
 function renderOps(): void {
   const wrap = document.getElementById("ops-wrap");
   if (!wrap) return;
-  wrap.replaceChildren(
-    h("h3", {}, `${ops.length} operation${ops.length === 1 ? "" : "s"} on ${diagnosis?.solution.uniqueName ?? ""}`),
-    ops.length ? h("ol", { class: "ops", id: "ops" }, ...ops.map(opItem)) : emptyState("No operations", "The selected fixes change nothing."),
-  );
+  const title = `${ops.length} operation${ops.length === 1 ? "" : "s"} on ${diagnosis?.solution.uniqueName ?? ""}`;
+  const list = h("ol", { class: "ops", id: "ops" }, ...ops.map((op) => opItem(op, "fix")));
+  wrap.replaceChildren(opsHead("ops-head", title, list, 1), ops.length ? list : emptyState("No operations", "The selected fixes change nothing."));
   updateConfirm();
 }
 
@@ -526,7 +713,12 @@ function renderRestore(error?: string): void {
   if (!restore.plan) return;
   for (const n of restore.plan.notes) body.append(h("div", { class: "warnings" }, n));
   if (isProd(primary())) body.append(h("div", { class: "danger-banner" }, `This connection (${primary()!.conn.name}) looks like Production.`));
-  body.append(restore.plan.ops.length ? h("ol", { class: "ops", id: "restore-ops" }, ...restore.plan.ops.map(opItem)) : emptyState("Nothing to restore", "The environment already matches the backup."));
+  if (!restore.plan.ops.length) {
+    body.append(emptyState("Nothing to restore", "The environment already matches the backup."));
+    return;
+  }
+  const list = h("ol", { class: "ops", id: "restore-ops" }, ...restore.plan.ops.map((op) => opItem(op, "restore")));
+  body.append(opsHead("restore-ops-head", `${restore.plan.ops.length} operation${restore.plan.ops.length === 1 ? "" : "s"} to restore`, list, 2), list);
 }
 
 async function applyRestore(): Promise<void> {
@@ -567,29 +759,77 @@ async function applyRestore(): Promise<void> {
 
 // ---------- offline ----------
 async function openZip(name: string, data: Uint8Array): Promise<void> {
-  const out = $("#offline-body");
   try {
-    renderOffline(await readSolutionZip(name, data, filter(), targetSolutions));
+    offline = await readSolutionZip(name, data, filter(), targetSolutions);
+    renderOffline();
   } catch (e) {
-    out.replaceChildren(h("div", { class: "danger-banner" }, (e as Error).message));
+    offline = null;
+    renderOffline((e as Error).message);
   }
 }
 
-function renderOffline(r: OfflineResult): void {
+const offlineText = (g: OfflineGroup): string =>
+  [refName(g.dependent), g.dependent.parentSchemaName, ...g.required.flatMap((x) => [refName(x), x.parentSchemaName, x.solution])]
+    .filter(Boolean)
+    .join("\n")
+    .toLowerCase();
+
+function renderOffline(error?: string): void {
+  const head = $("#offline-head");
+  const out = $("#offline-list");
+  head.replaceChildren();
+  out.replaceChildren();
+  $("#off-tools").hidden = !offline?.groups.length;
+  if (error) head.append(h("div", { class: "danger-banner" }, error));
+  if (!offline) return;
+  const r = offline;
+  if (offlineTypesOf !== r) {
+    fillTypes($<HTMLSelectElement>("#off-type"), r.groups.map((g) => g.dependent.type), offCtl);
+    offlineTypesOf = r;
+  }
   const blockers = r.groups.filter((g) => g.status === "blocker").length;
+  const q = $<HTMLInputElement>("#off-find").value.trim().toLowerCase();
+  const type = $<HTMLSelectElement>("#off-type").value;
+  const showSafe = $<HTMLInputElement>("#off-show-safe").checked;
+  const matching = r.groups.filter((g) => (!type || String(g.dependent.type) === type) && (!q || offlineText(g).includes(q)));
+  const shown = matching.filter((g) => showSafe || g.status === "blocker");
   const refLabel = (x: { typeName: string; schemaName: string | null; displayName: string | null; id: string | null; parentSchemaName: string | null }) =>
     `${x.typeName} ${refName(x as Parameters<typeof refName>[0])}${x.parentSchemaName ? ` (${x.parentSchemaName})` : ""}`;
-  const cards: Child[] = r.groups.map((g) =>
+  const cards: Child[] = shown.map((g) =>
     h(
       "li",
-      { class: `finding${g.status === "safe" ? " is-safe" : ""}` },
+      { class: `finding${g.status === "safe" ? " is-safe" : ""}`, "data-key": g.key },
       h("div", { class: "head" }, badge(g.dependent.typeName, "neutral"), h("span", { class: "name mono" }, refName(g.dependent)), g.dependent.parentSchemaName ? h("span", { class: "caption" }, g.dependent.parentSchemaName) : null, badge(g.status === "blocker" ? "blocker" : "present in target", g.status === "blocker" ? "bad" : "ok")),
       h("div", { class: "chips" }, ...g.required.map((x) => h("span", { class: `req${x.safe ? " is-safe" : ""}` }, h("span", { class: "sol" }, x.solution ?? "unknown solution"), refLabel(x)))),
     ),
   );
-  $("#offline-body").replaceChildren(
-    h("div", { class: "summary", id: "offline-summary" }, h("strong", {}, `${r.uniqueName} ${r.version}`), r.managed ? badge("managed", "neutral") : badge("unmanaged", "neutral"), `${r.total} missing dependencies in solution.xml ·`, badge(`${r.groups.length} dependents in scope`, "neutral"), badge(`${blockers} blocking`, blockers ? "bad" : "ok")),
-    r.groups.length ? h("ul", { class: "findings" }, ...cards) : emptyState("No missing dependencies in scope", `Filter: ${filter().join(", ")}`),
+  head.append(
+    h(
+      "div",
+      { class: "summary", id: "offline-summary" },
+      h("strong", {}, `${r.uniqueName} ${r.version}`),
+      r.managed ? badge("managed", "neutral") : badge("unmanaged", "neutral"),
+      `${r.total} missing dependencies in solution.xml ·`,
+      badge(`${r.groups.length} dependents in scope`, "neutral"),
+      badge(`${blockers} blocking`, blockers ? "bad" : "ok"),
+      r.groups.length ? h("span", { class: "count-caption", id: "offline-shown", "aria-live": "polite" }, `${shownOf(shown.length, r.groups.length, "dependents")} shown`) : null,
+    ),
+  );
+  out.append(
+    shown.length
+      ? h("ul", { class: "findings" }, ...cards)
+      : !r.groups.length
+        ? emptyState("No missing dependencies in scope", `Filter: ${filter().join(", ")}`)
+        : !matching.length
+          ? filteredEmpty("No dependents match", `The search or type filter hides all ${r.groups.length} dependents.`, () => {
+              offCtl.reset();
+              renderOffline();
+            })
+          : filteredEmpty("No blocking dependencies", `Every dependent ${q || type ? "that matches " : ""}is present in the target. Tick “Show present in target” to see it.`, () => {
+              const safeBox = $<HTMLInputElement>("#off-show-safe");
+              safeBox.checked = true;
+              safeBox.dispatchEvent(new Event("change")); // saves the toggle and re-renders
+            }, "Show present in target"),
   );
 }
 
@@ -618,12 +858,23 @@ async function exportFile(name: string, content: string, mime: string): Promise<
 }
 
 function wire(): void {
-  wireTabs(() => undefined);
+  persistControls("dependency-cleaner", ["show-safe", "ub-scan", "off-show-safe"]);
+  diagCtl = persistControls("dependency-cleaner", ["diag-find", "diag-type"]);
+  offCtl = persistControls("dependency-cleaner", ["off-find", "off-type"]);
+  // Findings JSON / CSV export the Diagnose result only: shown on that tab alone
+  wireTabs((tab) => {
+    for (const id of ["#btn-export-json", "#btn-export-csv"]) $(id).hidden = tab !== "diagnose";
+  });
   $("#btn-run").addEventListener("click", () => void runDiagnosis());
   $("#btn-cancel").addEventListener("click", () => {
     cancelFlag = true;
   });
   $("#show-safe").addEventListener("change", renderDiagnosis);
+  $("#diag-find").addEventListener("input", renderDiagnosis);
+  $("#diag-type").addEventListener("change", renderDiagnosis);
+  $("#off-find").addEventListener("input", () => renderOffline());
+  $("#off-type").addEventListener("change", () => renderOffline());
+  $("#off-show-safe").addEventListener("change", () => renderOffline());
   $("#btn-to-fix").addEventListener("click", () => void toFix());
   $("#btn-backup").addEventListener("click", () => void downloadBackup());
   $("#prod-ack").addEventListener("change", updateConfirm);

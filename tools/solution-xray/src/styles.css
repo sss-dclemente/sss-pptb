@@ -1,5 +1,12 @@
 @import "../../_shared/tokens.css";
 
+.toolbar input[type="search"] {
+  font: inherit; font-size: var(--fs-caption); color: var(--fg-primary);
+  background: var(--bg-card); border: 1px solid var(--border-color); border-radius: var(--radius-sm);
+  padding: var(--s-1) var(--s-2); min-width: 180px;
+}
+.toolbar input[type="search"]:focus-visible { outline: none; box-shadow: var(--shadow-teal); }
+
 /* Solution list */
 .solution-list { list-style: none; display: flex; flex-direction: column; gap: var(--s-2); }
 .solution-list li {
@@ -25,16 +32,27 @@
 .factor .pts { font-weight: var(--fw-black); color: var(--fg-primary); }
 .factor .evidence { grid-column: 1 / -1; }
 .factor .advice { grid-column: 1 / -1; }
+.evidence .evidence-more { padding-block: 0; } /* as tall as the chips it follows */
 
 /* Order */
 .order-list { list-style: none; display: flex; flex-direction: column; gap: var(--s-2); counter-reset: step; }
 .order-list li { display: flex; gap: var(--s-3); align-items: baseline; padding: var(--s-2) var(--s-3); background: var(--bg-card); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); }
 .order-list li::before { counter-increment: step; content: counter(step); font-weight: var(--fw-black); color: var(--accent); min-width: 1.5em; }
 .order-list .name { font-weight: var(--fw-bold); color: var(--fg-primary); }
+.reasons .reasons-more { padding-block: 0; } /* inline with the reason text */
 
 .diff-added td:first-child { border-left: 3px solid var(--status-ok-fg); }
 .diff-removed td:first-child { border-left: 3px solid var(--status-bad-fg); }
 .diff-changed td:first-child { border-left: 3px solid var(--status-warn-fg); }
+.diff-fields .field { color: var(--fg-muted); }
+
+/* Inventory: a table row's "N columns" fold */
+.row-detail { display: flex; flex-direction: column; gap: var(--s-1); }
+.cols > summary { cursor: pointer; width: max-content; }
+.cols-list { list-style: none; display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 2px var(--s-3); margin-top: var(--s-1); padding-left: var(--s-4); }
+.cols-list li { display: flex; gap: var(--s-2); align-items: baseline; min-width: 0; }
+.cols-list .mono { overflow-wrap: anywhere; }
+.cols-list li.is-match .mono { color: var(--accent); font-weight: var(--fw-bold); }
 
 @media (max-width: 760px) {
   .shell { grid-template-columns: 1fr; grid-template-rows: auto 1fr; }

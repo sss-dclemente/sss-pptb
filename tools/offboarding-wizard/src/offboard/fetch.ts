@@ -362,6 +362,18 @@ async function ownedQueues(api: DataverseLike, leaverId: string): Promise<Invent
   }));
 }
 
+/** Category-wide caveats: said once in the card caption (CategorySpec.note), "see note" on each row. */
+const NOTE_QUEUE_MEMBER = "membership is not changed by this tool in v1";
+const NOTE_CONNREF =
+  "the underlying connection stays with the leaver and must be re-authenticated by the successor. The Power Apps portal cannot transfer a connection reference at all, so this is the only supported route";
+const NOTE_CONNECTION = "changing the owner does not re-authenticate it: the successor still has to sign in before any flow using it will run";
+
+/** "/providers/Microsoft.PowerApps/apis/shared_sharepointonline" → "sharepointonline connector"; undefined when there is no id. */
+const connectorLabel = (connectorId: string | null): string | undefined => {
+  const last = connectorId?.split("/").filter(Boolean).pop()?.replace(/^shared_/, "");
+  return last ? `${last} connector` : undefined;
+};
+
 async function queueMemberships(api: DataverseLike, leaverId: string): Promise<InventoryItem[]> {
   const r = await api.queryData(`systemusers?$select=systemuserid&$filter=systemuserid eq ${leaverId}&$expand=queuemembership_association($select=queueid,name)`);
   return ((r.value[0]?.queuemembership_association as Row[] | undefined) ?? []).map((q) => ({
@@ -369,26 +381,30 @@ async function queueMemberships(api: DataverseLike, leaverId: string): Promise<I
     id: id(q.queueid),
     label: s(q.name) ?? id(q.queueid),
     meta: "member",
-    flag: "membership is not changed by this tool in v1",
+    flag: NOTE_QUEUE_MEMBER,
   }));
 }
 
 async function teamMemberships(api: DataverseLike, leaverId: string): Promise<InventoryItem[]> {
-  const r = await api.queryData(`systemusers?$select=systemuserid&$filter=systemuserid eq ${leaverId}&$expand=teammembership_association($select=teamid,name,teamtype,_businessunitid_value)`);
+  const r = await api.queryData(`systemusers?$select=systemuserid&$filter=systemuserid eq ${leaverId}&$expand=teammembership_association($select=teamid,name,teamtype,isdefault,_businessunitid_value)`);
   return ((r.value[0]?.teammembership_association as Row[] | undefined) ?? []).map((t) => {
     const type = num(t.teamtype) ?? 0;
+    // Every user is a member of their business unit's default team, and Dataverse refuses to remove
+    // them from it: membership follows the user's business unit. Listed, never planned (plan.ts).
+    const isDefault = t.isdefault === true;
     return {
       entity: "team",
       id: id(t.teamid),
       label: s(t.name) ?? id(t.teamid),
-      meta: type === 0 ? "owner team" : type === 1 ? "access team" : type === 2 ? "Entra security group team" : "Entra office group team",
-      flag:
-        type === 0
+      meta: isDefault ? "business unit default team" : type === 0 ? "owner team" : type === 1 ? "access team" : type === 2 ? "Entra security group team" : "Entra office group team",
+      flag: isDefault
+        ? "business unit default team — membership managed by Dataverse"
+        : type === 0
           ? "owner team: records owned by the team stay with the team"
           : type >= 2
             ? "membership comes from Entra and cannot be changed here"
             : null,
-      data: { teamtype: type },
+      data: { teamtype: type, isDefault },
     };
   });
 }
@@ -429,7 +445,8 @@ async function connectionReferences(api: DataverseLike, leaverId: string): Promi
     id: id(c.connectionreferenceid),
     label: s(c.connectionreferencedisplayname) ?? s(c.connectionreferencelogicalname) ?? id(c.connectionreferenceid),
     meta: s(c.connectorid) ?? "",
-    flag: "the underlying connection stays with the leaver and must be re-authenticated by the successor. The Power Apps portal cannot transfer a connection reference at all, so this is the only supported route",
+    metaLabel: connectorLabel(s(c.connectorid)),
+    flag: NOTE_CONNREF,
   }));
 }
 
@@ -445,7 +462,7 @@ async function connections(api: DataverseLike, leaverId: string): Promise<Invent
     id: id(c.connectionid),
     label: s(c.name) ?? id(c.connectionid),
     meta: "connection",
-    flag: "changing the owner does not re-authenticate it: the successor still has to sign in before any flow using it will run",
+    flag: NOTE_CONNECTION,
   }));
 }
 
@@ -479,32 +496,44 @@ interface CategorySpec {
   key: CategoryKey;
   label: string;
   hint: string;
+  /** Entity set or relationship read, for the header tooltip. */
+  source: string;
+  note?: string;
   writable: boolean;
   load: (api: DataverseLike, leaverId: string) => Promise<InventoryItem[]>;
 }
 
 const SPECS: CategorySpec[] = [
-  { key: "workflows", label: "Flows & classic processes", hint: "workflows owned by the leaver", writable: true, load: workflows },
-  { key: "userqueries", label: "Personal views", hint: "userqueries", writable: true, load: userQueries },
-  { key: "usercharts", label: "Personal charts", hint: "userqueryvisualizations", writable: true, load: userCharts },
-  { key: "queues", label: "Queues owned", hint: "queues owned by the leaver", writable: true, load: ownedQueues },
-  { key: "queuemembership", label: "Queue memberships", hint: "queues the leaver is a member of", writable: false, load: queueMemberships },
-  { key: "teams", label: "Team memberships", hint: "teammembership_association", writable: true, load: teamMemberships },
-  { key: "roles", label: "Security roles", hint: "systemuserroles_association", writable: true, load: securityRoles },
-  { key: "fieldprofiles", label: "Field security profiles", hint: "systemuserprofiles_association", writable: true, load: fieldProfiles },
-  { key: "connectionreferences", label: "Connection references", hint: "connectionreferences owned by the leaver", writable: true, load: connectionReferences },
-  { key: "connections", label: "Connections", hint: "connections owned by the leaver", writable: true, load: connections },
-  { key: "directreports", label: "Direct reports", hint: "users whose manager is the leaver", writable: true, load: directReports },
+  { key: "workflows", label: "Flows & classic processes", hint: "workflows owned by the leaver", source: "workflows", writable: true, load: workflows },
+  { key: "userqueries", label: "Personal views", hint: "saved views owned by the leaver", source: "userqueries", writable: true, load: userQueries },
+  { key: "usercharts", label: "Personal charts", hint: "saved charts owned by the leaver", source: "userqueryvisualizations", writable: true, load: userCharts },
+  { key: "queues", label: "Queues owned", hint: "queues owned by the leaver", source: "queues", writable: true, load: ownedQueues },
+  { key: "queuemembership", label: "Queue memberships", hint: "queues the leaver is a member of", source: "queuemembership_association", note: NOTE_QUEUE_MEMBER, writable: false, load: queueMemberships },
+  { key: "teams", label: "Team memberships", hint: "teams the leaver is a member of", source: "teammembership_association", writable: true, load: teamMemberships },
+  { key: "roles", label: "Security roles", hint: "roles assigned directly to the leaver", source: "systemuserroles_association", writable: true, load: securityRoles },
+  { key: "fieldprofiles", label: "Field security profiles", hint: "profiles assigned directly to the leaver", source: "systemuserprofiles_association", writable: true, load: fieldProfiles },
+  { key: "connectionreferences", label: "Connection references", hint: "connection references owned by the leaver", source: "connectionreferences", note: NOTE_CONNREF, writable: true, load: connectionReferences },
+  { key: "connections", label: "Connections", hint: "connections owned by the leaver", source: "connections", note: NOTE_CONNECTION, writable: true, load: connections },
+  { key: "directreports", label: "Direct reports", hint: "users whose manager is the leaver", source: "systemusers (parentsystemuserid)", writable: true, load: directReports },
 ];
+
+const head = (spec: CategorySpec): Omit<CategoryResult, "items" | "error"> => ({
+  key: spec.key,
+  label: spec.label,
+  hint: spec.hint,
+  source: spec.source,
+  note: spec.note,
+  writable: spec.writable,
+});
 
 /** Every non-record category, in parallel. A failing category yields an error row, never a rejection. */
 export async function fetchCategories(api: DataverseLike, leaverId: string): Promise<CategoryResult[]> {
   return Promise.all(
     SPECS.map(async (spec) => {
       try {
-        return { key: spec.key, label: spec.label, hint: spec.hint, writable: spec.writable, items: await spec.load(api, leaverId), error: null };
+        return { ...head(spec), items: await spec.load(api, leaverId), error: null };
       } catch (e) {
-        return { key: spec.key, label: spec.label, hint: spec.hint, writable: spec.writable, items: [], error: err(e) };
+        return { ...head(spec), items: [], error: err(e) };
       }
     }),
   );

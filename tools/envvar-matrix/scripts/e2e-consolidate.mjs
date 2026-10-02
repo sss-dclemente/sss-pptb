@@ -138,6 +138,13 @@ const MOCK = `
 `;
 
 const { page, assert, finish } = await launchPage(import.meta.url, { initScript: MOCK });
+// consolidate cards fold (details.card): title in h3, count in the summary's last badge → "title · count"
+const cardTitles = () => page.$$eval(".cons-groups .card", (els) => els.map((e) => e.querySelector("h3").textContent + (e.querySelector("summary .count > .badge:last-child") ? " · " + e.querySelector("summary .count > .badge:last-child").textContent : "")));
+const consCard = (title) => page.locator(".cons-groups .card", { has: page.locator("h3", { hasText: new RegExp(`^${title}$`) }) });
+const isOpen = (loc) => loc.evaluate((d) => d.open);
+async function openFold(loc) {
+  if (!(await isOpen(loc))) await loc.locator("summary").click();
+}
 await page.goto("file://" + TOOL + "/dist/index.html");
 await page.waitForFunction(() => document.querySelector("#columns").textContent.includes("SSS Dev"));
 
@@ -148,11 +155,34 @@ await page.waitForSelector(".cons-groups");
 const text = await page.textContent("#matrix-body");
 assert(text.includes("8 cloud flows scanned"), "flows scanned");
 assert(text.includes("1 flow with unreadable clientdata"), "broken clientdata counted");
-const cards = await page.$$eval(".cons-groups .card", (els) => els.map((e) => e.querySelector("h3").textContent).filter((t) => !/^(Unused|Solution|Flows that are off)/.test(t)));
+const cards = (await cardTitles()).filter((t) => !/^(Unused|Solution|Flows that are off)/.test(t));
 assert(cards.length === 2 && cards.some((c) => c.startsWith("shared_office365 · 4")) && cards.some((c) => c.startsWith("shared_commondataserviceforapps · 2")), "groups per connector, sql singleton excluded: " + cards.join(" | "));
 {
   const unusedCard = await page.textContent('.cons-groups .card:has(h3:text-matches("^Unused"))');
-  assert(unusedCard.includes("Unused connection references · 3") && unusedCard.includes("sss_unused") && unusedCard.includes("sss_canvas") && unusedCard.includes("sss_dv_1"), "unused references listed: " + unusedCard.slice(0, 80));
+  assert((await cardTitles()).includes("Unused connection references · 3") && unusedCard.includes("sss_unused") && unusedCard.includes("sss_canvas") && unusedCard.includes("sss_dv_1"), "unused references listed: " + unusedCard.slice(0, 80));
+}
+
+// ---- E6: cards fold; open where there is something to act on; expand / collapse all; state kept across re-renders ----
+{
+  const o365Card = consCard("shared_office365");
+  const dvCard = consCard("shared_commondataserviceforapps");
+  assert((await page.$$eval(".cons-groups details.card", (els) => els.length)) === 4, "connector groups, Unused and Flows that are off are folds");
+  assert(await isOpen(o365Card), "group with an unbound reference open");
+  assert((await o365Card.locator("summary").textContent()).includes("1 unbound"), "unbound count in the group header");
+  assert(!(await isOpen(dvCard)), "group with nothing selected and nothing unbound closed");
+  assert((await isOpen(consCard("Unused connection references"))) && (await isOpen(consCard("Flows that are off"))), "Unused and Flows that are off open");
+  const head = page.locator(".cons-head");
+  await head.getByRole("button", { name: "Collapse all" }).click();
+  assert((await page.$$eval(".cons-groups details.card", (els) => els.filter((d) => d.open).length)) === 0, "Collapse all closes every card");
+  await head.getByRole("button", { name: "Expand all" }).click();
+  assert((await page.$$eval(".cons-groups details.card", (els) => els.filter((d) => !d.open).length)) === 0, "Expand all opens every card");
+  // a user's fold survives a re-render (text filter typed and cleared)
+  await dvCard.locator("summary").click();
+  assert(!(await isOpen(dvCard)), "group folded by the user");
+  await page.fill("#filter-text", "sss");
+  await page.fill("#filter-text", "");
+  await page.waitForFunction(() => document.querySelectorAll(".cons-groups details.card").length === 4);
+  assert(!(await isOpen(dvCard)) && (await isOpen(o365Card)), "folds kept across a re-render");
 }
 
 // solution fit: Sol A holds f1, f2, f8 and only reference r1 (sss_o365_a)
@@ -163,6 +193,9 @@ await page.waitForSelector("#btn-fit-add", { timeout: 10000 });
   assert(fit.includes("Solution check · Sol A") && fit.includes("sss_sql") && fit.includes("sss_o365_b") && !fit.includes("sss_o365_c"), "fit: references used by the solution's flows but not in it");
   assert(fit.includes("sss_ghost") && fit.includes("does not exist"), "fit: flow naming a missing reference flagged");
   assert((await page.textContent("#btn-fit-add")).includes("Add 2"), "fit: add only existing references");
+  // E10c: the solution filter scopes Flows that are off to the solution's flows (Sol A: f1, f2 on; f8 Flow Ghost off)
+  const off = await consCard("Flows that are off").textContent();
+  assert((await cardTitles()).includes("Flows that are off · 1") && off.includes("Flow Ghost") && !off.includes("Flow DV") && !off.includes("Flow Broken"), "solution filter scopes Flows that are off: " + off.slice(0, 120));
 }
 await page.click("#btn-fit-add");
 await page.waitForSelector("dialog[open]");
@@ -179,7 +212,8 @@ await page.selectOption("#filter-solution", "");
 await page.waitForFunction(() => document.querySelectorAll(".cons-groups .card").length >= 3);
 await page.evaluate(() => { window.__mock.writes = []; });
 
-const o365 = page.locator(".cons-groups .card", { hasText: "shared_office365 ·" });
+const o365 = consCard("shared_office365");
+await openFold(o365);
 const keep = await o365.locator("tr.keep td.name .mono").textContent();
 assert(keep === "sss_o365_a", "suggested target: bound + most used (" + keep + ")");
 
@@ -221,12 +255,16 @@ assert(refsOf("f1").includes("sss_sql"), "other connector untouched");
 const dels = writes.filter((w) => w.op === "delete").map((w) => w.id).sort();
 assert(dels.join() === "r2,r3", "unmanaged sources deleted, managed kept (" + dels.join() + ")");
 await page.click("#dlg-cancel");
-await page.waitForFunction(() => document.querySelectorAll(".cons-groups .card").length === 4, null, { timeout: 10000 });
-assert((await page.$eval(".cons-groups", (e) => e.textContent)).includes("sss_o365_m"), "managed ref still listed after merge");
+// wait for the post-merge re-render itself: a check on the old DOM can pass just before the view is rebuilt
+const managedListed = await page
+  .waitForFunction(() => document.querySelectorAll(".cons-groups .card").length === 4 && (document.querySelector(".cons-groups")?.textContent ?? "").includes("sss_o365_m"), null, { timeout: 10000 })
+  .then(() => true, () => false);
+assert(managedListed, "managed ref still listed after merge");
 
 // dependency blocks delete; activation failure reported as left off
 await page.evaluate(() => { window.__mock.failActivate = 'f5'; window.__mock.writes = []; });
-const dv = page.locator(".cons-groups .card", { hasText: "shared_commondataserviceforapps" });
+const dv = consCard("shared_commondataserviceforapps");
+await openFold(dv);
 const dvKeep = await dv.locator("tr.keep td.name .mono").textContent();
 assert(dvKeep === "sss_dv_2", "dv: used reference suggested");
 await dv.getByRole("button", { name: "Merge all into kept" }).click();
@@ -318,6 +356,11 @@ await page.waitForSelector("dialog[open]");
   assert(pv.includes("connector differs"), "bind preview: connector mismatch invalid");
   assert(pv.includes("source has no connection id"), "bind preview: empty id skipped");
   assert(pv.includes("Settings file"), "bind preview: settings-file note");
+  // E10a: Hide skipped (n) offered, off for a short plan; hiding changes neither the counts nor what is written
+  assert((await page.isVisible("#hide-skipped")) && !(await page.isChecked("#hide-skipped")) && pv.includes("Hide skipped (2)") && pv.includes("2 skipped"), "bind preview: Hide skipped (2), off for 4 rows");
+  await page.check("#hide-skipped");
+  const shown = await page.$$eval("#dlg-body tbody tr", (trs) => trs.filter((tr) => !tr.hidden).map((tr) => tr.children[1].textContent));
+  assert(shown.join() === "update,invalid" && (await page.textContent("#dlg-body p.caption")).includes("1 binding from") && (await page.textContent("#dlg-ok")) === "Bind 1", "bind preview: skipped rows hidden, invalid kept, counts unchanged: " + shown.join());
 }
 await page.screenshot({ path: resolve(TOOL, "scripts/.e2e-out/12-bind-preview.png") });
 await page.click("#dlg-ok");
@@ -416,13 +459,23 @@ await page.evaluate(() => { window.__mock.writes = []; window.__mock.failActivat
 await page.click("#btn-consolidate");
 await page.waitForFunction(() => [...document.querySelectorAll(".cons-groups .card h3")].some((h) => h.textContent.startsWith("Flows that are off")), null, { timeout: 10000 });
 {
-  const card = page.locator(".cons-groups .card", { hasText: "Flows that are off" });
+  const card = consCard("Flows that are off");
   const t = await card.textContent();
-  assert(t.includes("Flows that are off · 4"), "off flows listed: " + t.slice(0, 40));
+  assert((await cardTitles()).includes("Flows that are off · 4") && (await isOpen(card)), "off flows listed, card open: " + t.slice(0, 40));
   assert(/Flow DV.*ready/.test(t) && /Flow Odd Key.*ready/.test(t), "flows with every reference bound are ready");
   assert(/Flow Ghost.*blocked.*missing reference.*sss_ghost/.test(t), "flow naming a missing reference is blocked");
   assert(/Flow Broken.*blocked.*clientdata does not parse/.test(t), "flow with unreadable clientdata is blocked");
   assert(await card.getByLabel("Turn on Flow Ghost").isDisabled(), "blocked flow cannot be selected");
+  // E10c: Only ready (off by default) hides the blocked flows; the count says so
+  assert(!(await card.getByLabel("Only ready").isChecked()), "Only ready off by default");
+  await card.getByLabel("Only ready").check();
+  {
+    const t2 = await card.textContent();
+    assert((await cardTitles()).includes("Flows that are off · 2 of 4") && t2.includes("Flow DV") && t2.includes("Flow Odd Key") && !t2.includes("Flow Ghost") && !t2.includes("Flow Broken"), "Only ready: blocked flows hidden, '2 of 4'");
+    assert(await card.getByLabel("Only ready").evaluate((e) => document.activeElement === e), "focus kept on Only ready after the re-render");
+  }
+  await card.getByLabel("Only ready").uncheck();
+  assert((await cardTitles()).includes("Flows that are off · 4"), "Only ready off: all 4 again");
   await card.getByRole("button", { name: "Select all ready" }).click();
 }
 await page.click("#btn-turnon-preview");
@@ -441,7 +494,7 @@ await page.waitForFunction(() => document.querySelector("#dlg-title").textConten
   assert(r.includes("Flow Odd Key") && r.includes("connection not bound"), "turn-on failure reported per flow");
 }
 await page.click("#dlg-cancel");
-await page.waitForFunction(() => (document.querySelector(".cons-groups")?.textContent || "").includes("Flows that are off · 3"), null, { timeout: 10000 });
+await page.waitForFunction(() => [...document.querySelectorAll(".cons-groups details.card")].some((d) => d.querySelector("h3").textContent === "Flows that are off" && d.querySelector("summary .count > .badge:last-child").textContent === "3"), null, { timeout: 10000 });
 assert(true, "turned-on flow leaves the off list; the failed one stays");
 
 // ---- bind backups, restore bindings, run log ----
@@ -510,6 +563,25 @@ if (await page.$eval("dialog", (d) => d.open)) await page.click("#dlg-cancel");
   for (const a of ["bind", "restart flow", "merge: update flow", "cleanup: delete reference", "add to solution", "turn on flow", "restore binding", "restore: flow clientdata"])
     assert(body.includes(a), "run log has '" + a + "'");
   assert(/failed/.test(body), "failed writes are logged too");
+  // E10b: action / environment selects and Only failures
+  const logRows = () => page.$$eval("#dlg-body tbody tr", (trs) => trs.map((tr) => [tr.children[1].textContent, tr.children[2].textContent, tr.children[5].textContent]));
+  const capt = () => page.textContent("#dlg-body p.caption");
+  assert((await logRows()).length === n && (await capt()).startsWith(`${n} writes`), "run log: every entry listed unfiltered");
+  await page.selectOption("#runlog-action", "bind");
+  let lr = await logRows();
+  assert(lr.length > 0 && lr.length < n && lr.every(([a]) => a === "bind") && (await capt()).startsWith(`${lr.length} of ${n} writes`), "run log: action filter (" + lr.length + " bind)");
+  await page.selectOption("#runlog-action", "");
+  await page.check("#runlog-failures");
+  lr = await logRows();
+  assert(lr.length > 0 && lr.length < n && lr.every(([, , r]) => r.startsWith("failed")), "run log: Only failures (" + lr.length + ")");
+  const envs = await page.$$eval("#runlog-env option", (os) => os.map((o) => o.value + "=" + o.textContent));
+  assert(envs.join() === "=all,https://sss-dev.crm4.dynamics.com=SSS Dev", "run log: environment select lists the environments by url: " + envs.join());
+  await page.selectOption("#runlog-env", "https://sss-dev.crm4.dynamics.com");
+  await page.selectOption("#runlog-action", "add to solution");
+  assert((await logRows()).length === 0 && (await page.textContent("#dlg-body")).includes("No writes match"), "run log: filters that hide everything say so");
+  await page.click('#dlg-body button:has-text("Clear filters")');
+  assert((await logRows()).length === n && (await page.inputValue("#runlog-action")) === "" && (await page.inputValue("#runlog-env")) === "" && !(await page.isChecked("#runlog-failures")), "run log: Clear filters shows every entry again");
+  await page.selectOption("#runlog-action", "bind"); // the exports below still hold every entry
   await page.screenshot({ path: resolve(TOOL, "scripts/.e2e-out/15-runlog.png") });
   await page.evaluate(() => { window.toolboxAPI.fileSystem.saveFile = async (name, content) => { window.__mock.saved.push({ name, content }); return "/tmp/" + name; }; });
   await page.getByRole("button", { name: "Export CSV" }).click();

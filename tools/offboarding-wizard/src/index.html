@@ -25,8 +25,8 @@
       <button class="tab" data-tab="report" role="tab" type="button">4 · Report</button>
     </nav>
 
-    <div id="status" class="status" hidden></div>
-    <div id="progress" class="progress" hidden>
+    <div id="status" class="status" role="status" aria-live="polite" hidden></div>
+    <div id="progress" class="progress" aria-live="polite" hidden>
       <div class="bar"><span id="progress-fill"></span></div>
       <span id="progress-text" class="caption"></span>
       <button id="btn-cancel" class="btn btn-ghost btn-sm" type="button">Cancel</button>
@@ -50,7 +50,7 @@
         <div class="toolbar">
           <label for="scan-filter">Scan tables matching</label>
           <input id="scan-filter" type="search" placeholder="all owned tables" aria-label="Table filter" />
-          <label class="check"><input id="scan-hide-empty" type="checkbox" checked /> hide tables with no records</label>
+          <label class="check"><input id="scan-show-failed" type="checkbox" /> show tables that could not be scanned</label>
           <button id="btn-scan" class="btn btn-primary btn-sm" type="button" disabled>Scan owned records</button>
         </div>
         <div id="inventory-body"></div>

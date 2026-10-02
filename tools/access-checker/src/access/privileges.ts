@@ -38,6 +38,26 @@ export function parseDepth(v: unknown): Depth | null {
 
 export const depthLabel = (d: Depth | null): string => (d == null ? "—" : DEPTH_LABEL[d]);
 
+const DEPTH_ALIAS: Record<Depth, string> = { 0: "User", 1: "Business Unit", 2: "Parent: Child Business Units", 3: "Organization" };
+const DEPTH_MEANING: Record<Depth, string> = {
+  0: "records the user (or one of their teams) owns",
+  1: "records in the user's business unit, plus Basic",
+  2: "records in the user's business unit and its child business units, plus Basic",
+  3: "every record in the organisation",
+};
+
+/**
+ * What a depth covers, with the name the role editor uses (User, Business Unit, …) in brackets; null = no
+ * privilege ("—"). Local/Deep count from the BU of the role or team that grants the privilege (the user's BU
+ * unless the explanation notes say otherwise). For the Roles legend; `depthHint` for tooltips.
+ */
+export const depthInfo = (d: Depth | null): { name: string; meaning: string } =>
+  d == null ? { name: "None", meaning: "no role grants this privilege" } : { name: `${DEPTH_LABEL[d]} (${DEPTH_ALIAS[d]})`, meaning: DEPTH_MEANING[d] };
+export const depthHint = (d: Depth | null): string => {
+  const i = depthInfo(d);
+  return `${i.name}: ${i.meaning}`;
+};
+
 /** "ReadAccess, WriteAccess" (or numeric AccessRights mask) → rights list. */
 export function parseAccessMask(v: unknown): Right[] {
   if (typeof v === "number") return RIGHTS.filter((r) => (v & MASK[r]) !== 0);

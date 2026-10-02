@@ -83,9 +83,23 @@ test("buildMatrix: rows from installed apps, newest catalog version wins, not-in
   assert.deepEqual(M.counts(m), { updates: 2, failed: 1, busy: 0 });
 });
 
+test("state badges: counts per shown column, rowHasState combines states as OR in shown columns", () => {
+  const m = M.buildMatrix(results(), { showNotInstalled: false });
+  assert.deepEqual(M.counts(m, new Set(["prod"])), { updates: 0, failed: 0, busy: 0 }, "only the given columns");
+  assert.deepEqual(M.counts(m, new Set(["dev", "prod"])), M.counts(m));
+  const row = (u) => m.rows.find((r) => r.uniqueName === u);
+  const both = new Set(["dev", "prod"]);
+  assert.equal(M.rowHasState(row("fs"), new Set(["failed"]), both), true);
+  assert.equal(M.rowHasState(row("fs"), new Set(["update", "busy"]), both), false);
+  assert.equal(M.rowHasState(row("sales"), new Set(["failed", "update"]), both), true, "any of the states");
+  assert.equal(M.rowHasState(row("sales"), new Set(["update"]), new Set(["prod"])), false, "hidden columns do not count");
+  assert.deepEqual([...M.STATE_KINDS], ["update", "failed", "busy"]);
+});
+
 test("updateKeys skips custom-upgrade packages; planInstalls orders by environment then app", () => {
   const m = M.buildMatrix(results(), { showNotInstalled: true });
   assert.deepEqual(M.updateKeys(m), [M.cellKey("dev", "sales")]);
+  assert.deepEqual(M.updateKeys(m, (u) => u !== "sales"), [], "rows hidden by the filter are left out");
   const sel = new Set([M.cellKey("prod", "sales"), M.cellKey("dev", "sales"), M.cellKey("dev", "fs"), M.cellKey("dev", "extra")]);
   const plan = M.planInstalls(m, sel);
   assert.deepEqual(plan.map((p) => `${p.env.id}:${p.uniqueName}:${p.action}`), ["dev:extra:install", "dev:fs:retry", "dev:sales:update"]);
@@ -207,6 +221,23 @@ test("failedKeys ticks every failed install; a visibility filter narrows it", ()
   assert.deepEqual(M.failedKeys(m, (u) => u !== "fs"), []);
   const plan = M.planInstalls(m, new Set(M.failedKeys(m)));
   assert.deepEqual(plan.map((p) => `${p.env.id}:${p.uniqueName}:${p.action}`), ["dev:fs:retry"]);
+});
+
+test("emptyEnvIds / visibleEnvs: nothing installed (available only) is empty, unreadable never; ✕ and hideEmpty combine; select-all skips hidden columns", () => {
+  const rs = [
+    ...results(),
+    { env: env("fresh"), installed: [], available: [pkg("sales", "1.2", "None"), pkg("extra", "3.0", "None")], error: null, setupError: false },
+    { env: env("busy"), installed: [pkg("portal", "5.0", "Installing")], available: [], error: null, setupError: false },
+    { env: env("broken"), installed: [], available: [], error: "HTTP 500", setupError: false },
+  ];
+  const m = M.buildMatrix(rs, { showNotInstalled: true });
+  assert.deepEqual([...M.emptyEnvIds(m)], ["fresh"], "available cells do not count, in-progress does, errors never empty");
+  const ids = (list) => list.map((e) => e.id).join(",");
+  assert.equal(ids(M.visibleEnvs(m, new Set(), true)), "dev,prod,busy,broken");
+  assert.equal(ids(M.visibleEnvs(m, new Set(), false)), "dev,prod,fresh,busy,broken");
+  assert.equal(ids(M.visibleEnvs(m, new Set(["dev", "broken"]), true)), "prod,busy", "✕ hides any column, unreadable ones too");
+  assert.deepEqual(M.updateKeys(m, (_u, envId) => envId !== "dev"), [], "hidden column left out of Select all updates");
+  assert.deepEqual(M.failedKeys(m, (_u, envId) => envId === "dev"), [M.cellKey("dev", "fs")]);
 });
 
 // ---------- unused apps ----------
@@ -333,6 +364,27 @@ test("analyzeUnused: shared solutions and tables excluded, zeros re-checked live
   assert.match(csv.split("\r\n")[1], /^Dev,Gamification,Gamification,1\.0,Probably unused,0,1,,msdyn_Gami,msdyn_Common,Gamification \(0 roles\),history$/);
 });
 
+test("unusedShown: pressed verdicts (any, not found as no signal) override Show all; name filter on top", () => {
+  const P = (uniqueName, verdict) => ({ pkg: pkg(uniqueName, "1.0", "Installed", { name: uniqueName.toUpperCase() }), verdict });
+  const list = [P("a", "unused"), P("b", "in-use"), P("c", "not-found"), P("d", "platform"), P("e", "no-signal")];
+  const names = (v) => M.unusedShown(list, { all: false, verdicts: new Set(), query: "", ...v }).map((p) => p.pkg.uniqueName).join(",");
+  assert.equal(names({}), "a,c,e", "in use and platform hidden by default");
+  assert.equal(names({ all: true }), "a,b,c,d,e");
+  assert.equal(names({ verdicts: new Set(["in-use"]) }), "b", "a pressed verdict shows its rows without Show all");
+  assert.equal(names({ verdicts: new Set(["no-signal", "unused"]), all: true }), "a,c,e", "no signal covers not found; pressed badges win over Show all");
+  assert.equal(names({ all: true, query: " B " }), "b", "name filter, trimmed, case-insensitive");
+  assert.equal(M.verdictGroup("not-found"), "no-signal");
+});
+
+test("runProblems: everything that did not succeed", () => {
+  const items = M.toRunItems([1, 2, 3].map((n) => ({ env: env("a"), uniqueName: `p${n}`, name: `p${n}`, action: "update", from: "1", to: "2", customHandleUpgrade: false })));
+  items[0].status = "succeeded";
+  items[1].status = "failed";
+  items[2].status = "stopped";
+  assert.deepEqual(M.runProblems(items).map((i) => i.uniqueName), ["p2", "p3"]);
+  assert.equal(M.runProblems([items[0]]).length, 0, "a clean run");
+});
+
 test("analyzeUnused: history filter refused → unfiltered read; history unreadable → anchors only", async () => {
   const a = await M.analyzeUnused({ dv: fakeDv({ historyNoFilter: true }), installed: installedPkgs });
   assert.equal(a.history, true);
@@ -342,4 +394,27 @@ test("analyzeUnused: history filter refused → unfiltered read; history unreada
   assert.match(b.warnings[0], /history down/);
   assert.equal(b.packages.find((p) => p.pkg.uniqueName === "Gamification").verdict, "not-found");
   assert.equal(b.packages.find((p) => p.pkg.uniqueName === "msdyn_Sales").mappedBy, "anchor");
+});
+
+test("envTypes: present types once each, usual ones first in a fixed order, others A–Z", () => {
+  const list = [env("a", "Sandbox"), env("b", "Teams"), env("c", "Production"), env("d", "sandbox"), env("e", ""), env("f", "Developer"), env("g", "Default"), env("h", "Custom")];
+  assert.deepEqual(M.envTypes(list), ["Production", "Sandbox", "Developer", "Default", "Custom", "Teams"]);
+  assert.deepEqual(M.envTypes([]), []);
+});
+
+test("envMatches: text (name, type, URL) and type filter combine", () => {
+  const e = env("dev", "Sandbox");
+  assert.ok(M.envMatches(e, "", ""));
+  assert.ok(M.envMatches(e, " DEV ", "sandbox"), "trimmed, case-insensitive; type compared case-insensitively");
+  assert.ok(M.envMatches(e, "crm4", ""), "URL matches");
+  assert.ok(!M.envMatches(e, "dev", "Production"), "type filter excludes");
+  assert.ok(!M.envMatches(e, "prod", "Sandbox"), "text filter excludes");
+});
+
+test("planGroupOpen: open up to PLAN_FOLD_OVER groups; past it only Production and hidden-column groups", () => {
+  assert.equal(M.PLAN_FOLD_OVER, 5);
+  assert.ok(M.planGroupOpen(env("a"), 5));
+  assert.ok(!M.planGroupOpen(env("a"), 6));
+  assert.ok(M.planGroupOpen(env("p", "Production"), 6));
+  assert.ok(M.planGroupOpen(env("a"), 6, true));
 });

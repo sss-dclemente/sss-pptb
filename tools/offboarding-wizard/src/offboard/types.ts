@@ -98,7 +98,10 @@ export interface InventoryItem {
   entity: string;
   id: string;
   label: string;
+  /** Raw detail as Dataverse returns it (exports keep this). */
   meta: string;
+  /** Friendly text shown in place of `meta` when that is a technical value; `meta` becomes its tooltip. */
+  metaLabel?: string;
   /** Non-null marks the row as needing attention (high-risk or not writable). */
   flag: string | null;
   /** Category-specific payload the planner needs (team type, workflow category, …). */
@@ -108,7 +111,15 @@ export interface InventoryItem {
 export interface CategoryResult {
   key: CategoryKey;
   label: string;
+  /** Plain-language description shown in the card header. */
   hint: string;
+  /** Technical source behind `hint` (entity set or relationship name), shown as its tooltip. */
+  source?: string;
+  /**
+   * A caveat that applies to every item of the category: said once in the card, while each item's
+   * `flag` keeps the same full text (exports stay per row) and the card shows it as "see note".
+   */
+  note?: string;
   /** false = inventory only, no write offered in v1. */
   writable: boolean;
   items: InventoryItem[];

@@ -93,6 +93,14 @@ const MOCK = `
       },
     },
   };
+  // D8: Sales Hub (Test and Dev) also lists the deleted icon web resource → a Dev blocker with no fix to pick (report only)
+  M.appIcon = (on) => {
+    if (on) envs.secondary.dependents[ID.D1] = [[ID.APP1t, 80, null]];
+    else delete envs.secondary.dependents[ID.D1];
+    envs.primary.webresources = on ? { [ID.D1]: { webresourceid: ID.D1, name: 'sss_/img/old.png' } } : undefined;
+  };
+  // D5: n more JS files in the target that navigate to the deleted Orders page → n more runtime breaks
+  M.addJs = (n) => { for (let i = 0; i < n; i++) envs.secondary.webresources[g(800 + i)] = { webresourceid: g(800 + i), name: 'sss_/js/extra' + i + '.js', content: B64("Xrm.Navigation.navigateTo({ pageType: 'custom', name: 'sss_pageorders_a1b2c' });") }; };
   const idsIn = (q, field) => [...q.matchAll(new RegExp(field + ' eq ([0-9a-f-]{36})', 'g'))].map((m) => m[1]);
   const isGuid = (s) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(s);
   const sel = (q) => (q.match(/[$]select=([^&]+)/)?.[1] ?? '').split(',');
@@ -104,6 +112,7 @@ const MOCK = `
     if (q.includes('_rootsolutioncomponentid_value')) throw new Error("Dataverse queryData failed: 0x80060888: Could not find a property named '_rootsolutioncomponentid_value' on type 'Microsoft.Dynamics.CRM.solutioncomponent'.");
     if ((m = q.match(/^RetrieveDependenciesForDelete[(]ObjectId=([^,]+),ComponentType=(\\d+)[)]$/))) {
       if (target !== 'secondary') throw new Error('mock: RetrieveDependenciesForDelete must run on the target');
+      if (M.rddFail) throw new Error('mock: dependency check unavailable');
       if (!isGuid(m[1])) throw new Error('mock: ObjectId must be an unquoted guid, got ' + m[1]);
       return { EntityCollection: (E.dependents[m[1]] ?? []).map(([id, t, p]) => ({ dependentcomponentobjectid: id, dependentcomponenttype: t, dependentcomponentparentid: p, dependencytype: 2 })) };
     }
@@ -111,6 +120,7 @@ const MOCK = `
       if (target !== 'primary') throw new Error('mock: RetrieveRequiredComponents expected on Dev');
       const out = [];
       if (m[1] === ID.APP1d && M.devAppHasPage) out.push({ requiredcomponentobjectid: ID.P1d, requiredcomponenttype: 300 });
+      if (m[1] === ID.APP1d && envs.primary.webresources) out.push({ requiredcomponentobjectid: ID.D1, requiredcomponenttype: 61 });
       if (m[1] === ID.F2 || m[1] === ID.F1) out.push({ requiredcomponentobjectid: ID.E1, requiredcomponenttype: 1 });
       return { EntityCollection: out };
     }
@@ -202,7 +212,10 @@ const ID = await M(() => window.__mock.ID);
 
 // ---- load ----
 await page.click('.tab[data-tab="upgrade"]');
+assert((await page.isHidden("#btn-export-json")) && (await page.isHidden("#btn-export-csv")), "D8: Findings JSON / CSV (Diagnose only) hidden on the Upgrade blockers tab");
 await page.waitForFunction(() => document.querySelectorAll("#ub-solution option[value]:not([value=''])").length > 0);
+const tabAria = await page.$$eval(".tab", (els) => els.map((e) => `${e.dataset.tab}:${e.getAttribute("role")}:${e.getAttribute("aria-selected")}:${e.getAttribute("aria-controls")}`));
+assert(tabAria.includes("upgrade:tab:true:tab-upgrade") && tabAria.includes("diagnose:tab:false:tab-diagnose") && (await page.getAttribute("#tab-upgrade", "role")) === "tabpanel", "tabs: aria-selected follows the active tab, aria-controls + tabpanel: " + tabAria.join(" "));
 const opts = await page.$$eval("#ub-solution option", (els) => els.map((e) => e.textContent));
 assert(opts.length === 1 && opts[0].includes("SssCore") && opts[0].includes("managed 1.0.0.0 in target"), "picker: Dev unmanaged solutions with their version in the target: " + opts.join(" | "));
 
@@ -243,6 +256,42 @@ assert(body.includes("sss_shared") && body.includes("SssApps"), "sss_shared surv
 const rt = await page.textContent("#ub-runtime");
 assert(rt.includes("sss_/js/nav.js") && rt.includes("Ops Hub") && rt.includes("Site map"), "runtime breaks: JS navigateTo and site map name the deleted pages: " + rt);
 
+// ---- D8: layers behind a keyed fold, open only for the membership fallback; report-only blockers labelled ----
+const layerFolds = () => page.$$eval("#ub-body .finding", (els) => Object.fromEntries(els.map((e) => {
+  const d = e.querySelector(":scope > details.layers-fold");
+  return [e.closest("details.card").id, d && { open: d.open, key: d.dataset.foldKey, summary: d.querySelector(":scope > summary").textContent, chev: d.querySelector(":scope > summary").classList.contains("chev"), text: d.textContent }];
+})));
+let lf = await layerFolds();
+assert(Object.values(lf).every((x) => x && x.summary === "Layers" && x.chev && x.key.startsWith("ub-layers:")), "D8: every blocker has a keyed “Layers” chevron fold: " + JSON.stringify(lf));
+assert(!lf["ub-dev"].open && !lf["ub-target"].open && lf["ub-release"].open && lf["ub-release"].text.includes("order unknown"), "D8: Layers closed by default, open for the membership fallback (order unknown): " + JSON.stringify(lf));
+assert(!(await page.$$eval("#ub-body .finding > .caption", (els) => els.length)), "D8: no always-shown layers caption");
+assert(!(await page.isVisible("#ub-target .layers-fold .caption")), "D8: target layers hidden until opened");
+await page.click("#ub-target .layers-fold > summary");
+assert(await page.isVisible("#ub-target .layers-fold .caption"), "D8: clicking Layers shows the target layers");
+const rb = await page.$$eval("#ub-body .finding", (els) => els.map((e) => [e.closest("details.card").id, e.querySelector(".head select") ? "select" : e.querySelector(".head .report-only")?.textContent ?? null]));
+assert(JSON.stringify(rb) === '[["ub-dev","select"],["ub-release","Report only"],["ub-target","Report only"]]', "D8: a fix select where one exists, else the report-only label: " + JSON.stringify(rb));
+
+// ---- fold cards: keyed, expand / collapse all ----
+const foldState = () => page.$$eval("#ub-body details.card[data-fold-key]", (els) => Object.fromEntries(els.map((e) => [e.dataset.foldKey, e.open])));
+let folds = await foldState();
+assert(JSON.stringify(Object.keys(folds)) === '["ub:dev","ub:release","ub:target","ub:runtime","ub:resolved","ub:survives","ub:deleted"]', "D5: Dev / Release / Target / Runtime breaks are keyed fold cards before Resolved / Survives / Deleted: " + JSON.stringify(folds));
+assert(!folds["ub:resolved"] && !folds["ub:survives"] && !folds["ub:deleted"], "S3: Resolved / Survives / Deleted fold cards keyed, closed by default: " + JSON.stringify(folds));
+assert(folds["ub:dev"] && folds["ub:release"] && folds["ub:target"] && folds["ub:runtime"], "D5: Dev / Release / Target and a short Runtime breaks list (2 ≤ 10) open by default: " + JSON.stringify(folds));
+const sectionHeads = await page.$$eval("#ub-body details.card[data-fold-key] > summary .card-head", (els) => els.map((e) => e.querySelector("h3").textContent + "=" + e.querySelector(".count .badge").textContent));
+assert(sectionHeads.slice(0, 4).join(" | ") === "Fix in Dev (SssCore)=1 | Release first=1 | Target unmanaged (SSS Test)=1 | Runtime breaks=2", "D5: section titles with count badges: " + sectionHeads.join(" | "));
+assert((await page.$eval("#ub-body", (b) => b.firstElementChild?.id)) === "ub-folds-head", "D5: Expand all / Collapse all sits above the first section");
+assert(!!(await page.$("#ub-folds-head .fold-all")), "S2: expand / collapse all shown next to ≥2 fold cards");
+await page.click("#ub-folds-head .fold-all button:has-text('Expand all')");
+folds = await foldState();
+assert(Object.values(folds).every((o) => o), "S2: Expand all opens every fold card");
+await page.click("#ub-folds-head .fold-all button:has-text('Collapse all')");
+folds = await foldState();
+assert(Object.values(folds).every((o) => !o), "S2: Collapse all closes every fold card");
+assert(!(await page.isVisible("#ub-dev .finding")) && !(await page.isVisible("#ub-runtime ul.plain")), "D5: Collapse all folds the Dev section and the runtime breaks too");
+await page.click("#ub-body details.card[data-fold-key='ub:deleted'] > summary");
+await page.click("#ub-dev > summary");
+assert(await page.isVisible("#ub-dev .finding select"), "D5: clicking the Dev header opens it again");
+
 // ---- export ----
 await page.click("#ub-export-md");
 await page.click("#ub-export-csv");
@@ -276,6 +325,10 @@ assert(pub && pub.parameters.ParameterXml === `<importexportxml><appmodules><app
 assert(writes.every((e) => e.target === "primary"), "nothing written to the target");
 assert((await page.textContent("#ub-rerun")).includes("3 → 2 blockers"), "analyzed again: 3 → 2 blockers");
 assert(!(await page.$("#ub-dev")), "Dev section gone after the fix");
+folds = await foldState();
+assert(folds["ub:deleted"] === true && folds["ub:resolved"] === false, "S3: fold card opened by the user stays open after the post-fix re-render: " + JSON.stringify(folds));
+lf = await layerFolds();
+assert(lf["ub-target"]?.open && lf["ub-release"]?.open, "D8: Layers opened by the user stays open after the post-fix re-render (keepFold): " + JSON.stringify(lf));
 
 // ---- restore re-adds the app component ----
 await page.click('.tab[data-tab="restore"]');
@@ -288,5 +341,40 @@ await page.click("#btn-restore-apply");
 await page.click("#dlg-ok");
 await page.waitForFunction(() => window.__mock.notes.some((n) => n.title === "Restored"));
 assert(await M(() => window.__mock.devAppHasPage), "restore put the page back in the app");
+
+// ---- S4: "Scan JS and site maps" survives reopening the tool ----
+await page.click('.tab[data-tab="upgrade"]');
+await page.uncheck("#ub-scan");
+await page.reload();
+await page.waitForFunction(() => document.querySelectorAll("#ub-solution option[value]:not([value=''])").length > 0);
+assert(!(await page.isChecked("#ub-scan")), "S4: #ub-scan unticked is restored after reload");
+await page.click('.tab[data-tab="upgrade"]');
+await page.check("#ub-scan");
+
+// ---- D8: a Dev blocker with no fix to pick shows “Fix by hand in Dev” instead of a select ----
+await M(() => window.__mock.appIcon(true));
+await page.click("#ub-run");
+await page.waitForFunction(() => document.querySelectorAll("#ub-dev .finding").length === 2, null, { timeout: 15000 });
+const devRows = await page.$$eval("#ub-dev .finding", (els) => els.map((e) => ({ text: e.querySelector(".head").textContent, select: !!e.querySelector("select"), badge: e.querySelector(".head .report-only")?.textContent, warn: e.querySelector(".head .report-only")?.classList.contains("badge-warn") })));
+const icon = devRows.find((r) => r.text.includes("sss_/img/old.png"));
+assert(icon && !icon.select && icon.badge === "Fix by hand in Dev" && icon.warn, "D8: report-only Dev blocker labelled “Fix by hand in Dev” (warn badge), no select: " + JSON.stringify(devRows));
+assert(devRows.some((r) => r.select && !r.badge), "D8: the fixable Dev blocker keeps its select and no report badge");
+await M(() => window.__mock.appIcon(false));
+
+// ---- D5: a long Runtime breaks list starts folded; D6: every failed check behind "Show all N" ----
+await M(() => { window.__mock.addJs(11); window.__mock.rddFail = true; });
+await page.evaluate(() => document.querySelector("#ub-summary").replaceChildren());
+await page.click("#ub-run");
+await page.waitForSelector("#ub-counts", { timeout: 15000 });
+assert((await page.textContent("#ub-counts")).includes("13 runtime breaks"), "D5: 13 runtime breaks: " + (await page.textContent("#ub-counts")));
+const rtFold = await page.$eval("#ub-runtime", (d) => ({ open: d.open, key: d.dataset.foldKey, n: d.querySelectorAll("ul.plain li").length, badge: d.querySelector("summary .count .badge").textContent }));
+assert(rtFold.key === "ub:runtime" && !rtFold.open && rtFold.n === 13 && rtFold.badge === "13", "D5: more than 10 runtime breaks → the fold starts closed, rows inside: " + JSON.stringify(rtFold));
+await page.click("#ub-folds-head .fold-all button:has-text('Expand all')");
+assert(await page.isVisible("#ub-runtime ul.plain"), "D5: Expand all opens the runtime breaks");
+const ubErr = await page.$eval("#ub-summary .error-list", (e) => ({ text: e.firstChild.textContent, summary: e.querySelector("details > summary")?.textContent, chev: e.querySelector("details > summary")?.classList.contains("chev"), open: e.querySelector("details")?.open, n: e.querySelectorAll("details li").length }));
+assert(ubErr.text.startsWith("RetrieveDependenciesForDelete failed for 5 component(s): ") && ubErr.text.split("mock: dependency check unavailable").length - 1 === 3 && ubErr.text.endsWith("; …"), "D6: the first 3 failed checks inline: " + ubErr.text);
+assert(ubErr.summary === "Show all 5" && ubErr.chev && !ubErr.open && ubErr.n === 5, "D6: “Show all 5” fold (chevron, closed) lists every failed check: " + JSON.stringify(ubErr));
+await page.click("#ub-summary .error-list details > summary");
+assert(await page.isVisible("#ub-summary .error-list details li >> nth=4"), "D6: opening “Show all 5” shows the fifth failure");
 
 await finish();

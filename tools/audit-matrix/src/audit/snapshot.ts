@@ -23,6 +23,8 @@ interface SnapTable {
   ownership?: string;
   audit?: SnapFlag;
   isManaged?: boolean;
+  /** IsCustomEntity; absent in snapshots taken before it was read. */
+  isCustom?: boolean | null;
   /** Present only for tables whose columns had been loaded when the snapshot was taken. */
   columns?: SnapColumn[];
 }
@@ -55,6 +57,7 @@ export function serializeSnapshot(env: EnvData): string {
         ownership: t.ownership,
         audit: { value: t.audit.value, canBeChanged: t.audit.canBeChanged, managedPropertyLogicalName: t.audit.managedPropertyLogicalName },
         isManaged: t.isManaged,
+        isCustom: t.isCustom,
       };
       if (cols)
         out.columns = cols.map((c) => ({
@@ -95,6 +98,7 @@ export function parseSnapshot(json: string, fileName: string): EnvData {
       displayName: t.displayName ?? String(t.logicalName),
       audit: flag(t.audit),
       isManaged: !!t.isManaged,
+      isCustom: typeof t.isCustom === "boolean" ? t.isCustom : null,
       ownership: t.ownership ?? "none",
     });
     if (Array.isArray(t.columns))

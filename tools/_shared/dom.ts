@@ -30,7 +30,7 @@ export function h<K extends keyof HTMLElementTagNameMap>(
 }
 
 export type BadgeKind = "" | "ok" | "warn" | "bad" | "neutral";
-export const badge = (text: string, kind: BadgeKind = ""): HTMLElement => h("span", { class: `badge${kind ? ` badge-${kind}` : ""}` }, text);
+export const badge = (text: string, kind: BadgeKind = "", title?: string): HTMLElement => h("span", { class: `badge${kind ? ` badge-${kind}` : ""}`, title }, text);
 
 export const emptyState = (title: string, hint: string): HTMLElement => h("div", { class: "empty-state" }, h("strong", {}, title), hint);
 
@@ -54,13 +54,77 @@ export function card(title: string, body: Node, extra?: Node): HTMLElement {
   return h("div", { class: "card" }, h("div", { class: "card-head" }, h("h3", {}, title), extra ?? null), h("div", { class: "card-body" }, body));
 }
 
-export function foldCard(title: string, count: number, body: Node, open = false): HTMLElement {
-  return h(
+/** Open/closed state of keyed folds, kept across re-renders for the lifetime of the page. */
+const foldMemory = new Map<string, boolean>();
+
+/**
+ * Give a <details> a stable `key`: it opens as last left by the user (else `defaultOpen`) and records later toggles,
+ * so a re-render (filter change, tab switch, refresh) does not close what the user opened.
+ */
+export function keepFold<T extends HTMLDetailsElement>(el: T, key: string, defaultOpen = false): T {
+  el.open = foldMemory.get(key) ?? defaultOpen;
+  el.dataset.foldKey = key;
+  // setting `open` above also fires a toggle: don't record that default as a user choice, so a new default
+  // (e.g. the row's verdict changed) still applies until the user folds or unfolds it
+  el.addEventListener("toggle", () => {
+    if (!foldMemory.has(key) && el.open === defaultOpen) return;
+    foldMemory.set(key, el.open);
+  });
+  // toggle fires asynchronously: a re-render right after the user's click would read the old state, so the click
+  // itself records the coming state (not for controls inside the summary, which don't fold the card)
+  el.querySelector(":scope > summary")?.addEventListener("click", (e) => {
+    const t = e.target as Element | null;
+    if (e.defaultPrevented || t?.closest("input, button, select, textarea, a, label")) return;
+    foldMemory.set(key, !el.open);
+  });
+  return el;
+}
+
+export interface FoldOptions {
+  /** Remember open/closed across re-renders under this key (see keepFold). */
+  key?: string;
+  /** Extra header content shown before the count badge (e.g. a warning badge). */
+  extra?: Child;
+}
+
+/** `count` is the header badge: a number, text such as "3 of 41" while a filter hides rows, or null for none. */
+export function foldCard(title: string, count: number | string | null, body: Node, open = false, o: FoldOptions = {}): HTMLElement {
+  const el = h(
     "details",
     { class: "card", open },
-    h("summary", {}, h("div", { class: "card-head" }, h("h3", {}, title), h("span", { class: "count" }, badge(String(count), "neutral")))),
+    h("summary", {}, h("div", { class: "card-head" }, h("h3", {}, title), h("span", { class: "count" }, o.extra ?? null, count === null ? null : badge(String(count), "neutral")))),
     h("div", { class: "card-body" }, body),
   );
+  return o.key ? keepFold(el, o.key, open) : el;
+}
+
+/** "Expand all" / "Collapse all" for every <details> matching `selector` inside `scope` at click time. */
+export function foldAllButtons(scope: ParentNode | (() => ParentNode | null), selector = "details"): HTMLElement {
+  const set = (open: boolean) => {
+    const root = typeof scope === "function" ? scope() : scope;
+    // folds inside something hidden (a filtered-out card or row) stay as they are
+    root?.querySelectorAll<HTMLDetailsElement>(selector).forEach((d) => {
+      if (!d.closest("[hidden]")) d.open = open;
+    });
+  };
+  const btn = (label: string, open: boolean) => {
+    const b = h("button", { class: "btn btn-ghost btn-sm", type: "button" }, label);
+    b.addEventListener("click", () => set(open));
+    return b;
+  };
+  return h("span", { class: "fold-all" }, btn("Expand all", true), btn("Collapse all", false));
+}
+
+/** "12 of 340 tables" while filtered, "340 tables" otherwise. */
+export const shownOf = (shown: number, total: number, noun: string): string => (shown === total ? `${total} ${noun}` : `${shown} of ${total} ${noun}`);
+
+/** Empty state for "the filters hide everything", with a button that clears them (label overridable for a single toggle). */
+export function filteredEmpty(title: string, hint: string, onClear: () => void, clearLabel = "Clear filters"): HTMLElement {
+  const clear = h("button", { class: "btn btn-ghost btn-sm", type: "button" }, clearLabel);
+  clear.addEventListener("click", onClear);
+  const el = emptyState(title, hint);
+  el.append(h("div", { class: "empty-actions" }, clear));
+  return el;
 }
 
 export interface DialogOptions {
@@ -107,14 +171,46 @@ export function showDialog(o: DialogOptions): Promise<boolean> {
   });
 }
 
-/** Tab buttons `.tab[data-tab]` toggle `.panel` sections by id `tab-<name>` (optional) and call `onChange`. */
+/**
+ * Tab buttons `.tab[data-tab]` toggle `.panel` sections by id `tab-<name>` (optional) and call `onChange`.
+ * Sets tablist ARIA (aria-selected, aria-controls, tabpanel) and arrow / Home / End keys between tabs.
+ */
 export function wireTabs(onChange: (tab: string) => void): void {
-  document.querySelectorAll<HTMLButtonElement>(".tab").forEach((btn) =>
-    btn.addEventListener("click", () => {
-      const name = btn.dataset.tab!;
-      document.querySelectorAll(".tab").forEach((t) => t.classList.toggle("is-active", t === btn));
-      document.querySelectorAll<HTMLElement>(".panel[id^='tab-']").forEach((p) => (p.hidden = p.id !== `tab-${name}`));
-      onChange(name);
-    }),
-  );
+  const tabs = [...document.querySelectorAll<HTMLButtonElement>(".tab")];
+  const sync = (active: HTMLButtonElement) =>
+    tabs.forEach((t) => {
+      const on = t === active;
+      t.classList.toggle("is-active", on);
+      t.setAttribute("aria-selected", String(on));
+      t.tabIndex = on ? 0 : -1;
+    });
+  const select = (btn: HTMLButtonElement) => {
+    const name = btn.dataset.tab!;
+    sync(btn);
+    document.querySelectorAll<HTMLElement>(".panel[id^='tab-']").forEach((p) => (p.hidden = p.id !== `tab-${name}`));
+    onChange(name);
+  };
+  tabs.forEach((btn) => {
+    btn.setAttribute("role", "tab");
+    btn.id ||= `tabbtn-${btn.dataset.tab}`;
+    const panel = document.getElementById(`tab-${btn.dataset.tab}`);
+    if (panel) {
+      btn.setAttribute("aria-controls", panel.id);
+      panel.setAttribute("role", "tabpanel");
+      panel.setAttribute("aria-labelledby", btn.id);
+    }
+    btn.addEventListener("click", () => select(btn));
+    btn.addEventListener("keydown", (e) => {
+      const live = tabs.filter((t) => !t.disabled);
+      const i = live.indexOf(btn);
+      const to = e.key === "ArrowRight" ? i + 1 : e.key === "ArrowLeft" ? i - 1 : e.key === "Home" ? 0 : e.key === "End" ? live.length - 1 : null;
+      if (to === null || i < 0) return;
+      e.preventDefault();
+      const next = live[(to + live.length) % live.length];
+      next.focus();
+      select(next);
+    });
+  });
+  const first = tabs.find((t) => t.classList.contains("is-active")) ?? tabs[0];
+  if (first) sync(first);
 }

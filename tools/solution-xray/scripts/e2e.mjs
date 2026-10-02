@@ -206,7 +206,57 @@ const solHFiles = (version, rules) => ({
 const solH1 = await zip(solHFiles("1.0.0.0", [[RULE_A, "sss_ribbonno"], [RULE_B, "sss_ribbonyes"]]));
 const solH2 = await zip(solHFiles("1.1.0.0", [[RULE_A, "sss_ribbonno"]]));
 
-const files = { "SolA_1_0_0_0.zip": solA1, "SolA_1_1_0_0_managed.zip": solA2, "SolB_2_0_0_0_managed.zip": solB, "SolC_1_0_0_0_managed.zip": solC, "SolD.zip": solD, "SolE.zip": solE, "SolF.zip": solF, "SolF_copy.zip": solF, "SolG.zip": solG, "SolH_1_0.zip": solH1, "SolH_1_1.zip": solH2 };
+// only a root component's behavior differs: with "hide root rows" on, compare must not claim "No differences"
+const solIFiles = (behavior) => ({
+  "solution.xml": solutionXml({ name: "SolI", version: "1.0.0.0", managed: 1, roots: [{ type: 1, schemaName: "sss_only", behavior }] }),
+  "customizations.xml": customizationsXml({ entities: entity("sss_only", "Only", [["sss_name", "nvarchar"]]) }),
+});
+const solI1 = await zip(solIFiles(0));
+const solI2 = await zip(solIFiles(2));
+
+// compare filters (X1): SolJ v2 changes one column type, removes a table and adds a 25-column table
+// -> Column category 27 rows (starts closed), Table 2 rows (starts open), root rows hidden by default
+const BIG_COLS = Array.from({ length: 24 }, (_, i) => [`sss_c${String(i).padStart(2, "0")}`, "nvarchar"]);
+const solJ1 = await zip({
+  "solution.xml": solutionXml({ name: "SolJ", version: "1.0.0.0", managed: 1, roots: [{ type: 1, schemaName: "sss_keep" }, { type: 1, schemaName: "sss_old" }] }),
+  "customizations.xml": customizationsXml({ entities: entity("sss_keep", "Keep", [["sss_name", "nvarchar"], ["sss_note", "nvarchar"]]) + entity("sss_old", "Old", [["sss_name", "nvarchar"]]) }),
+});
+const solJ2 = await zip({
+  "solution.xml": solutionXml({ name: "SolJ", version: "1.1.0.0", managed: 1, roots: [{ type: 1, schemaName: "sss_keep" }, { type: 1, schemaName: "sss_big" }] }),
+  "customizations.xml": customizationsXml({ entities: entity("sss_keep", "Keep", [["sss_name", "nvarchar"], ["sss_note", "memo"]]) + entity("sss_big", "Big", [["sss_name", "nvarchar"], ...BIG_COLS]) }),
+});
+
+// risk evidence (X4): 11 environment variables without default or value -> 8 chips + "+3 more"
+const EMPTY_VARS = Array.from({ length: 11 }, (_, i) => `sss_Var${String(i).padStart(2, "0")}`);
+const solK = await zip({
+  "solution.xml": solutionXml({ name: "SolK", version: "1.0.0.0", managed: 1, roots: EMPTY_VARS.map((n) => ({ type: 380, schemaName: n })) }),
+  "customizations.xml": customizationsXml({
+    extra: `<environmentvariabledefinitions>${EMPTY_VARS.map((n) => `<environmentvariabledefinition schemaname="${n}"><displayname>${n}</displayname><type>100000000</type></environmentvariabledefinition>`).join("")}</environmentvariabledefinitions>`,
+  }),
+});
+
+// hide system tables + other collections (X7): only the prefix-less system table contact; two collections the tool does not itemise
+const solL = await zip({
+  "solution.xml": solutionXml({ name: "SolL", version: "1.0.0.0", managed: 1, roots: [{ type: 1, schemaName: "contact", behavior: 2 }] }),
+  "customizations.xml": customizationsXml({ entities: entity("contact", "Contact", [["sss_extra", "nvarchar"]]), extra: "<Dashboards><Dashboard /><Dashboard /></Dashboards><SiteMaps><SiteMap /></SiteMaps>" }),
+});
+// hide system tables keeps another publisher's table (abc_thing): same rule as the Risk tab's system-table factor
+const solO = await zip({
+  "solution.xml": solutionXml({ name: "SolO", version: "1.0.0.0", managed: 1, roots: [{ type: 1, schemaName: "abc_thing" }, { type: 1, schemaName: "contact", behavior: 2 }] }),
+  "customizations.xml": customizationsXml({ entities: entity("abc_thing", "Thing", [["abc_name", "nvarchar"]]) + entity("contact", "Contact", [["sss_extra", "nvarchar"]]) }),
+});
+// install-order reasons (X8): SolN needs 7 components of SolM -> 5 reasons + "(+2)"
+const M_TABLES = Array.from({ length: 7 }, (_, i) => `sss_m${i}`);
+const solM = await zip({
+  "solution.xml": solutionXml({ name: "SolM", version: "1.0.0.0", managed: 1, roots: M_TABLES.map((t) => ({ type: 1, schemaName: t })) }),
+  "customizations.xml": customizationsXml({}),
+});
+const solN = await zip({
+  "solution.xml": solutionXml({ name: "SolN", version: "1.0.0.0", managed: 1, roots: [{ type: 1, schemaName: "sss_n" }], missing: M_TABLES.map((t) => ({ type: 1, schemaName: t, solution: "SolM (1.0.0.0)" })) }),
+  "customizations.xml": customizationsXml({}),
+});
+
+const files = { "SolL.zip": solL, "SolO.zip": solO, "SolM.zip": solM, "SolN.zip": solN, "SolK.zip": solK, "SolA_1_0_0_0.zip": solA1, "SolA_1_1_0_0_managed.zip": solA2, "SolB_2_0_0_0_managed.zip": solB, "SolC_1_0_0_0_managed.zip": solC, "SolD.zip": solD, "SolE.zip": solE, "SolF.zip": solF, "SolF_copy.zip": solF, "SolG.zip": solG, "SolH_1_0.zip": solH1, "SolH_1_1.zip": solH2, "SolI_1.zip": solI1, "SolI_2.zip": solI2, "SolJ_1.zip": solJ1, "SolJ_2.zip": solJ2 };
 for (const [n, b] of Object.entries(files)) writeFileSync(resolve(OUT, n), b);
 
 const { page, assert, finish } = await launchPage(import.meta.url, { width: 1280, height: 900 });
@@ -230,6 +280,8 @@ await page.screenshot({ path: resolve(OUT, "01-inventory-light.png") });
 
 // compare A1 -> A2
 await page.click('.tab[data-tab="compare"]');
+assert((await page.getAttribute('.tab[data-tab="compare"]', "aria-selected")) === "true" && (await page.getAttribute('.tab[data-tab="inventory"]', "aria-selected")) === "false", "tabs: aria-selected follows the active tab");
+assert((await page.getAttribute('.tab[data-tab="compare"]', "aria-controls")) === "tab-compare", "tabs: aria-controls points at the panel");
 assert((await page.$eval("#cmp-a", (e) => e.selectedIndex)) === 0 && (await page.$eval("#cmp-b", (e) => e.selectedIndex)) === 1, "compare defaults A=first, B=second");
 await page.selectOption("#cmp-a", { index: 0 });
 await page.selectOption("#cmp-b", { index: 1 });
@@ -237,6 +289,13 @@ const cmp = await page.textContent("#cmp-body");
 assert(cmp.includes("upgrade"), "version upgrade detected");
 assert(cmp.includes("sss_project.sss_budget") && cmp.includes("removed"), "removed column detected");
 assert(cmp.includes("sss_task") && cmp.includes("added"), "added table detected");
+// X5: "changed" detail is a labelled per-field diff of the changed fields only, full before / after in the tooltip
+const changedRows = await page.$$eval("#cmp-body tr.diff-changed", (els) => els.map((e) => ({ text: e.textContent, title: e.querySelector(".diff-fields")?.getAttribute("title") ?? "" })));
+const envChange = changedRows.find((r) => r.text.includes("sss_apikey"));
+assert(envChange && envChange.text.includes("Has default: no → yes") && !envChange.text.includes("Has value") && !envChange.text.includes("|"), "changed env var: labelled field diff, changed fields only: " + envChange?.text);
+assert(/^Before: Type: .+ · Has default: no · Has value: no\nAfter: Type: .+ · Has default: yes · Has value: no$/.test(envChange?.title ?? ""), "changed env var: full before / after in title: " + JSON.stringify(envChange?.title));
+const tableChange = changedRows.find((r) => r.text.startsWith("changedsss_project"));
+assert(tableChange && tableChange.text.includes("Forms: 1 → 2") && !tableChange.text.includes("Views"), "changed table: only Forms listed: " + tableChange?.text);
 await page.screenshot({ path: resolve(OUT, "02-compare.png") });
 
 // risk A1 alone, then A2 with baseline A1
@@ -286,6 +345,28 @@ await page.screenshot({ path: resolve(OUT, "05-order-cycle.png") });
 await page.evaluate(() => document.documentElement.setAttribute("data-theme", "dark"));
 await page.click('.tab[data-tab="inventory"]');
 await page.screenshot({ path: resolve(OUT, "06-inventory-dark.png") });
+
+// fold state survives re-render (tab switch, select change); expand / collapse all
+const invFold = (title) => page.$eval(`#inv-body details.card:has(h3:text-is("${title}"))`, (d) => d.open).catch(() => null);
+const invFolds = () => page.$$eval("#inv-body details.card", (els) => els.map((d) => d.open));
+assert((await invFold("Tables")) === true && (await invFold("Plugin steps")) === false, "fold defaults: Tables open, Plugin steps closed");
+await page.click('#inv-body details.card:has(h3:text-is("Tables")) > summary');
+await page.click('#inv-body details.card:has(h3:text-is("Plugin steps")) > summary');
+await page.click('.tab[data-tab="compare"]');
+await page.click('.tab[data-tab="inventory"]');
+assert((await invFold("Tables")) === false && (await invFold("Plugin steps")) === true, "fold state kept after tab switch re-render");
+await page.selectOption("#inv-select", { index: 1 });
+await page.selectOption("#inv-select", { index: 0 });
+assert((await invFold("Tables")) === false && (await invFold("Plugin steps")) === true, "fold state kept after select change re-render");
+await page.click('#tab-inventory .fold-all button:text-is("Expand all")');
+assert((await invFolds()).every(Boolean), "inventory: Expand all opens every card");
+await page.click('#tab-inventory .fold-all button:text-is("Collapse all")');
+assert((await invFolds()).every((o) => !o), "inventory: Collapse all closes every card");
+await page.click('.tab[data-tab="risk"]');
+await page.click('.tab[data-tab="inventory"]');
+assert((await invFolds()).every((o) => !o), "inventory: Collapse all remembered after re-render");
+// back to defaults for the rest of the run
+await page.click('#inv-body details.card:has(h3:text-is("Tables")) > summary');
 
 // export (browser fallback = download)
 const [dl] = await Promise.all([page.waitForEvent("download"), page.click("#inv-export")]);
@@ -397,6 +478,14 @@ await page.click('.tab[data-tab="compare"]');
 await page.selectOption("#cmp-a", { index: 0 });
 await page.selectOption("#cmp-b", { index: 1 });
 const procRows = await page.$$eval("#cmp-body tr", (els) => els.map((e) => e.textContent));
+const cmpFolds = () => page.$$eval("#cmp-body details.card", (els) => els.map((d) => d.open));
+await page.click('#tab-compare .fold-all button:text-is("Collapse all")');
+assert((await cmpFolds()).length > 0 && (await cmpFolds()).every((o) => !o), "compare: Collapse all closes every category: " + (await cmpFolds()).length);
+await page.click("#cmp-hide-root");
+await page.click("#cmp-hide-root");
+assert((await cmpFolds()).every((o) => !o), "compare: collapsed categories stay closed after hide-root re-render");
+await page.click('#tab-compare .fold-all button:text-is("Expand all")');
+assert((await cmpFolds()).every(Boolean), "compare: Expand all opens every category");
 assert(procRows.some((t) => t.startsWith("removed") && t.includes("Validate") && t.includes("sss_ribbonyes")), "same-named business rule on another table reported as removed: " + procRows.filter((t) => t.includes("Validate")).join(" | "));
 
 // compare export: filename carries both names; respects "hide root" filter
@@ -409,6 +498,203 @@ await page.click("#cmp-hide-root");
 const [dlc2] = await Promise.all([page.waitForEvent("download"), page.click("#cmp-export")]);
 const diffJson2 = JSON.parse(readFileSync(await dlc2.path(), "utf8"));
 assert(diffJson2.entries.some((e) => e.category === "Root component"), "compare export includes root rows when filter off");
+const chipText = () => page.$$eval("#cmp-body .card .chips .badge", (els) => els.map((e) => e.textContent).join(" "));
+const rootRows = diffJson2.entries.filter((e) => e.category === "Root component");
+const all = (c) => diffJson2.entries.filter((e) => e.change === c).length;
+assert((await chipText()) === `+${all("added")} ~${all("changed")} -${all("removed")}`, "compare header counts include root rows when shown: " + (await chipText()));
+await page.click("#cmp-hide-root");
+assert((await chipText()) === `+${diffJson.counts.added} ~${diffJson.counts.changed} -${diffJson.counts.removed}` && diffJson.counts.added + diffJson.counts.changed + diffJson.counts.removed === diffJson.entries.length, "compare header counts = filtered entries = export counts: " + (await chipText()));
+assert((await page.textContent("#cmp-body .count-caption")) === `${rootRows.length} root-component rows hidden`, "compare caption names hidden root rows");
+
+// hide-root setting persists across reopen; only-root differences are not "No differences"
+await page.click("#cmp-hide-root");
+await page.reload();
+assert(!(await page.$eval("#cmp-hide-root", (e) => e.checked)), "hide-root unchecked state restored after reload");
+await page.click('.tab[data-tab="compare"]');
+await page.click("#cmp-hide-root");
+await addOne("SolI_1.zip", 1);
+await addOne("SolI_2.zip", 2);
+await page.click('.tab[data-tab="compare"]');
+let cmpI = await page.textContent("#cmp-body");
+assert(!cmpI.includes("No differences") && cmpI.includes("Only root-component differences") && cmpI.includes("1 root-component difference is hidden"), "only root differences: filtered empty state, not 'No differences'");
+assert((await chipText()) === "+0 ~0 -0" && (await page.textContent("#cmp-body .count-caption")) === "1 root-component row hidden", "only root differences: header counts filtered + caption");
+await page.click('#cmp-body .empty-state button:text-is("Clear filters")');
+assert(!(await page.$eval("#cmp-hide-root", (e) => e.checked)), "Clear filters unticks hide-root");
+cmpI = await page.textContent("#cmp-body");
+assert(cmpI.includes("Root component") && cmpI.includes("sss_only") && (await chipText()) === "+0 ~1 -0" && !(await page.$("#cmp-body .count-caption")), "Clear filters shows the root-component row");
+await page.click("#cmp-hide-root"); // back to the default
+
+// ---- compare filters: change types, name, category folds, export, clear, persistence ----
+await page.reload(); // fresh fold memory
+await addOne("SolJ_1.zip", 1);
+await addOne("SolJ_2.zip", 2);
+await page.click('.tab[data-tab="compare"]');
+const cmpFold = (title) => page.$eval(`#cmp-body details.card:has(h3:text-is("${title}"))`, (d) => d.open).catch(() => null);
+const cmpCats = () => page.$$eval("#cmp-body details.card h3", (els) => els.map((e) => e.textContent));
+const cmpRows = (cls = "") => page.$$eval(`#cmp-body tbody tr${cls}`, (els) => els.length);
+const shownCaption = () => page.$$eval("#cmp-body .count-caption", (els) => els.map((e) => e.textContent).find((t) => t.includes("changes")) ?? null);
+assert((await cmpRows()) === 29 && (await chipText()) === "+26 ~1 -2" && (await shownCaption()) === null, "SolJ: 29 rows, counts, no shown-of caption by default");
+assert((await cmpFold("Column")) === false && (await cmpFold("Table")) === true, "category with >20 rows starts closed, <=20 open");
+await page.click("#cmp-added");
+assert((await cmpRows(".diff-added")) === 0 && (await cmpRows()) === 3, "untick Added hides added rows");
+assert((await chipText()) === "+0 ~1 -2" && (await shownCaption()) === "3 of 29 changes", "untick Added: header counts + shown-of caption: " + (await shownCaption()));
+assert((await cmpFold("Column")) === true, "Column opens once it has <=20 visible rows");
+await page.click("#cmp-added");
+await page.fill("#cmp-q", "sss_c0");
+assert(JSON.stringify(await cmpCats()) === '["Column"]' && (await cmpRows()) === 10 && (await shownCaption()) === "10 of 29 changes", "name filter narrows; empty categories not rendered: " + (await cmpCats()));
+const [dlj] = await Promise.all([page.waitForEvent("download"), page.click("#cmp-export")]);
+const diffJ = JSON.parse(readFileSync(await dlj.path(), "utf8"));
+assert(diffJ.entries.length === 10 && diffJ.entries.every((e) => e.name.startsWith("sss_big.sss_c0")) && diffJ.counts.added === 10 && diffJ.filter.name === "sss_c0" && diffJ.filter.changes.length === 3, "export JSON reflects name filter");
+await page.fill("#cmp-q", "memo");
+assert((await cmpRows()) === 1 && (await page.textContent("#cmp-body tbody")).includes("sss_keep.sss_note"), "name filter matches detail text");
+await page.fill("#cmp-q", "sss_c0");
+await page.click("#cmp-added");
+const cmpJ = await page.textContent("#cmp-body");
+assert(cmpJ.includes("No changes match") && cmpJ.includes("29 changes are hidden"), "filters hiding everything: filteredEmpty");
+await page.click('#cmp-body .empty-state button:text-is("Clear filters")');
+assert((await page.$eval("#cmp-added", (e) => e.checked)) && (await page.inputValue("#cmp-q")) === "" && (await page.$eval("#cmp-hide-root", (e) => e.checked)), "Clear filters resets type + name, keeps hide-root");
+assert((await cmpRows()) === 29 && (await shownCaption()) === null, "Clear filters shows every row again");
+const [dlj2] = await Promise.all([page.waitForEvent("download"), page.click("#cmp-export")]);
+const noteEntry = JSON.parse(readFileSync(await dlj2.path(), "utf8")).entries.find((e) => e.name === "sss_keep.sss_note");
+assert(
+  noteEntry?.change === "changed" && noteEntry.detail === "Type: nvarchar → memo" && JSON.stringify(noteEntry.fields) === '[{"field":"Type","before":"nvarchar","after":"memo"}]' && noteEntry.before === "Type: nvarchar" && noteEntry.after === "Type: memo",
+  "export JSON: changed entry keeps detail and adds fields / before / after: " + JSON.stringify(noteEntry),
+);
+await page.click("#cmp-removed");
+await page.fill("#cmp-q", "sss_keep");
+await page.reload();
+assert(!(await page.$eval("#cmp-removed", (e) => e.checked)) && (await page.$eval("#cmp-added", (e) => e.checked)) && (await page.inputValue("#cmp-q")) === "sss_keep", "compare filters restored after reload");
+await addOne("SolJ_1.zip", 1);
+await addOne("SolJ_2.zip", 2);
+await page.click('.tab[data-tab="compare"]');
+assert((await cmpRows()) === 1 && (await shownCaption()) === "1 of 29 changes", "restored filters applied after reload");
+await page.click("#cmp-removed");
+await page.fill("#cmp-q", "");
+
+// ---- inventory: table column folds (X6), find component (X3) ----
+await page.reload(); // fresh fold memory
+await addOne("SolA_1_0_0_0.zip", 1);
+await page.click('.tab[data-tab="inventory"]');
+const invCard = (title) => `#inv-body details.card:has(h3:text-is("${title}"))`;
+// fold key is inv:cols:<table>, plus ?find=<query> while a search matched one of its columns
+const colsFold = (table) => `${invCard("Tables")} details.cols:is([data-fold-key="inv:cols:${table}"], [data-fold-key^="inv:cols:${table}?find="])`;
+const colsOpen = (table) => page.$eval(colsFold(table), (d) => d.open).catch(() => null);
+assert((await page.textContent(`${colsFold("sss_project")} > summary`)) === "2 columns" && (await colsOpen("sss_project")) === false, "table row: '2 columns' fold, closed by default");
+await page.click(`${colsFold("sss_project")} > summary`);
+const colItems = await page.$$eval(`${colsFold("sss_project")} li`, (els) => els.map((e) => e.textContent));
+assert(JSON.stringify(colItems) === '["sss_namenvarchar","sss_budgetmoney"]', "table row: columns listed with name + type: " + colItems.join(" | "));
+await page.click('.tab[data-tab="risk"]');
+await page.click('.tab[data-tab="inventory"]');
+assert((await colsOpen("sss_project")) === true && (await colsOpen("account")) === false, "table column fold kept per table across re-render");
+await page.click(`${colsFold("sss_project")} > summary`);
+
+const invCards = () => page.$$eval("#inv-body details.card", (els) => els.map((d) => ({ title: d.querySelector("h3").textContent, open: d.open, count: d.querySelector(".count .badge").textContent })));
+const invCardOf = async (title) => (await invCards()).find((c) => c.title === title);
+const allCards = (await invCards()).length;
+assert((await invCardOf("Tables")).count === "2" && (await invCardOf("Plugin steps")).open === false, "find: no search, plain counts");
+await page.click(`${invCard("Tables")} > summary`); // user closes Tables outside the search
+await page.fill("#inv-q", "project");
+let found = await invCards();
+assert(JSON.stringify(found.map((c) => c.title)) === '["Tables","Plugin steps"]', "find: only groups with a match are shown: " + found.map((c) => c.title).join(", "));
+assert(found.every((c) => c.open) && found[0].count === "1 of 2" && found[1].count === "1", "find: matching cards open, badge 'shown of total': " + JSON.stringify(found));
+assert((await page.$$eval(`${invCard("Tables")} tbody > tr`, (els) => els.map((e) => e.querySelector("td").textContent))).join() === "sss_project", "find: rows filtered inside a group");
+await page.fill("#inv-q", "budget");
+assert((await invCardOf("Tables"))?.count === "1 of 2" && (await colsOpen("sss_project")) === true && (await page.textContent(`${colsFold("sss_project")} li.is-match`)).includes("sss_budget"), "find: column-name match opens the table's column list and marks the column");
+await page.fill("#inv-q", "");
+found = await invCards();
+assert(found.length === allCards && (await invCardOf("Tables")).open === false && (await invCardOf("Plugin steps")).open === false && (await colsOpen("sss_project")) === false, "find: clearing the search restores the user's folds");
+await page.fill("#inv-q", "zzz-nothing");
+assert((await page.textContent("#inv-body .empty-state")).includes("No components match"), "find: nothing matches -> filteredEmpty");
+await page.click('#inv-body .empty-state button:text-is("Clear search")');
+assert((await page.inputValue("#inv-q")) === "" && (await invCards()).length === allCards, "find: Clear search empties the box and shows every group");
+await page.fill("#inv-q", "budget");
+await page.reload();
+assert((await page.inputValue("#inv-q")) === "budget", "find: search restored after reload");
+await addOne("SolA_1_0_0_0.zip", 1);
+assert(JSON.stringify((await invCards()).map((c) => c.count)) === '["1 of 2"]', "find: restored search applied after reload");
+await page.fill("#inv-q", "");
+
+// ---- risk evidence (X4): first 8 + "+N more" inline, full list kept in the data ----
+await addOne("SolK.zip", 2);
+await page.click('.tab[data-tab="risk"]');
+await page.selectOption("#risk-select", { index: 1 });
+const envFactor = '#risk-body .factor:has(h3:text-is("Environment variables with no default and no value"))';
+const evChips = () => page.$$eval(`${envFactor} .evidence .badge`, (els) => els.map((e) => e.textContent));
+const evMore = () => page.textContent(`${envFactor} .evidence-more`).catch(() => null);
+assert((await evChips()).length === 8 && (await evMore()) === "+3 more", "evidence: first 8 chips + '+3 more'");
+await page.click(`${envFactor} .evidence-more`);
+assert(JSON.stringify(await evChips()) === JSON.stringify(EMPTY_VARS) && (await evMore()) === "Show less", "evidence: '+3 more' expands inline to all 11");
+assert(await page.$eval(`${envFactor} .evidence-more`, (b) => b === document.activeElement && b.getAttribute("aria-expanded") === "true"), "evidence: toggle keeps focus, aria-expanded");
+await page.selectOption("#risk-baseline", { index: 1 });
+await page.selectOption("#risk-baseline", { index: 0 });
+assert((await evChips()).length === 11, "evidence: expanded state kept across re-render");
+await page.click(`${envFactor} .evidence-more`);
+assert((await evChips()).length === 8 && (await evMore()) === "+3 more", "evidence: 'Show less' folds back to 8");
+const [dlr] = await Promise.all([page.waitForEvent("download"), page.click("#risk-export")]);
+const riskK = JSON.parse(readFileSync(await dlr.path(), "utf8"));
+assert(riskK.factors.find((f) => f.id === "env-vars")?.evidence.length === 11, "risk export keeps the full evidence list");
+
+// ---- inventory: hide system tables + other collections (X7) ----
+await page.reload(); // fresh fold memory
+await addOne("SolA_1_0_0_0.zip", 1);
+await addOne("SolL.zip", 2);
+await page.click('.tab[data-tab="inventory"]');
+await page.selectOption("#inv-select", { index: 0 });
+const hideSys = () => page.$eval("#inv-hide-sys", (e) => e.checked);
+const tableNames = () => page.$$eval(`${invCard("Tables")} tbody > tr`, (els) => els.map((e) => e.querySelector("td").textContent)).catch(() => null);
+assert(!(await hideSys()) && (await invCardOf("Tables")).count === "2" && (await tableNames()).join() === "sss_project,account", "hide system tables: off by default, every table listed");
+await page.click("#inv-hide-sys");
+assert((await invCardOf("Tables")).count === "1 of 2" && (await tableNames()).join() === "sss_project", "hide system tables: account hidden, badge '1 of 2'");
+await page.fill("#inv-q", "sss_tier"); // a column of the hidden account table only
+assert(!(await invCardOf("Tables")) && (await page.textContent("#inv-body .empty-state")).includes("1 system table is hidden"), "hide system tables + search: matches in hidden tables not shown, empty state says so");
+await page.click('#inv-body .empty-state button:text-is("Clear search")');
+assert((await page.inputValue("#inv-q")) === "" && (await hideSys()) && (await invCardOf("Tables")).count === "1 of 2", "Clear search keeps system tables hidden");
+await page.fill("#inv-q", "s");
+assert((await invCardOf("Tables")).count === "1 of 2" && (await tableNames()).join() === "sss_project", "hide system tables + search: both narrow Tables");
+await page.fill("#inv-q", "");
+await page.reload();
+assert(await hideSys(), "hide system tables: restored after reload");
+await addOne("SolA_1_0_0_0.zip", 1);
+await addOne("SolL.zip", 2);
+assert((await invCardOf("Tables")).count === "1 of 2", "hide system tables: applied after reload");
+await page.selectOption("#inv-select", { index: 1 });
+const onlySys = await page.textContent(`${invCard("Tables")} .empty-state`).catch(() => "");
+assert((await invCardOf("Tables")).count === "0 of 1" && onlySys.includes("Only system tables") && onlySys.includes("no publisher prefix"), "every table hidden: card says so: " + onlySys);
+await page.click(`${invCard("Tables")} .empty-state button:text-is("Show system tables")`);
+assert(!(await hideSys()) && (await tableNames()).join() === "contact" && (await invCardOf("Tables")).count === "1", "Show system tables unticks the toggle");
+// other:* collections share one closed card
+let cards = await invCards();
+const other = cards.find((c) => c.title === "Other collections");
+assert(other && other.open === false && other.count === "3" && !cards.some((c) => c.title === "Dashboards" || c.title === "SiteMaps"), "other collections: one closed card, total count: " + JSON.stringify(cards));
+const otherRows = () => page.$$eval(`${invCard("Other collections")} tbody > tr`, (els) => els.map((e) => e.textContent));
+assert(JSON.stringify(await otherRows()) === '["Dashboards2","SiteMaps1"]', "other collections: name + count per collection: " + (await otherRows()));
+await page.fill("#inv-q", "sitemap");
+cards = await invCards();
+assert(JSON.stringify(cards.map((c) => [c.title, c.open, c.count])) === '[["Other collections",true,"1 of 3"]]' && JSON.stringify(await otherRows()) === '["SiteMaps1"]', "other collections: search narrows the list: " + JSON.stringify(cards));
+await page.fill("#inv-q", "");
+assert((await invCardOf("Other collections")).open === false, "other collections: closed again after clearing the search");
+await addOne("SolO.zip", 3);
+await page.selectOption("#inv-select", { index: 2 });
+await page.check("#inv-hide-sys");
+assert((await tableNames()).join() === "abc_thing" && (await invCardOf("Tables")).count === "1 of 2", "hide system tables: another publisher's table stays, only prefix-less contact hidden: " + (await tableNames()));
+await page.uncheck("#inv-hide-sys");
+
+// ---- install order reasons (X8): "(+N)" reveals the full list inline ----
+await addOne("SolM.zip", 3);
+await addOne("SolN.zip", 4);
+await page.click('.tab[data-tab="order"]');
+const edgeCell = "#order-body .reasons"; // the only edge: SolM -> SolN
+const reasonCount = () => page.$eval(edgeCell, (el) => el.firstChild.textContent.split("; ").length);
+const reasonsMore = () => page.textContent(`${edgeCell} .reasons-more`).catch(() => null);
+assert((await reasonCount()) === 5 && (await reasonsMore()) === "(+2)", "reasons: first 5 + '(+2)' button");
+await page.click(`${edgeCell} .reasons-more`);
+assert((await reasonCount()) === 7 && (await page.textContent(edgeCell)).includes("sss_m6") && (await reasonsMore()) === "Show less", "reasons: '(+2)' reveals all 7 inline");
+assert(await page.$eval(`${edgeCell} .reasons-more`, (b) => b === document.activeElement && b.getAttribute("aria-expanded") === "true"), "reasons: toggle keeps focus, aria-expanded");
+await page.click('.tab[data-tab="inventory"]');
+await page.click('.tab[data-tab="order"]');
+assert((await reasonCount()) === 7, "reasons: expanded state kept across re-render");
+await page.click(`${edgeCell} .reasons-more`);
+assert((await reasonCount()) === 5 && (await reasonsMore()) === "(+2)", "reasons: 'Show less' folds back to 5");
 
 // ---- debug mode (standalone: no host, the log still records the switch and saves as a download) ----
 await checkDebugLog(page, assert, {
