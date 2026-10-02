@@ -31,6 +31,7 @@ Real-env test (no connection needed):
 - [ ] Risk: score + factors read sensibly on a real managed solution.
 - [ ] Install order: multi-solution set sorts by dependencies; missing dependency listed.
 - [ ] Export JSON writes via ToolBox save dialog.
+- [ ] Debug log (1.1.0; published to npm 2026-10-02 before this check, fixes go in 1.1.1): tick Debug log in the footer, add a zip, Save log: the .txt names the tool and 1.1.0 and records the switch and the file pick. Untick: nothing more is recorded.
 
 Screenshots (replace `docs/img/*.png`, keep file names): `inventory-light.png`, `inventory-dark.png`, `risk.png`, `install-order.png`. Then delete the line "Synthetic sample data. Replace with real captures before publishing." from `README.md`.
 
@@ -72,6 +73,8 @@ cd tools/envvar-matrix && npm run build && npm test && npm run validate && npm p
 ```
 Submit: `@simplesmoothsafe/pptb-envvar-matrix`, categories **Environments, Migration, Comparisons**.
 
+- [ ] Debug log (1.5.0; published to npm 2026-10-02 before this check, fixes go in 1.5.1): tick Debug log, Refresh, Save log: every `queryData` with its query text and result, no connection secret in the file. The switch is still on after reopening the tool.
+
 ## 3. SSS Access Checker — `tools/access-checker`
 
 Real-env test (one connection, a user with a mix of direct role + team role):
@@ -86,6 +89,7 @@ Real-env test (one connection, a user with a mix of direct role + team role):
 - [ ] Team role with *Member's privilege inheritance* = *Team privileges only* at Basic: a record the user owns is not reached through it; a record owned by that team is.
 - [ ] Record shared with the user for a right they hold no privilege for: the chip is denied and the "why" line says the share has no effect.
 - [ ] Exports: JSON, shares CSV, columns CSV.
+- [ ] Debug log (1.1.0; published to npm 2026-10-02 before this check, fixes go in 1.1.1): tick Debug log, run a record check, Save log: user, privilege and share queries with results; a failed call shows its error.
 
 Screenshots: `check.png`, `columns-dark.png` (+ optionally `shares.png`, add to README). Remove the synthetic-data line from `README.md`.
 
@@ -94,6 +98,20 @@ Publish:
 cd tools/access-checker && npm run build && npm run validate && npm publish --access public
 ```
 Submit: `@simplesmoothsafe/pptb-access-checker`, categories **Users & Security, Troubleshooting**.
+
+## 4. SSS Dependency Cleaner — `tools/dependency-cleaner`
+
+Real-env test, Upgrade blockers (1.1.0; published to npm 2026-10-02 before this check, fixes go in 1.1.1). Sandbox only: primary = Dev with the unmanaged solution, secondary = Test with it installed managed, a custom page still listed by a model-driven app.
+- [ ] Tick Debug log, Upgrade blockers → Analyze, Save log. The log answers the probe in docs/UPGRADE-BLOCKERS-PLAN.md §4: `RetrieveDependenciesForDelete` response shape, `msdyn_componentlayers` rows (and the unmanaged layer's name), `canvasappid` / `appmoduleid` equal or not between Dev and Test. Send the .txt; adjust `src/deps/upgrade.ts` if a shape differs.
+- [ ] Counts (removed / deleted / survive / blockers) match what a real stage-and-upgrade of the same solution reports in the target.
+- [ ] Remove from app on the page blocker: backup saved, `RemoveAppComponents` succeeds, the app no longer lists the page after publish, re-analysis drops the blocker. Restore puts the page back.
+- [ ] Runtime breaks: a JS web resource calling `navigateTo` with the page name is listed.
+- [ ] Exports: Markdown checklist and CSV.
+
+Publish:
+```bash
+cd tools/dependency-cleaner && npm run build && npm run validate && npm publish --access public
+```
 
 ## After publish
 
