@@ -17,10 +17,12 @@
 //   v=many     150 extra Microsoft tables in the primary (155 > ORIGIN_DEFAULT_THRESHOLD = 100), so a
 //              first-time viewer starts on Origin: custom.
 //   v=manyunknown  the same, with IsCustomEntity missing from every table: no default is applied.
+//   v=nosec    no secondary connection: no comparison until a snapshot is loaded.
 // Screenshots go to scripts/.e2e-out/; the ones the README links are copied into docs/img/ so those
 // links can never go stale. Run: npm run build && node scripts/e2e.mjs (needs playwright + chromium).
 // Usability: Only changeable (M6), expanded rows kept across Refresh / Apply (M7), "expand to load"
-// button + focus kept across re-renders (M8), grouped plan / preview / results (M9).
+// button + focus kept across re-renders (M8), grouped plan / preview / results (M9), locked reason
+// tooltips + no comparison / Diff columns without a comparison (M10).
 import { copyFileSync, mkdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { launchPage } from "../../_shared/e2e-loader.mjs";
@@ -39,6 +41,7 @@ const MOCK = `
   const VARIANT = new URLSearchParams(location.search).get('v') ?? '';
   const MANY = VARIANT === 'many' || VARIANT === 'manyunknown';
   const ORG_OFF = VARIANT === 'orgoff';
+  const NO_SEC = VARIANT === 'nosec';
   // OwnershipTypes is a flags enum on the client metadata API: 1 user, 2 team, 4 business, 8 organization.
   const OWN_INT = { UserOwned: 1, TeamOwned: 2, BusinessOwned: 4, OrganizationOwned: 8, None: 0 };
   const own = (s) => (VARIANT === 'int' ? OWN_INT[s] : s);
@@ -122,7 +125,7 @@ const MOCK = `
   window.toolboxAPI = {
     connections: {
       getActiveConnection: async () => envs.primary.conn,
-      getSecondaryConnection: async () => envs.secondary.conn,
+      getSecondaryConnection: async () => (NO_SEC ? null : envs.secondary.conn),
     },
     utils: { getCurrentTheme: async () => 'light', showNotification: async (o) => { window.__mock.notes.push(o); } },
     events: { on() {} },
@@ -198,6 +201,7 @@ const MOCK = `
   bare.assert((await bare.page.textContent("#host-mode")).includes("Not running inside ToolBox"), "standalone: host mode stated");
   bare.assert((await bare.page.textContent("#matrix-body")).includes("Nothing loaded"), "standalone: empty state rendered");
   bare.assert((await bare.page.textContent("#org-body")).includes("No environment loaded"), "standalone: org tab empty state");
+  bare.assert(!(await bare.page.$("table.matrix th")), "standalone: no comparison / Diff column headers rendered");
   await bare.finish();
 }
 
@@ -211,6 +215,8 @@ const ownershipLabels = (p) => p.$$eval("table.matrix > tbody > tr:not(.colrow) 
 /** The rows of one org card's settings table, as [label, value] pairs. */
 const orgCardRows = (n) =>
   page.$$eval(`#org-body .orggrid > .card:nth-child(${n}) table tbody tr`, (rs) => rs.map((r) => [...r.children].map((c) => c.textContent.trim())));
+/** The matrix header cells' text, in order. */
+const matrixHeads = (p) => p.$$eval("table.matrix > thead th", (ths) => ths.map((t) => t.textContent.trim()));
 const shot = async (file, readme) => {
   await page.screenshot({ path: resolve(OUT, file) });
   if (readme) copyFileSync(resolve(OUT, file), resolve(IMG, readme));
@@ -232,6 +238,15 @@ assert(counts.includes("2 / 5") && counts.includes("tables audited"), "counts: 2
 assert(/3\s*table differences/.test(counts.replace(/\s+/g, " ")), "counts: 3 table differences — " + counts);
 assert((await page.$$eval("table.matrix .diffmark", (e) => e.length)) === 3, "three diff markers");
 assert(await page.isDisabled('input[aria-label="Select table sss_locked"]'), "locked table cannot be selected");
+// M10: the reason a row is locked is on the badge and the checkbox, from the flag's managed property
+const LOCK_REASON = "Can't change: CanBeChanged is false (managed property canmodifyauditsettings)";
+const lockedTitles = await page.$$eval("table.matrix > tbody > tr:not(.colrow)", (rs) => {
+  const tr = rs.find((r) => r.textContent.includes("sss_locked"));
+  return [tr.querySelector("td.sel input").title, tr.querySelector(".flag .badge-warn").title];
+});
+assert(lockedTitles.every((t) => t === LOCK_REASON), "locked table: checkbox and badge say why — " + lockedTitles.join(" | "));
+assert((await page.$eval('input[aria-label="Select table account"]', (e) => e.title)) === "", "an unlocked table's checkbox carries no lock tooltip");
+assert(JSON.stringify(await matrixHeads(page)) === JSON.stringify(["", "Table", "Origin · layer", "primarySSS Dev", "secondarySSS Test", "Diff", "Columns"]), "comparison + Diff columns with a comparison: " + (await matrixHeads(page)).join(","));
 await shot("01-matrix.png", "matrix.png");
 
 // ---- filter to differences
@@ -250,6 +265,12 @@ let colNames = await page.$$eval("tr.colrow tbody td.name .mono", (els) => els.m
 assert(JSON.stringify(colNames) === JSON.stringify(["lockedcol", "telephone1"]), "only differing columns while the diff filter is on: " + colNames.join(","));
 assert((await page.$$eval("tr.colrow .diffmark", (e) => e.length)) === 2, "telephone1 + lockedcol differ");
 assert(await page.isDisabled('input[aria-label="Select column account.lockedcol"]'), "locked column cannot be selected");
+const lockedColTitles = await page.$$eval("tr.colrow tbody tr", (rs) => {
+  const tr = rs.find((r) => r.textContent.includes("lockedcol"));
+  return [tr.querySelector("td.sel input").title, tr.querySelector(".flag .badge-warn").title];
+});
+assert(lockedColTitles.every((t) => t === LOCK_REASON), "locked column: checkbox and badge say why — " + lockedColTitles.join(" | "));
+assert((await page.$$eval("tr.colrow thead th", (e) => e.length)) === 6 && (await page.$eval("tr.colrow > td", (e) => e.colSpan)) === 7, "column sub-table carries the comparison + Diff columns");
 await shot("02-differences.png", "differences.png");
 
 await page.uncheck("#filter-diff");
@@ -426,7 +447,7 @@ assert(true, "account no longer differs after the write");
 
 // ---------------------------------------------------------------- fixture variants
 /** A fresh context on one fixture variant, loaded and handed to `fn`; its page errors are asserted too. */
-const runVariant = async (variant, fn) => {
+const runVariant = async (variant, fn, chips = 2) => {
   const ctx = await browser.newContext({ viewport: { width: 1400, height: 900 } });
   await ctx.addInitScript(MOCK);
   const p = await ctx.newPage();
@@ -436,7 +457,7 @@ const runVariant = async (variant, fn) => {
     if (m.type() === "error") errs.push("console: " + m.text());
   });
   await p.goto(`${PAGE}?v=${variant}`);
-  await p.waitForFunction(() => document.querySelectorAll("#columns .colchip").length === 2);
+  await p.waitForFunction((n) => document.querySelectorAll("#columns .colchip").length === n, chips);
   const out = await fn(p);
   assert(errs.length === 0, `no page/console errors in the ?v=${variant} run: ` + errs.join(" | "));
   await ctx.close();
@@ -775,6 +796,65 @@ await runVariant("", async (p) => {
   await p.click("#dlg-cancel");
   await p.waitForFunction(() => document.querySelector("#plan-count").textContent === "1");
 });
+
+// ---- M10: no comparison → no comparison / Diff columns; a table missing from the primary says so
+await runVariant("", async (p) => {
+  const heads = () => matrixHeads(p);
+  const rowCells = () => p.$eval("table.matrix > tbody > tr:not(.colrow)", (tr) => tr.children.length);
+  await p.click('button[aria-label="Expand account"]');
+  await p.waitForSelector("tr.colrow");
+  await p.selectOption("#compare", "");
+  await p.waitForFunction(() => document.querySelectorAll("table.matrix > thead th").length === 5);
+  assert(JSON.stringify(await heads()) === JSON.stringify(["", "Table", "Origin · layer", "primarySSS Dev", "Columns"]), "comparison “none”: no comparison or Diff header — " + (await heads()).join(","));
+  assert((await rowCells()) === 5 && (await p.$$("table.matrix .diffmark")).length === 0, "table rows drop the comparison and Diff cells");
+  const sub = await p.$$eval("tr.colrow thead th", (ths) => ths.map((t) => t.textContent));
+  assert(JSON.stringify(sub) === JSON.stringify(["", "Column", "Type", "SSS Dev"]), "column sub-rows drop them too — " + sub.join(","));
+  assert((await p.$eval("tr.colrow tbody tr", (tr) => tr.children.length)) === 4 && (await p.$eval("tr.colrow > td", (e) => e.colSpan)) === 5, "column sub-row cells and the colspan follow");
+  await p.selectOption("#compare", "secondary");
+  await p.waitForFunction(() => document.querySelectorAll("table.matrix > thead th").length === 7);
+  assert((await rowCells()) === 7 && (await p.$$eval("tr.colrow thead th", (e) => e.length)) === 6, "choosing the secondary again brings the columns back");
+
+  // a table only the comparison has: locked, and the tooltip says it is not in the primary
+  await p.evaluate(() => {
+    const e = window.__mock.envs.secondary;
+    e.tables.push(JSON.parse(JSON.stringify(Object.assign({}, e.tables[2], { LogicalName: "sss_onlytest", SchemaName: "Sss_onlytest", MetadataId: "meta-sss_onlytest" }))));
+  });
+  await p.click("#btn-refresh");
+  await p.waitForSelector('input[aria-label="Select table sss_onlytest"]');
+  const t = await p.$eval('input[aria-label="Select table sss_onlytest"]', (e) => [e.disabled, e.title]);
+  assert(t[0] === true && t[1] === "Not in the primary environment", "a table missing from the primary: disabled, with the reason as its tooltip — " + t.join(" | "));
+});
+
+await runVariant(
+  "nosec",
+  async (p) => {
+    await p.waitForSelector("table.matrix");
+    assert((await p.inputValue("#compare")) === "", "no secondary connection: comparison none");
+    assert(JSON.stringify(await matrixHeads(p)) === JSON.stringify(["", "Table", "Origin · layer", "primarySSS Dev", "Columns"]), "no comparison loaded: no comparison or Diff column — " + (await matrixHeads(p)).join(","));
+    const lock = await p.$$eval("table.matrix > tbody > tr:not(.colrow)", (rs) => rs.find((r) => r.textContent.includes("sss_locked")).querySelector(".flag .badge-warn").title);
+    assert(lock === LOCK_REASON, "the lock reason does not need a comparison — " + lock);
+    await p.click('button[aria-label="Expand account"]');
+    await p.waitForSelector("tr.colrow");
+    assert((await p.$$eval("tr.colrow thead th", (e) => e.length)) === 4, "no comparison: column sub-rows have no comparison or Diff column");
+    await p.screenshot({ path: resolve(OUT, "12-no-comparison.png") });
+
+    // the CSV keeps its fixed columns: an empty "other audit" column
+    await p.click("#btn-export-csv");
+    await p.click("#btn-export-snap");
+    const [csvNo, snapNo] = await p.evaluate(() => window.__mock.saved.slice(-2).map((f) => f.content));
+    assert(csvNo.split("\n")[1] === "level,table,column,type,SSS Dev audit,captures,other audit,differs,locked,managed", "CSV header unchanged without a comparison — " + csvNo.split("\n")[1]);
+    assert(/^table,account,,user,on,yes,,false,false,true$/m.test(csvNo) && /^column,account,telephone1,String,off,no,,false,false,false$/m.test(csvNo), "CSV rows keep an empty comparison cell");
+
+    // loading a snapshot gives a comparison: the columns come back
+    await p.evaluate((c) => { window.__mock.nextOpen = c; }, snapNo);
+    await p.click("#btn-load-snap");
+    await p.waitForFunction(() => document.querySelectorAll("table.matrix > thead th").length === 7);
+    const h = await matrixHeads(p);
+    assert(h[4] === "snapshotSSS Dev" && h[5] === "Diff", "a loaded snapshot brings the comparison + Diff columns back — " + h.join(","));
+    assert((await p.$$eval("tr.colrow thead th", (e) => e.length)) === 6 && (await p.$eval("tr.colrow > td", (e) => e.colSpan)) === 7, "…in the column sub-rows too");
+  },
+  1,
+);
 
 // ---- more than 100 tables: first-time viewers start on custom tables; any saved choice wins
 await runVariant("many", async (p) => {

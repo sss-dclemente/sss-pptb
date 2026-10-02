@@ -1,6 +1,14 @@
-import type { ColumnAudit, ColumnStats, Counts, EnvData, Filters, FlagState, Matrix, MatrixColumnRow, MatrixTableRow, TableAudit } from "./types";
+import type { ColumnAudit, ColumnStats, Counts, EnvData, Filters, FlagState, ManagedFlag, Matrix, MatrixColumnRow, MatrixTableRow, TableAudit } from "./types";
 
 const state = (a: { audit: { value: boolean } } | null | undefined): FlagState => (!a ? "absent" : a.audit.value ? "on" : "off");
+
+/** Why a flag cannot be written from here, in the words Dataverse uses; null when it can. */
+export const NOT_IN_PRIMARY = "Not in the primary environment";
+export function lockReason(flag: ManagedFlag | null): string | null {
+  if (!flag) return NOT_IN_PRIMARY;
+  if (flag.canBeChanged) return null;
+  return `Can't change: CanBeChanged is false${flag.managedPropertyLogicalName ? ` (managed property ${flag.managedPropertyLogicalName})` : ""}`;
+}
 
 function columnRows(table: string, mine: ColumnAudit[], theirs: ColumnAudit[] | null, capturing: boolean): MatrixColumnRow[] {
   const byName = new Map<string, ColumnAudit>();
@@ -17,6 +25,7 @@ function columnRows(table: string, mine: ColumnAudit[], theirs: ColumnAudit[] | 
       isManaged: c.isManaged,
       isSecured: c.isSecured,
       locked: !c.audit.canBeChanged,
+      lockReason: lockReason(c.audit),
       state: state(c),
       otherState,
       differs: !!theirs && otherState !== state(c),
@@ -68,6 +77,7 @@ export function buildMatrix(primary: EnvData | null, other: EnvData | null): Mat
         isManaged: head.isManaged,
         isCustom: p?.isCustom ?? o?.isCustom ?? null,
         locked: !p || !p.audit.canBeChanged,
+        lockReason: lockReason(p?.audit ?? null),
         state: state(p),
         otherState,
         differs: !!other && otherState !== state(p),

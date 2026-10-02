@@ -25,6 +25,8 @@ let loadingCols = false;
 let cancelCols = false;
 /** Comparison column to select on the next render (a snapshot just loaded). */
 let preferCompare: string | null = null;
+/** The viewer chose "none" in Compare with: keep it, instead of falling back to the first environment. */
+let compareNone = false;
 /** Saved toolbar filters (wired in wire()). */
 let view: PersistedControls | null = null;
 /** Selection keys whose checkbox is on screen: table rows passing the filters, visible columns of expanded rows. */
@@ -124,7 +126,7 @@ function renderHeader(): void {
   const want = preferCompare ?? sel.value;
   preferCompare = null;
   sel.replaceChildren(h("option", { value: "" }, "none"), ...others.map((o) => h("option", { value: o.meta.key }, `${o.meta.name} (${o.meta.kind === "live" ? o.meta.target : "snapshot"})`)));
-  sel.value = others.some((o) => o.meta.key === want) ? want : (others[0]?.meta.key ?? "");
+  sel.value = others.some((o) => o.meta.key === want) ? want : compareNone ? "" : (others[0]?.meta.key ?? "");
 
   $("#btn-refresh").toggleAttribute("disabled", !inToolbox());
   for (const id of ["#btn-export-csv", "#btn-export-snap"]) $(id).toggleAttribute("disabled", !primary);
@@ -177,15 +179,34 @@ function renderOrgBanner(): void {
 }
 
 // ---------- matrix ----------
-const flagBadge = (s: FlagState, locked = false): HTMLElement =>
-  h("span", { class: "flag" }, s === "absent" ? badge("—", "neutral") : badge(s, s === "on" ? "ok" : "neutral"), locked ? badge("locked", "warn") : null);
+/** A flag cell's badge; `lockReason` (see lockReason in matrix.ts) adds a `locked` badge whose tooltip says why. */
+function flagBadge(s: FlagState, lockReason: string | null = null): HTMLElement {
+  let lock: HTMLElement | null = null;
+  if (lockReason) {
+    lock = badge("locked", "warn");
+    lock.title = lockReason;
+  }
+  return h("span", { class: "flag" }, s === "absent" ? badge("—", "neutral") : badge(s, s === "on" ? "ok" : "neutral"), lock);
+}
+
+/**
+ * The comparison and Diff cells of a row, or none at all without a comparison: then they would
+ * read "—" on every row and only push the Columns cell off screen.
+ */
+function compareCells(other: FlagState, differs: boolean, diffTitle?: string): HTMLElement[] {
+  if (!matrix.other) return [];
+  return [
+    h("td", { class: "cell" }, flagBadge(other)),
+    h("td", {}, differs ? h("span", { class: "diffmark", title: diffTitle }, "≠") : ""),
+  ];
+}
 
 function tableRow(r: MatrixTableRow, f: Filters): HTMLElement[] {
   const open = expanded.has(r.logicalName);
   const cb = h("input", { type: "checkbox", "aria-label": `Select table ${r.logicalName}`, "data-focus": `sel:t:${r.key}` }) as HTMLInputElement;
   cb.checked = selected.has(`t:${r.key}`);
   cb.disabled = r.locked;
-  cb.title = r.locked ? "Audit flag locked by the managing solution" : "";
+  cb.title = r.lockReason ?? "";
   cb.addEventListener("change", () => {
     if (cb.checked) selected.add(`t:${r.key}`);
     else selected.delete(`t:${r.key}`);
@@ -223,9 +244,8 @@ function tableRow(r: MatrixTableRow, f: Filters): HTMLElement[] {
         " ",
         badge(r.ownership, "neutral"),
       ),
-      h("td", { class: "cell" }, flagBadge(r.state, r.locked)),
-      h("td", { class: "cell" }, matrix.other ? flagBadge(r.otherState) : h("span", { class: "caption" }, "—")),
-      h("td", {}, r.differs ? h("span", { class: "diffmark", title: "Differs from the comparison environment" }, "≠") : ""),
+      h("td", { class: "cell" }, flagBadge(r.state, r.lockReason)),
+      ...compareCells(r.otherState, r.differs, "Differs from the comparison environment"),
       h("td", { class: "caption" }, colsCell),
     ),
   ];
@@ -236,7 +256,20 @@ function tableRow(r: MatrixTableRow, f: Filters): HTMLElement[] {
     ? h(
         "table",
         {},
-        h("thead", {}, h("tr", {}, h("th", {}, ""), h("th", {}, "Column"), h("th", {}, "Type"), h("th", {}, matrix.primary?.name ?? "primary"), h("th", {}, matrix.other?.name ?? "other"), h("th", {}, ""))),
+        h(
+          "thead",
+          {},
+          h(
+            "tr",
+            {},
+            h("th", {}, ""),
+            h("th", {}, "Column"),
+            h("th", {}, "Type"),
+            h("th", {}, matrix.primary?.name ?? "primary"),
+            matrix.other ? h("th", {}, matrix.other.name) : null,
+            matrix.other ? h("th", {}, "") : null,
+          ),
+        ),
         h(
           "tbody",
           {},
@@ -244,6 +277,7 @@ function tableRow(r: MatrixTableRow, f: Filters): HTMLElement[] {
             const ccb = h("input", { type: "checkbox", "aria-label": `Select column ${c.tableLogicalName}.${c.logicalName}`, "data-focus": `sel:c:${c.key}` }) as HTMLInputElement;
             ccb.checked = selected.has(`c:${c.key}`);
             ccb.disabled = c.locked;
+            ccb.title = c.lockReason ?? "";
             ccb.addEventListener("change", () => {
               if (ccb.checked) selected.add(`c:${c.key}`);
               else selected.delete(`c:${c.key}`);
@@ -261,17 +295,16 @@ function tableRow(r: MatrixTableRow, f: Filters): HTMLElement[] {
                   class: c.inert ? "cell col-inert" : "cell",
                   title: c.inert ? (matrix.orgAuditEnabled === false ? "On, but auditing is off for the organization: nothing is captured." : "On, but this table's audit flag is off: nothing is captured for this column.") : undefined,
                 },
-                flagBadge(c.state, c.locked),
+                flagBadge(c.state, c.lockReason),
                 c.inert ? badge("inert", "warn") : null,
               ),
-              h("td", { class: "cell" }, matrix.other ? flagBadge(c.otherState) : h("span", { class: "caption" }, "—")),
-              h("td", {}, c.differs ? h("span", { class: "diffmark" }, "≠") : ""),
+              ...compareCells(c.otherState, c.differs),
             );
           }),
         ),
       )
     : h("span", { class: "caption" }, "No columns match the filters.");
-  rows.push(h("tr", { class: "colrow" }, h("td", { colspan: "7" }, body)));
+  rows.push(h("tr", { class: "colrow" }, h("td", { colspan: matrix.other ? "7" : "5" }, body)));
   return rows;
 }
 
@@ -349,8 +382,9 @@ function renderMatrixBody(body: HTMLElement): void {
           h("th", {}, "Table"),
           h("th", {}, "Origin · layer"),
           h("th", { class: "col" }, "primary", h("span", { class: "env" }, matrix.primary?.name ?? "—")),
-          h("th", { class: "col" }, matrix.other ? (matrix.other.kind === "live" ? "secondary" : "snapshot") : "comparison", h("span", { class: "env" }, matrix.other?.name ?? "none")),
-          h("th", {}, "Diff"),
+          // no comparison: no comparison or Diff column (the matrix CSV keeps its fixed set of columns)
+          matrix.other ? h("th", { class: "col" }, matrix.other.kind === "live" ? "secondary" : "snapshot", h("span", { class: "env" }, matrix.other.name)) : null,
+          matrix.other ? h("th", {}, "Diff") : null,
           h("th", {}, "Columns"),
         ),
       ),
@@ -878,6 +912,7 @@ async function loadSnapshot(): Promise<void> {
     const env = parseSnapshot(f.text, f.name);
     others.push(env);
     preferCompare = env.meta.key;
+    compareNone = false;
     rebuild();
   } catch (e) {
     await notify("Snapshot rejected", `${f.name}: ${(e as Error).message}`, "error");
@@ -913,7 +948,10 @@ function wire(): void {
   for (const id of ids) $(`#${id}`).addEventListener("input", renderMatrix);
   $("#filter-origin").addEventListener("change", () => saveView(TOOL, ORIGIN_DECIDED, true));
   $("#btn-load-cols").addEventListener("click", () => void loadVisibleColumns());
-  $("#compare").addEventListener("change", rebuild);
+  $("#compare").addEventListener("change", () => {
+    compareNone = $<HTMLSelectElement>("#compare").value === "";
+    rebuild();
+  });
   $("#btn-refresh").addEventListener("click", () => void refresh());
   $("#btn-load-snap").addEventListener("click", () => void loadSnapshot());
   $("#btn-plan-on").addEventListener("click", () => planSelected(true));

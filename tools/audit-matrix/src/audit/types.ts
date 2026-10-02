@@ -85,6 +85,8 @@ export interface MatrixColumnRow {
   isManaged: boolean;
   isSecured: boolean;
   locked: boolean;
+  /** Why `locked` is true, for the badge and checkbox tooltips; null when the flag can be changed. */
+  lockReason: string | null;
   state: FlagState;
   otherState: FlagState;
   differs: boolean;
@@ -115,6 +117,8 @@ export interface MatrixTableRow {
   /** See TableAudit.isCustom. */
   isCustom: boolean | null;
   locked: boolean;
+  /** Why `locked` is true (missing from the primary, or CanBeChanged false); null when it can be changed. */
+  lockReason: string | null;
   state: FlagState;
   otherState: FlagState;
   differs: boolean;
