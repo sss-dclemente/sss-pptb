@@ -64,7 +64,12 @@ const foldMemory = new Map<string, boolean>();
 export function keepFold<T extends HTMLDetailsElement>(el: T, key: string, defaultOpen = false): T {
   el.open = foldMemory.get(key) ?? defaultOpen;
   el.dataset.foldKey = key;
-  el.addEventListener("toggle", () => foldMemory.set(key, el.open));
+  // setting `open` above also fires a toggle: don't record that default as a user choice, so a new default
+  // (e.g. the row's verdict changed) still applies until the user folds or unfolds it
+  el.addEventListener("toggle", () => {
+    if (!foldMemory.has(key) && el.open === defaultOpen) return;
+    foldMemory.set(key, el.open);
+  });
   return el;
 }
 
