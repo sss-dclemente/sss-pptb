@@ -107,9 +107,9 @@ export function foldAllButtons(scope: ParentNode | (() => ParentNode | null), se
 /** "12 of 340 tables" while filtered, "340 tables" otherwise. */
 export const shownOf = (shown: number, total: number, noun: string): string => (shown === total ? `${total} ${noun}` : `${shown} of ${total} ${noun}`);
 
-/** Empty state for "the filters hide everything", with a Clear filters button. */
-export function filteredEmpty(title: string, hint: string, onClear: () => void): HTMLElement {
-  const clear = h("button", { class: "btn btn-ghost btn-sm", type: "button" }, "Clear filters");
+/** Empty state for "the filters hide everything", with a button that clears them (label overridable for a single toggle). */
+export function filteredEmpty(title: string, hint: string, onClear: () => void, clearLabel = "Clear filters"): HTMLElement {
+  const clear = h("button", { class: "btn btn-ghost btn-sm", type: "button" }, clearLabel);
   clear.addEventListener("click", onClear);
   const el = emptyState(title, hint);
   el.append(h("div", { class: "empty-actions" }, clear));

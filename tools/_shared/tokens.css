@@ -238,7 +238,7 @@ tr:last-child td { border-bottom: none; }
 .empty-state .empty-actions { margin-top: var(--s-3); }
 
 /* First column that stays in view while a wide matrix scrolls sideways (add to its th and td) */
-.sticky-col { position: sticky; left: 0; z-index: 1; background: var(--bg-card); }
+.sticky-col { position: sticky; left: 0; z-index: 1; background: var(--sticky-bg, var(--bg)); } /* page background; set --sticky-bg for a table on a card */
 th.sticky-col { z-index: 2; }
 
 .warnings { border-left: 3px solid var(--status-warn-fg); background: var(--status-warn-bg); color: var(--status-warn-fg); padding: var(--s-2) var(--s-3); border-radius: var(--radius-sm); }
