@@ -113,7 +113,9 @@ const columnMatches = (c: MatrixColumnRow, t: string): boolean => c.logicalName.
 export function filterRows(rows: MatrixTableRow[], f: Filters, pending?: (r: MatrixTableRow) => boolean): MatrixTableRow[] {
   const t = f.text.trim().toLowerCase();
   return rows.filter((r) => {
-    if (t && !tableMatches(r, t) && !(r.columns ?? []).some((c) => columnMatches(c, t))) return false;
+    // a locked table flag still leaves changeable columns worth showing
+    if (f.onlyChangeable && r.locked && !(r.columns ?? []).some((c) => !c.locked)) return false;
+    if (t && !tableMatches(r, t) && !(r.columns ?? []).some((c) => columnMatches(c, t) && !(f.onlyChangeable && c.locked))) return false;
     if (f.audit === "on" && r.state !== "on") return false;
     if (f.audit === "off" && r.state !== "off") return false;
     if (f.managed === "managed" && !r.isManaged) return false;
@@ -121,7 +123,9 @@ export function filterRows(rows: MatrixTableRow[], f: Filters, pending?: (r: Mat
     if (f.origin === "custom" && r.isCustom !== true) return false;
     if (f.origin === "microsoft" && r.isCustom !== false) return false;
     const unknown = !!pending?.(r);
-    if (f.onlyDiff && !r.differs && !(r.stats && r.stats.differs > 0) && !unknown) return false;
+    // under "Only changeable" a difference in a locked column is not one this tool can act on
+    const colDiffers = f.onlyChangeable ? (r.columns ?? []).some((c) => c.differs && !c.locked) : !!(r.stats && r.stats.differs > 0);
+    if (f.onlyDiff && !r.differs && !colDiffers && !unknown) return false;
     if (f.withColumns && !(r.stats && (r.stats.audited > 0 || r.stats.secured > 0)) && !unknown) return false;
     return true;
   });
@@ -140,7 +144,7 @@ export function originDefault(tables: TableAudit[]): "custom" | null {
 }
 
 /**
- * Column sub-rows to show under a table row: all of them, or only the differing ones. A text that
+ * Column sub-rows to show under a table row: all of them, or only the differing / changeable ones. A text that
  * matches the table keeps every column; one that only matches column names narrows to those columns.
  */
 export function visibleColumns(row: MatrixTableRow, f: Filters): MatrixColumnRow[] {
@@ -148,6 +152,7 @@ export function visibleColumns(row: MatrixTableRow, f: Filters): MatrixColumnRow
   const t = f.text.trim().toLowerCase();
   const byTable = !t || tableMatches(row, t);
   return cols.filter((c) => {
+    if (f.onlyChangeable && c.locked) return false;
     if (f.onlyDiff && !c.differs) return false;
     if (f.audit === "on" && c.state !== "on") return false;
     if (f.audit === "off" && c.state !== "off") return false;

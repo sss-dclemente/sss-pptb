@@ -160,6 +160,11 @@ export interface Filters {
   origin: OriginFilter;
   /** Only tables whose loaded columns include an audited or secured column. */
   withColumns: boolean;
+  /**
+   * Hide what this tool cannot write: table rows and column sub-rows whose flag is locked
+   * (CanBeChanged: false), and tables missing from the primary environment.
+   */
+  onlyChangeable: boolean;
 }
 
 const OWNERSHIP: Record<string, string> = {

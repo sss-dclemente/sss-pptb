@@ -19,6 +19,8 @@
 //   v=manyunknown  the same, with IsCustomEntity missing from every table: no default is applied.
 // Screenshots go to scripts/.e2e-out/; the ones the README links are copied into docs/img/ so those
 // links can never go stale. Run: npm run build && node scripts/e2e.mjs (needs playwright + chromium).
+// Usability: Only changeable (M6), expanded rows kept across Refresh / Apply (M7), "expand to load"
+// button + focus kept across re-renders (M8), grouped plan / preview / results (M9).
 import { copyFileSync, mkdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { launchPage } from "../../_shared/e2e-loader.mjs";
@@ -400,12 +402,16 @@ assert(saved.length === 4, "plan CSV + plan script saved");
 assert(saved[2].name === "audit-plan.csv" && saved[2].content.includes("table,sss_fails,,off,on"), "plan CSV rows");
 assert(saved[3].name === "audit-plan.ps1" && saved[3].content.includes("EntityDefinitions(LogicalName=") && saved[3].content.includes("Table = 'sss_fails'"), "plan script is a runnable list");
 
-// The CSV only carries the columns of expanded tables, and applying the plan reloaded the matrix,
-// so expand sss_case again: an audited column under a table whose own flag is off must not read as
-// a win in the file an auditor is handed.
+// Applying the plan reloaded the matrix; the rows expanded before it come back expanded, their columns
+// read again (M7). The CSV only carries the columns of expanded tables: an audited column under a
+// table whose own flag is off must not read as a win in the file an auditor is handed.
 await page.click('.tab[data-tab="matrix"]');
-await page.click('button[aria-label="Expand sss_case"]');
-await page.waitForFunction(() => !!document.querySelector("td.col-inert"));
+await page.waitForFunction(() => !!document.querySelector("td.col-inert") && document.querySelector("#status").hidden);
+assert(
+  !!(await page.$('button[aria-label="Collapse sss_case"]')) && !!(await page.$('button[aria-label="Collapse account"]')),
+  "rows expanded before Apply are still expanded after the reload that follows it",
+);
+assert((await page.$$("table.matrix tr.colrow")).length === 2, "their columns were read again after Apply");
 await page.click("#btn-export-csv");
 const csv2 = (await page.evaluate(() => window.__mock.saved)).at(-1).content;
 assert(/^column,sss_case,sss_note,String,on,no — a level above is off,/m.test(csv2), "CSV says an audited column under an off table captures nothing");
@@ -631,6 +637,143 @@ await runVariant("", async (p) => {
   assert(JSON.stringify(diffRows) === JSON.stringify(["account", "sss_fails", "sss_locked"]), "Only differences: table differences shown, unloaded tables kept as candidates — " + diffRows.join(","));
   assert((await btn()) === "Load columns for 2 tables to check", "contact is not shown but may differ by its columns — " + (await btn()));
   await p.screenshot({ path: resolve(OUT, "08-load-columns.png") });
+});
+
+// ---- M6: Only changeable hides locked tables and columns; off by default, saved with the other filters
+await runVariant("", async (p) => {
+  const rowNames = () => p.$$eval("table.matrix > tbody > tr:not(.colrow) td.name .mono", (els) => els.map((e) => e.textContent));
+  const colNamesOf = () => p.$$eval("tr.colrow tbody td.name .mono", (els) => els.map((e) => e.textContent));
+  assert(!(await p.isChecked("#filter-changeable")), "Only changeable is off by default");
+  await p.click('button[aria-label="Expand account"]');
+  await p.waitForFunction(() => document.querySelectorAll("tr.colrow tbody tr").length === 4);
+  await p.check("#filter-changeable");
+  assert(JSON.stringify(await rowNames()) === JSON.stringify(["account", "contact", "sss_case", "sss_fails"]), "Only changeable hides the locked table: " + (await rowNames()).join(","));
+  assert(JSON.stringify(await colNamesOf()) === JSON.stringify(["name", "creditlimit", "telephone1"]), "…and the locked column under an expanded table: " + (await colNamesOf()).join(","));
+  assert((await p.textContent("#shown-count")) === "4 of 5 tables shown", "count caption under Only changeable — " + (await p.textContent("#shown-count")));
+  await p.check("#filter-diff");
+  assert(JSON.stringify(await rowNames()) === JSON.stringify(["account", "sss_fails"]), "with Only differences: the differences this tool can act on — " + (await rowNames()).join(","));
+  assert(JSON.stringify(await colNamesOf()) === JSON.stringify(["telephone1"]), "a locked differing column is left out too: " + (await colNamesOf()).join(","));
+  await p.uncheck("#filter-diff");
+  await p.reload();
+  await p.waitForSelector("table.matrix");
+  assert(await p.isChecked("#filter-changeable"), "Only changeable restored after a reload");
+  assert(!(await rowNames()).includes("sss_locked"), "and applied on load");
+  await p.click("#counts button");
+  assert(!(await p.isChecked("#filter-changeable")) && (await rowNames()).includes("sss_locked"), "Clear filters turns Only changeable off");
+  // a locked table flag with a changeable column under it: the table stays, so that column can still be reached
+  await p.evaluate(() => {
+    const prim = window.__mock.envs.primary.attrs;
+    const col = JSON.parse(JSON.stringify(prim.account.find((x) => x.LogicalName === "telephone1")));
+    Object.assign(col, { LogicalName: "sss_free", MetadataId: "attr-sss_free" });
+    prim.sss_locked = [col];
+  });
+  await p.click('button[aria-label="Expand sss_locked"]');
+  await p.waitForFunction(() => [...document.querySelectorAll("tr.colrow tbody td.name .mono")].some((e) => e.textContent === "sss_free"));
+  await p.check("#filter-changeable");
+  assert((await rowNames()).includes("sss_locked") && (await colNamesOf()).includes("sss_free"), "Only changeable keeps a locked table that has a changeable column: " + (await rowNames()).join(","));
+});
+
+// ---- M7: Refresh keeps expanded rows expanded and reads their columns again, three at a time
+await runVariant("", async (p) => {
+  await p.click('button[aria-label="Expand account"]');
+  await p.waitForSelector("tr.colrow");
+  await p.click('button[aria-label="Expand sss_case"]');
+  await p.waitForFunction(() => document.querySelectorAll("tr.colrow").length === 2);
+  await p.check('input[aria-label="Select column account.telephone1"]');
+  await p.evaluate(() => { window.__mock.delay = 150; window.__mock.attrCalls = []; window.__mock.maxInFlight = {}; });
+  await p.click("#btn-refresh");
+  await p.waitForFunction(() => /Reloading columns of expanded tables \d+ \/ 2…/.test(document.querySelector("#status").textContent));
+  assert(!!(await p.$("#status button")), "the column reload after Refresh can be cancelled");
+  await p.waitForFunction(() => document.querySelector("#status").hidden);
+  assert((await p.$$("table.matrix tr.colrow")).length === 2, "both rows expanded again after Refresh, with their columns");
+  assert(!!(await p.$('button[aria-label="Collapse account"]')) && !!(await p.$('button[aria-label="Collapse sss_case"]')), "expanders read Collapse after Refresh");
+  const calls = await p.evaluate(() => window.__mock.attrCalls.map((c) => c.name + "@" + c.target).sort());
+  assert(JSON.stringify(calls) === JSON.stringify(["account@primary", "account@secondary", "sss_case@primary", "sss_case@secondary"]), "only the expanded tables' columns are read again — " + calls.join(","));
+  assert(await p.isChecked('input[aria-label="Select column account.telephone1"]'), "a column selection survives the Refresh");
+
+  // a Refresh while "Load columns" runs cancels that run instead of racing it
+  await p.click('button[aria-label="Collapse sss_case"]');
+  await p.evaluate(() => { window.__mock.delay = 200; });
+  await p.click("#btn-load-cols");
+  await p.waitForFunction(() => /Loading columns \d+ \/ 3…/.test(document.querySelector("#status").textContent));
+  await p.click("#btn-refresh");
+  await p.waitForFunction(() => document.querySelector("#status").hidden && document.querySelectorAll("tr.colrow").length === 1);
+  assert(!!(await p.$('button[aria-label="Collapse account"]')) && !!(await p.$('button[aria-label="Expand sss_case"]')), "a row collapsed before the Refresh stays collapsed");
+});
+
+// ---- M8: "expand to load" is a button too; focus survives the re-render
+await runVariant("", async (p) => {
+  const focused = () => p.evaluate(() => document.activeElement?.getAttribute("aria-label") ?? document.activeElement?.id ?? "");
+  const load = await p.$('button.load-link[aria-label="Expand to load account"]');
+  assert(!!load && (await load.textContent()) === "expand to load", "the Columns cell's “expand to load” is a button");
+  await load.focus();
+  await p.keyboard.press("Enter");
+  await p.waitForSelector("tr.colrow");
+  assert((await focused()) === "Collapse account", "after loading by keyboard, focus lands on the row's expander (the link became stats) — " + (await focused()));
+  await p.keyboard.press("Enter");
+  await p.waitForFunction(() => !document.querySelector("tr.colrow"));
+  assert((await focused()) === "Expand account", "collapsing keeps focus on the same row's expander — " + (await focused()));
+  await p.focus('button[aria-label="Expand sss_case"]');
+  await p.keyboard.press("Enter");
+  await p.waitForSelector("tr.colrow");
+  assert((await focused()) === "Collapse sss_case", "expanding keeps focus on the expander — " + (await focused()));
+  await p.focus("#sel-all");
+  await p.keyboard.press("Space");
+  assert((await focused()) === "Select all visible tables", "select-all keeps focus after the re-render — " + (await focused()));
+  const size = await p.$eval('button[aria-label="Expand account"]', (b) => { const r = b.getBoundingClientRect(); return [r.width, r.height]; });
+  assert(size[0] >= 24 && size[1] >= 24, "the expander is a 24px target, not a caption glyph — " + size.join("x"));
+});
+
+// ---- M9: plan as a summary + one closed fold per table with ×; preview grouped; results failures first
+await runVariant("", async (p) => {
+  await p.click('button[aria-label="Expand account"]');
+  await p.waitForSelector("tr.colrow");
+  await p.click("#btn-plan-match");
+  await p.waitForFunction(() => document.querySelector("#plan-count").textContent === "3");
+  await p.click('.tab[data-tab="apply"]');
+  const summary = await p.textContent("#plan-summary");
+  assert(summary === "3 pending changes: 1 table on / 1 off, 1 column (1 on / 0 off)", "plan summary line first — " + summary);
+  const folds = await p.$$eval("#apply-body details.card", (ds) => ds.map((d) => [d.dataset.table, d.open, d.querySelector(".count .badge:last-child").textContent]));
+  assert(JSON.stringify(folds) === JSON.stringify([["account", false, "2"], ["sss_fails", false, "1"]]), "one closed fold per table with its item count — " + JSON.stringify(folds));
+  const head = (await p.textContent('#apply-body details[data-table="account"] summary')).replace(/\s+/g, " ");
+  assert(head.includes("Account") && head.includes("table → off") && head.includes("1 column"), "a closed fold says what it holds — " + head);
+  await p.click('#apply-body details[data-table="account"] summary');
+  await p.screenshot({ path: resolve(OUT, "10-plan-folds.png") });
+  await p.click('button[aria-label="Remove account.telephone1 from the plan"]');
+  await p.waitForFunction(() => document.querySelector("#plan-count").textContent === "2");
+  assert(await p.$eval('#apply-body details[data-table="account"]', (d) => d.open), "the fold stays open after removing an item from it");
+  const f = await p.evaluate(() => document.activeElement?.getAttribute("aria-label") ?? "");
+  assert(f === "Remove table account from the plan", "focus moves to the next × in the same table — " + f);
+  assert((await p.textContent("#plan-summary")) === "2 pending changes: 1 table on / 1 off, 0 columns", "summary follows the removal — " + (await p.textContent("#plan-summary")));
+  await p.click("#apply-body .fold-all button:first-child");
+  assert(await p.$$eval("#apply-body details.card", (ds) => ds.every((d) => d.open)), "Expand all opens every table's fold");
+
+  // put the column back to have a 3-item plan, then preview
+  await p.click('.tab[data-tab="matrix"]');
+  await p.click("#btn-plan-match");
+  await p.waitForFunction(() => document.querySelector("#plan-count").textContent === "3");
+  await p.click('.tab[data-tab="apply"]');
+  await p.click("#btn-apply");
+  await p.waitForSelector("dialog[open]");
+  assert((await p.textContent("#preview-summary")) === "1 table on / 1 off, 1 column (1 on / 0 off)", "preview starts with the summary — " + (await p.textContent("#preview-summary")));
+  const pf = await p.$$eval("#dlg-body details.card", (ds) => ds.map((d) => [d.dataset.table, d.open]));
+  assert(JSON.stringify(pf) === JSON.stringify([["account", true], ["sss_fails", true]]), "preview groups by table, open while the plan is short — " + JSON.stringify(pf));
+  assert((await p.$$("#dlg-body button[data-remove]")).length === 0, "no × in the preview");
+  await p.click("#dlg-ok");
+
+  await p.waitForFunction(() => document.querySelector("#dlg-title").textContent === "Results");
+  assert((await p.textContent("#results-summary")) === "2 ok · 1 failed", "results summary — " + (await p.textContent("#results-summary")));
+  assert(await p.isChecked("#results-only-failed"), "Only failures is on when something failed");
+  const resRows = () => p.$$eval("#dlg-body .results-list tbody tr", (rs) => rs.map((r) => r.children[1].textContent + (r.classList.contains("is-failed") ? "!" : "")));
+  assert(JSON.stringify(await resRows()) === JSON.stringify(["sss_fails!"]), "only the failure listed — " + (await resRows()).join(","));
+  assert((await p.textContent("#results-count")) === "1 of 3 writes", "results count caption — " + (await p.textContent("#results-count")));
+  await p.uncheck("#results-only-failed");
+  assert(JSON.stringify(await resRows()) === JSON.stringify(["sss_fails!", "account", "account"]), "all results, failures first — " + (await resRows()).join(","));
+  await p.screenshot({ path: resolve(OUT, "11-results.png") });
+  await p.click("#dlg-cancel");
+  await p.waitForFunction(() => document.querySelector("#dlg-title").textContent === "Publish customizations");
+  await p.click("#dlg-cancel");
+  await p.waitForFunction(() => document.querySelector("#plan-count").textContent === "1");
 });
 
 // ---- more than 100 tables: first-time viewers start on custom tables; any saved choice wins

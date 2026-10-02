@@ -37,6 +37,7 @@
         <label title="Who made the table: custom tables (IsCustomEntity) or the ones Microsoft ships. Tables whose origin is unknown show under all only.">Origin <select id="filter-origin"><option value="all">all</option><option value="custom">custom</option><option value="microsoft">Microsoft</option></select></label>
         <label title="Solution layer: unmanaged customizations made in this environment, or managed ones installed by a solution. A Microsoft table can be either.">Layer <select id="filter-managed"><option value="all">all</option><option value="unmanaged">unmanaged</option><option value="managed">managed</option></select></label>
         <label class="check" title="Column flags are read per table: tables whose columns are not loaded are left out."><input type="checkbox" id="filter-cols" aria-describedby="filter-loaded-hint" /> Has audited / secured columns (loaded tables)</label>
+        <label class="check" title="Hide tables and columns whose audit flag is locked by the managing solution (CanBeChanged: false), and tables missing from the primary: nothing this tool can write."><input type="checkbox" id="filter-changeable" /> Only changeable</label>
         <span id="filter-loaded-hint" class="count-caption" hidden>Column filters see loaded tables only.</span>
         <button id="btn-load-cols" class="btn btn-sm" type="button" hidden>Load columns</button>
         <div class="right">
