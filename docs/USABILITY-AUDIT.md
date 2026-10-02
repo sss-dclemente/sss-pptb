@@ -171,4 +171,14 @@ Done (Medium items, third round):
 - Offboarding Wizard: O6 empty categories hidden, O8 preview grouped with Skipped fold and no 25 cap.
 - Audit Matrix: M6 Only changeable, M7 expanded rows kept across refresh/apply, M8 expander button + focus restore, M9 grouped plan / preview / results.
 
-Open: Low items in §3.
+Done (Low items, fourth round):
+
+- Solution XRay: X7 Hide system tables (no publisher prefix, same rule as Risk) + one Other collections card; X8 install-order reasons expand.
+- EnvVar Matrix: E9 per-cell diff tint, badge tooltips, Compact badges; E10 Hide skipped in previews, run log filters, Only ready + solution scope on Flows that are off, select-all-shown.
+- Access Checker: A8 verdict / depth tooltips + Depth legend, teams +N, notes folded, no repeated single-path Why text.
+- Dependency Cleaner: D8 Layers fold per blocker, report-only fix label, Findings exports only on Diagnose.
+- D365 Apps: P8 Environments dialog ticked count + type filter, preview folds per environment, readable checkbox labels, long names cut.
+- Offboarding Wizard: O9 notes once per card, friendly headers, relevant plan options only, per-card filter; queue checkbox reason, aria-live progress.
+- Audit Matrix: M10 lock reasons on hover, no comparison columns without a comparison.
+
+All audit items are done. Fixed in passing: Audit Matrix "Compare with: none" snapping back; EnvVar endless retry on a failed solution flow read.
