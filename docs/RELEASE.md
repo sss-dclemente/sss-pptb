@@ -107,7 +107,7 @@ Real-env test, Upgrade blockers (1.1.0; published to npm 2026-10-02 before this 
 - [ ] Remove from app on the page blocker: backup saved, `RemoveAppComponents` succeeds, the app no longer lists the page after publish, re-analysis drops the blocker. Restore puts the page back.
 - [ ] Runtime breaks: a JS web resource calling `navigateTo` with the page name is listed.
 - [ ] Exports: Markdown checklist and CSV.
-- [x] 1.1.1 (2026-10-02): Diagnose and Upgrade blockers failed on their first query with `0x80060888: Could not find a property named '_rootsolutioncomponentid_value'` (first real-environment debug log). `rootsolutioncomponentid` is a Uniqueidentifier column, not a lookup; the e2e mocks now reject the wrong name like Dataverse does.
+- [x] 1.1.1 (published to npm 2026-10-02): Diagnose and Upgrade blockers failed on their first query with `0x80060888: Could not find a property named '_rootsolutioncomponentid_value'` (first real-environment debug log). `rootsolutioncomponentid` is a Uniqueidentifier column, not a lookup; the e2e mocks now reject the wrong name like Dataverse does.
 
 Publish:
 ```bash
