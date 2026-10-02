@@ -78,3 +78,13 @@ Use a connection with the Power Platform API enabled, Debug log on, and one envi
 - [ ] Install response: 200 with `lastOperation.operationId`, or 202 with no body?
 - [ ] `operations/{id}`: the `status` values seen through a full install.
 - [ ] Is `@odata.nextLink` used on either list, and in which casing?
+
+## 6. Probe results (real tenant, 2026-10-02, debug log of 0.1.0; 5 environments, 34 installs)
+
+- **D5 confirmed**: the `NotInstalled` list carries the newer version of an installed package under the same `uniqueName`. Derived updates installed and succeeded.
+- Install response: 200 with `lastOperation.operationId` (and `packageUniqueName`, `packageVersion`, `lastOperation.state` = `InstallRequested`). Operation status went `NotStarted` → `Running` → `Succeeded` in about 2 minutes.
+- List entries carry errors in **`errorDetails`** (not `lastError`), e.g. `PDS retrying: Deployment was interrupted.` Fixed in 0.1.1.
+- **Two of four environments refused every install with a bare `HTTP 400`** within about 200 ms; the same packages installed in the other two. The host does not pass the response body on, so the reason is not visible. 0.1.1 explains the usual causes on a bare 400 and stops an environment's queue after two refusals in a row instead of sending every remaining install.
+- No paging on either list (a single page per environment).
+- Debug log caps (12 000 chars per line, 25 array items) hid most packages of a list response; raised to 64 000 and 60 in the shared debug module.
+

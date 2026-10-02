@@ -169,3 +169,34 @@ test("exports: matrix CSV, pac script per environment, results CSV", () => {
   items[0].message = "=cmd";
   assert.ok(M.resultsCsv(items).includes(",'=cmd,"), "formula cells neutralised");
 });
+
+// ---- shapes and messages seen on a real tenant (debug log 2026-10-02) ----
+const REAL_400 = new Error("Error invoking remote method 'powerplatform.request': Error: Power Platform request failed: HTTP 400");
+
+test("real host error: wrapper stripped; bare 400 gets the usual causes", () => {
+  assert.equal(M.errText(REAL_400), "HTTP 400");
+  assert.match(M.refusalMessage(REAL_400), /^HTTP 400: the environment refused the install\. Usual causes: another install/);
+  assert.equal(M.refusalMessage(new Error("Power Platform request failed: HTTP 409: conflict")), "HTTP 409: conflict");
+});
+
+test("real list entry: errorDetails carries the failure message", () => {
+  const p = M.normalizePackage({ uniqueName: "msdyn_PowerAppsCheckerAnchor", version: "2.2.3321.1", state: "InstallFailed", errorDetails: { errorName: "InternalServerError", message: "PDS retrying: Deployment was interrupted." }, customHandleUpgrade: false });
+  assert.deepEqual([p.state, p.error], ["InstallFailed", "PDS retrying: Deployment was interrupted."]);
+});
+
+test("real install response: operationId in lastOperation", async () => {
+  const pp = { AppManagement: { Post: async () => ({ id: "c0b1", packageUniqueName: "msdyn_ContactCenterRTAAnchor", packageVersion: "1.1.26085.1002", lastOperation: { state: "InstallRequested", operationId: "27655005-af5b-4dbd-8f75-18683e0893ab" } }) } };
+  assert.equal(await M.startInstall(pp, "env", "msdyn_ContactCenterRTAAnchor"), "27655005-af5b-4dbd-8f75-18683e0893ab");
+});
+
+test("runInstalls: an environment that refuses two installs in a row is not asked again", async () => {
+  const posts = [];
+  const pp = { AppManagement: { Post: async (path) => { posts.push(path); if (path.includes("env-bad")) throw REAL_400; return { lastOperation: { operationId: "op" } }; }, Get: async () => ({ status: "Succeeded" }) } };
+  const mk = (envId, n) => ({ env: env(envId), uniqueName: `p${n}`, name: `p${n}`, action: "update", from: "1", to: "2", customHandleUpgrade: false });
+  const items = M.toRunItems([mk("env-bad", 1), mk("env-bad", 2), mk("env-bad", 3), mk("env-bad", 4), mk("env-ok", 5)]);
+  await M.runInstalls({ pp, items, pollMs: 0, sleep: async () => {}, onChange: () => {}, stopped: () => false });
+  assert.deepEqual(items.map((i) => i.status), ["failed", "failed", "stopped", "stopped", "succeeded"]);
+  assert.equal(posts.filter((p) => p.includes("env-bad")).length, 2, "only two POSTs to the refusing environment");
+  assert.match(items[2].message, /refused the previous 2 installs/);
+  assert.match(items[0].message, /Usual causes/);
+});

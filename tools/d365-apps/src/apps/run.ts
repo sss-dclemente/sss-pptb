@@ -22,6 +22,16 @@ export interface RunOptions {
 export const toRunItems = (plan: PlannedInstall[]): RunItem[] => plan.map((p) => ({ ...p, status: "queued", operationId: null, message: null, startedAt: null, endedAt: null }));
 
 const MAX_POLL_ERRORS = 5;
+/** consecutive refused installs after which the rest of that environment's queue is not started */
+export const MAX_REFUSED = 2;
+
+/** The host returns no response body, so a bare HTTP 400 gets the usual causes appended. */
+export function refusalMessage(e: unknown): string {
+  const m = errText(e);
+  return /^HTTP 400\s*$/i.test(m.trim())
+    ? "HTTP 400: the environment refused the install. Usual causes: another install or update is already running there, the app needs a prerequisite app first, or the environment does not allow it (Dynamics 365 apps not enabled, wrong environment type). Check PPAC → the environment → Dynamics 365 apps."
+    : m;
+}
 
 export async function runInstalls(o: RunOptions): Promise<void> {
   const sleep = o.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
@@ -37,17 +47,25 @@ export async function runInstalls(o: RunOptions): Promise<void> {
   for (const it of o.items) groups.set(it.env.id, [...(groups.get(it.env.id) ?? []), it]);
 
   const runEnv = async (list: RunItem[]) => {
+    let refused = 0;
     for (const it of list) {
       if (o.stopped()) {
         set(it, { status: "stopped", message: "not started" });
+        continue;
+      }
+      // an environment that refused two installs in a row refuses the rest too (seen on a real tenant): stop asking
+      if (refused >= MAX_REFUSED) {
+        set(it, { status: "stopped", message: `not started: the environment refused the previous ${MAX_REFUSED} installs` });
         continue;
       }
       set(it, { status: "starting", startedAt: new Date().toISOString() });
       let opId: string | null;
       try {
         opId = await startInstall(o.pp, it.env.id, it.uniqueName);
+        refused = 0;
       } catch (e) {
-        set(it, { status: "failed", message: errText(e) });
+        refused++;
+        set(it, { status: "failed", message: refusalMessage(e) });
         continue;
       }
       set(it, { status: "running", operationId: opId, message: opId ? null : "no operation id: watching the package state" });

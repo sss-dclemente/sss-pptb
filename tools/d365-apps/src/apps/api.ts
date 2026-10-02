@@ -27,7 +27,11 @@ export interface PpLike {
 const str = (v: unknown): string | null => (typeof v === "string" && v.trim() ? v.trim() : null);
 const obj = (v: unknown): Obj => (v && typeof v === "object" ? (v as Obj) : {});
 
-export const errText = (e: unknown): string => String((e as Error)?.message ?? e).replace(/^Power Platform request failed:\s*/i, "");
+/** The host wraps errors as "Error invoking remote method 'powerplatform.request': Error: Power Platform request failed: HTTP 400". */
+export const errText = (e: unknown): string =>
+  String((e as Error)?.message ?? e)
+    .replace(/^.*Power Platform request failed:\s*/is, "")
+    .replace(/^Error invoking remote method '[^']*':\s*(Error:\s*)?/i, "");
 
 /** Failures that mean the connection is not set up for the Power Platform API (or lacks a permission). */
 export function isSetupError(e: unknown): boolean {
@@ -96,7 +100,8 @@ export function normalizePackage(r: Obj): Package | null {
     state: str(r.state) ?? str(last.state) ?? "",
     publisher: str(r.publisherName),
     customHandleUpgrade: r.customHandleUpgrade === true,
-    error: str(obj(r.lastError).message) ?? str(obj(last.errorDetails).message),
+    // list entries carry `errorDetails` (seen on a real tenant); `lastError` is the documented name
+    error: str(obj(r.errorDetails).message) ?? str(obj(r.lastError).message) ?? str(obj(last.errorDetails).message),
     learnMoreUrl: str(r.learnMoreUrl),
   };
 }

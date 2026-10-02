@@ -145,7 +145,11 @@ const MOCK = `
       return { value: idsIn(q, 'appmoduleid').filter((id) => E.apps[id]).map((id) => project(E.apps[id], q)) };
     }
     if (q.startsWith('systemforms?')) return { value: idsIn(q, 'formid').filter((id) => E.forms[id]).map((id) => project(E.forms[id], q)) };
-    if (q.startsWith('webresourceset?') && q.includes('webresourcetype eq 3')) return { value: Object.values(E.webresources ?? {}).filter((w) => w.content).map((w) => ({ ...w })) };
+    if (q.startsWith('webresourceset?') && q.includes('webresourcetype eq 3')) {
+      // the real host fails to parse one response with every JS file's content (Parse Error: JS Exception)
+      if (sel(q).includes('content')) throw new Error('Dataverse queryData failed: Request failed: Parse Error: JS Exception');
+      return { value: Object.values(E.webresources ?? {}).filter((w) => w.content).map((w) => project(w, q)) };
+    }
     if (q.startsWith('webresourceset?')) return { value: idsIn(q, 'webresourceid').filter((id) => E.webresources?.[id]).map((id) => project(E.webresources[id], q)) };
     if (q.startsWith('sitemaps?')) return { value: (E.sitemaps ?? []).map((s) => ({ ...s })) };
     throw new Error('mock: unexpected query (' + target + ') ' + q);

@@ -9,11 +9,11 @@ declare const __TOOL_VERSION__: string | undefined;
 
 export type DebugLevel = "info" | "warn" | "error";
 
-const MAX_BYTES = 5_000_000;
+const MAX_BYTES = 8_000_000;
 const MAX_STRING = 1500;
-const MAX_ITEMS = 25;
+const MAX_ITEMS = 60;
 const MAX_DEPTH = 6;
-const MAX_LINE = 12_000;
+const MAX_LINE = 64_000;
 const SECRET = /secret|password|passwd|token|authorization|cookie|credential|apikey|api_key/i;
 
 let tool = "sss-tool";
@@ -118,7 +118,7 @@ export function dlog(level: DebugLevel, category: string, message: string, data?
 export function debugText(context: Record<string, unknown> = {}): string {
   const head = [
     `SSS ${tool} ${toolVersion()} debug log`,
-    `saved ${new Date().toISOString()}, ${lines.length} lines${dropped ? `, ${dropped} oldest dropped (5 MB cap)` : ""}`,
+    `saved ${new Date().toISOString()}, ${lines.length} lines${dropped ? `, ${dropped} oldest dropped (8 MB cap)` : ""}`,
     ...Object.entries(context).map(([k, v]) => `${k}: ${format(v)}`),
     "Secrets are redacted by key name; record data in responses is included (truncated). Review before sharing.",
     "-".repeat(80),
