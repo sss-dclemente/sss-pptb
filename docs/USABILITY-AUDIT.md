@@ -1,7 +1,7 @@
 # Usability audit — show / hide what matters
 
 Scope: all 7 tools. Question: can the user hide the noise and reveal the part of the content they need?
-Method: read each tool's UI code, built it, ran its mocked e2e, reviewed screenshots. Read-only — no code changed.
+Method: read each tool's UI code, built it, ran its mocked e2e, reviewed screenshots. Fix status in §5.
 Checked per screen: collapse/expand (+ visible affordance, expand/collapse all), filters + "N of M" counts, column visibility, noise hidden by default, detail on demand, empty states + "Clear filters", persistence of toggles, ARIA.
 
 Severity: **H** = user misses or misreads content / acts on rows they cannot see · **M** = slow to reach content · **L** = polish.
@@ -135,3 +135,20 @@ Has: text search, Audit on/off/all, Only differences, Layer custom/managed, Has 
 2. **Bugs** from §2 (7 items, each small and independently testable in the existing e2e mocks).
 3. **High per-tool items** that make the user miss content: X1, E2, A2/A3, D1/D2, P2, O1/O3, M2/M3.
 4. Medium/low as each tool's next minor version.
+
+## 5. Status
+
+Done (shared pass + §2 bugs), each covered by new e2e assertions:
+
+- **Shared:** S1 chevron (`details.card`, `summary.chev`), S2 `foldAllButtons`, S3 `foldCard` / `keepFold` keys (only user folds are remembered), S4 `view-state.ts` (`persistControls`, `loadView` / `saveView`), S5 `shownOf` + `filteredEmpty`, S6 tab ARIA + arrow keys and `aria-live` status, S7 toolbar button grouping, S8 `.sticky-col`.
+- **Bugs (§2):** all 7 fixed.
+- **Wired per tool:**
+  - Solution XRay: X2, fold keys, expand/collapse all, saved "Hide root-component rows".
+  - EnvVar Matrix: E1, E3, E8, Clear filters, saved filters + Solution + tab.
+  - Access Checker: A1, A2, expand/collapse all on Why.
+  - Dependency Cleaner: upgrade fold keys + expand/collapse all, saved toggles, Diagnose empty-state action.
+  - D365 Apps: P1, P3, count + Clear filters, saved filters.
+  - Offboarding Wizard: O1, O2, O5, O7, expand/collapse all.
+  - Audit Matrix: M1, M4, M5, saved filters.
+
+Open: every other per-tool High / Med / Low item in §3.
