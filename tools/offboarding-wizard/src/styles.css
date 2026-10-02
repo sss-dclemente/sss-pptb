@@ -110,3 +110,10 @@ table.results td:last-child { min-width: 120px; }
 .preview-ops { max-width: 100%; overflow-x: auto; }
 .preview-more { padding: var(--s-2) 0; }
 .preview-body .notes { margin: 0; }
+
+/* Inventory: category-wide note said once, per-card item filter; plan options off when moot */
+.cat-note { margin: 0 0 var(--s-2); }
+.cat-items { gap: var(--s-2); padding-top: 0; }
+.cat-items input[type="search"] { max-width: 220px; }
+.card-head .hint[title] { cursor: help; }
+.opts label.is-off { color: var(--fg-muted); cursor: not-allowed; }

@@ -25,6 +25,7 @@ import {
   type CategoryKey,
   type CategoryResult,
   type Inventory,
+  type InventoryItem,
   type LeaverInfo,
   type OpResult,
   type Plan,
@@ -51,6 +52,10 @@ let resultView: "failed" | "all" | null = null;
 const selectedCats = new Set<CategoryKey>();
 /** "Filter tables" inside the records card: narrows the rows shown, never what is scanned or planned. */
 let scanRowFilter = "";
+/** Per-card "Filter items" text for categories over CARD_FILTER_MIN items; view only, reset with the leaver. */
+const catFilters = new Map<CategoryKey, string>();
+/** A category card gets its own filter box once it lists more than this many items. */
+const CARD_FILTER_MIN = 20;
 const selectedTables = new Set<string>();
 const opts = { roleCopy: true, roleRemove: false, profileCopy: true, profileRemove: false, teamRemove: true, teamAdd: false, recordCap: DEFAULT_RECORD_CAP };
 const SCAN_CONCURRENCY = 6;
@@ -166,6 +171,7 @@ async function pickLeaver(u: UserInfo): Promise<void> {
   selectedCats.clear();
   selectedTables.clear();
   scanRowFilter = "";
+  catFilters.clear();
   inventory = null;
   lastPlan = null;
   lastResults = null;
@@ -248,14 +254,80 @@ async function runScan(): Promise<void> {
   await notify("Scan finished", `${scan.rows.length} table(s) with records, ${scan.failed.length} not scanned`, scan.failed.length ? "warning" : "success");
 }
 
-const foldHead = (cb: HTMLElement, label: string, hint: string, ...count: Node[]): HTMLElement =>
-  h("summary", {}, h("div", { class: "card-head" }, cb, h("span", { class: "label" }, label), h("span", { class: "caption" }, hint), h("span", { class: "count" }, ...count)));
+/** `hint` is plain language; `source` (the entity set or relationship behind it) is only its tooltip. */
+const foldHead = (cb: HTMLElement, label: string, hint: string, source: string | undefined, ...count: Node[]): HTMLElement =>
+  h(
+    "summary",
+    {},
+    h("div", { class: "card-head" }, cb, h("span", { class: "label" }, label), h("span", { class: "caption hint", title: source }, hint), h("span", { class: "count" }, ...count)),
+  );
 
 /** Inventory folds keep their open/closed state across re-renders, per leaver (see keepFold). */
 const invFold = (el: HTMLDetailsElement, key: string, defaultOpen: boolean): HTMLDetailsElement => keepFold(el, `inv:${leaver?.user.id ?? ""}:${key}`, defaultOpen);
 
+/** Why a category's include box is disabled, for its `title`; null when it can be ticked. */
+function catDisabledReason(c: CategoryResult): string | null {
+  if (c.error) return `${c.label} could not be read, so nothing in it can be planned`;
+  if (!c.writable) return `${c.label} are listed only: this tool does not change them. Handle them by hand (see Remaining manual steps on the Report tab)`;
+  if (!c.items.length) return `Nothing held in ${c.label}`;
+  return null;
+}
+
+/** Friendly detail text plus the raw value as its tooltip: a connector's display form, a table's display name. */
+function itemDetail(c: CategoryResult, i: InventoryItem): { text: string; title?: string } {
+  if (i.metaLabel) return { text: i.metaLabel, title: i.meta };
+  if ((c.key === "userqueries" || c.key === "usercharts") && i.meta) {
+    const t = tables.find((x) => x.logicalName === i.meta);
+    if (t) return { text: t.displayName, title: i.meta };
+  }
+  return { text: i.meta };
+}
+
+const itemRow = (c: CategoryResult, i: InventoryItem): (Node | string)[] => {
+  const d = itemDetail(c, i);
+  // the category-wide note is said once above the table: the row keeps a short pointer, full text on hover
+  const flag = !i.flag ? "" : i.flag === c.note ? h("span", { class: "flag", title: i.flag }, "see note") : h("span", { class: "flag" }, i.flag);
+  return [i.label, h("span", { class: "caption", title: d.title }, d.text), flag];
+};
+
+/**
+ * The category's item table; past CARD_FILTER_MIN items it gets its own "Filter items" box (same pattern
+ * as the records card's "Filter tables"). Typing re-renders only the rows, so the input keeps focus.
+ */
+function itemsView(c: CategoryResult): HTMLElement {
+  const tableOf = (items: InventoryItem[]): HTMLElement => table(["Name", "Detail", "Note"], items.map((i) => itemRow(c, i)), undefined, `detail-table cat-${c.key}`);
+  if (c.items.length <= CARD_FILTER_MIN) return tableOf(c.items);
+  const input = h("input", { type: "search", placeholder: "Filter items", "aria-label": `Filter ${c.label}`, "data-cat-filter": c.key });
+  input.value = catFilters.get(c.key) ?? "";
+  const caption = h("span", { class: "count-caption", "data-cat-count": c.key });
+  const clear = h("button", { class: "btn btn-ghost btn-sm", type: "button", "data-cat-clear": c.key }, "Clear");
+  const list = h("div", {});
+  const reset = (): void => {
+    input.value = "";
+    catFilters.delete(c.key);
+    draw();
+    input.focus();
+  };
+  const draw = (): void => {
+    const q = input.value.trim();
+    const f = q.toLowerCase();
+    const rows = f ? c.items.filter((i) => [i.label, i.meta, itemDetail(c, i).text].some((t) => t.toLowerCase().includes(f))) : c.items;
+    caption.textContent = shownOf(rows.length, c.items.length, "items");
+    clear.hidden = !f;
+    list.replaceChildren(rows.length ? tableOf(rows) : filteredEmpty("No items match", `Nothing in ${c.label} matches “${q}”.`, reset));
+  };
+  input.addEventListener("input", () => {
+    catFilters.set(c.key, input.value);
+    draw();
+  });
+  clear.addEventListener("click", reset);
+  draw();
+  return h("div", { class: "stack cat-items" }, h("div", { class: "row" }, input, caption, clear), list);
+}
+
 function categoryCard(c: CategoryResult): HTMLElement {
-  const cb = check({ "aria-label": `Include ${c.label}`, "data-cat": c.key }, selectedCats.has(c.key), !c.writable || !c.items.length || !!c.error, (v) => {
+  const reason = catDisabledReason(c);
+  const cb = check({ "aria-label": `Include ${c.label}`, "data-cat": c.key, ...(reason ? { title: reason } : {}) }, selectedCats.has(c.key), !!reason, (v) => {
     if (v) selectedCats.add(c.key);
     else selectedCats.delete(c.key);
     updatePlanSummary();
@@ -263,12 +335,12 @@ function categoryCard(c: CategoryResult): HTMLElement {
   const body = c.error
     ? h("div", { class: "danger-box" }, `Could not read this category: ${c.error}`)
     : c.items.length
-      ? table(["Name", "Detail", "Note"], c.items.map((i) => [i.label, h("span", { class: "caption" }, i.meta), i.flag ? h("span", { class: "flag" }, i.flag) : ""]), undefined, `detail-table cat-${c.key}`)
+      ? h("div", {}, c.note ? h("p", { class: "caption cat-note", "data-cat-note": c.key }, h("strong", {}, "Note: "), c.note) : null, itemsView(c))
       : h("p", { class: "caption" }, "Nothing held in this category.");
   // A flag is a consequence the user must see before planning (e.g. an active flow that breaks), so a
   // category holding any flagged item starts open and says how many in its header.
   const flagged = c.error ? 0 : c.items.filter((i) => i.flag).length;
-  const head = foldHead(cb, c.label, c.hint, ...(flagged ? [badge(`${flagged} flagged`, "warn")] : []), c.error ? badge("error", "bad") : badge(String(c.items.length), "neutral"));
+  const head = foldHead(cb, c.label, c.hint, c.source, ...(flagged ? [badge(`${flagged} flagged`, "warn")] : []), c.error ? badge("error", "bad") : badge(String(c.items.length), "neutral"));
   return invFold(h("details", { class: "card", "data-cat": c.key }, head, h("div", { class: "card-body" }, body)), c.key, flagged > 0 || !!c.error);
 }
 
@@ -304,7 +376,7 @@ function recordsCard(): HTMLElement {
       );
   const count = badge(scan ? `${total} in ${scan.rows.length} tables` : "not scanned", scan?.rows.length ? "warn" : "neutral");
   return invFold(
-    h("details", { class: "card", "data-cat": "records" }, foldHead(cb, "Records owned per table", "one count request per owned table", count), h("div", { class: "card-body" }, body)),
+    h("details", { class: "card", "data-cat": "records" }, foldHead(cb, "Records owned per table", "one count request per owned table", undefined, count), h("div", { class: "card-body" }, body)),
     "records",
     !!scan?.rows.length,
   );
@@ -387,6 +459,43 @@ function renderInventory(): void {
 }
 
 // ---------- 3. plan & apply ----------
+/** The category each per-category option acts on: the option is moot while that category is empty or unticked. */
+const OPT_CAT: Partial<Record<keyof typeof opts, CategoryKey>> = {
+  roleCopy: "roles",
+  roleRemove: "roles",
+  profileCopy: "fieldprofiles",
+  profileRemove: "fieldprofiles",
+  teamRemove: "teams",
+  teamAdd: "teams",
+};
+
+/** Why an option does nothing right now (its category empty, unreadable or not ticked), or null. */
+function optOffReason(cat: CategoryKey): string | null {
+  const c = inventory?.categories.find((x) => x.key === cat);
+  if (!c) return null;
+  if (c.error) return `${c.label} could not be read`;
+  if (!c.items.length) return `The leaver holds no ${c.label.toLowerCase()}`;
+  if (!selectedCats.has(cat)) return `${c.label} is not ticked on the Inventory tab`;
+  return null;
+}
+
+/**
+ * Disable each per-category option whose category is empty or not selected, the reason in `title`.
+ * Its own value is kept, so ticking the category again restores what the user chose.
+ */
+function syncOptions(): void {
+  document.querySelectorAll<HTMLInputElement>("#tab-plan input[data-opt]").forEach((cb) => {
+    const cat = OPT_CAT[cb.dataset.opt as keyof typeof opts];
+    if (!cat) return;
+    const reason = optOffReason(cat);
+    const label = cb.closest("label");
+    cb.disabled = !!reason;
+    label?.classList.toggle("is-off", !!reason);
+    if (reason) label?.setAttribute("title", reason);
+    else label?.removeAttribute("title");
+  });
+}
+
 function optionsCard(): HTMLElement {
   const box = (labelText: string, key: keyof typeof opts): HTMLElement =>
     h("label", {}, check({ "data-opt": key }, opts[key] === true, false, (v) => {
@@ -465,6 +574,7 @@ const recordTarget = (): OwnerTarget | null =>
 function updatePlanSummary(): void {
   const el = document.querySelector("#plan-summary");
   if (!el || !inventory) return;
+  syncOptions();
   const rows = estimateCounts(inventory, { categories: selectedCats, tables: selectedTables, ...opts });
   const total = rows.reduce((n, r) => n + r.count, 0);
   el.replaceChildren(

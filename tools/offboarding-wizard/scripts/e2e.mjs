@@ -18,6 +18,8 @@
 //           "share to previous owner on assign" OFF; OwnershipType as the metadata API's flags integer.
 //   v=big   one table with more rows than a single page, so @odata.count saturates at 5 000.
 //   v=sparse the leaver holds no personal chart and no connection: two empty categories.
+//   v=many  24 personal views (past the 20 that earn a card its own filter), 3 connection references
+//           sharing one note, and no field security profile (so the profile options are moot).
 //
 // Run: npm run build && node scripts/e2e.mjs   (needs playwright + chromium available)
 // Set E2E_SHOTS=1 to refresh docs/img/*.png from this run.
@@ -177,6 +179,17 @@ const MOCK = `
     sets.userqueryvisualizations.rows = [];
     sets.connections.rows = [];
   }
+  if (VARIANT === 'many') {
+    sets.userqueries.rows = Array.from({ length: 24 }, (_, i) => ({
+      userqueryid: '20000000-0000-0000-0000-' + String(i + 1).padStart(12, '0'), name: 'View ' + String(i + 1).padStart(2, '0'),
+      returnedtypecode: i % 2 ? 'contact' : 'account', _ownerid_value: ANA,
+    }));
+    sets.connectionreferences.rows = [1, 2, 3].map((n) => ({
+      connectionreferenceid: '50000000-0000-0000-0000-00000000000' + n, connectionreferencedisplayname: 'Ref ' + n,
+      connectionreferencelogicalname: 'sss_ref' + n, connectorid: '/providers/Microsoft.PowerApps/apis/shared_office365', _ownerid_value: ANA,
+    }));
+    expand.systemuserprofiles_association[ANA] = [];
+  }
   if (VARIANT === 'big') {
     sets.sss_bigs = { key: 'sss_bigid', rows: Array.from({ length: PAGE_LIMIT + 1 }, (_, i) => ({ sss_bigid: BIG(i), sss_name: 'Big ' + i, _ownerid_value: ANA })) };
     entities.push({ LogicalName: 'sss_big', DisplayName: lbl('Big table'), EntitySetName: 'sss_bigs', PrimaryNameAttribute: 'sss_name', PrimaryIdAttribute: 'sss_bigid', OwnershipType: OWNED, IsIntersect: false, IsPrivate: false, IsLogicalEntity: false });
@@ -247,6 +260,42 @@ assert(inv.includes("Dani Lopes"), "direct report listed");
 assert(inv.includes("Not scanned yet"), "records category starts unscanned");
 assert(inv.includes("business unit default team — membership managed by Dataverse"), "business unit default team listed and flagged, not hidden");
 
+// ---- O9: a category-wide note said once, technical names as tooltips, read-only reason, aria-live ----
+const o9 = await page.evaluate(() => {
+  const card = (k) => document.querySelector(`#inventory-cards details[data-cat='${k}']`);
+  const notes = (k) => [...card(k).querySelectorAll("tbody td:last-child")].map((td) => ({ text: td.textContent, title: td.querySelector(".flag")?.title ?? "" }));
+  const hint = (k) => card(k).querySelector("summary .hint");
+  const detail = (k) => card(k).querySelector("tbody td:nth-child(2) span");
+  const q = document.querySelector("input[data-cat='queuemembership']");
+  return {
+    refNote: card("connectionreferences").querySelectorAll(".cat-note").length === 1 ? card("connectionreferences").querySelector(".cat-note").textContent : null,
+    connNote: card("connections").querySelector(".cat-note")?.textContent ?? null,
+    refRows: notes("connectionreferences"),
+    connRows: notes("connections"),
+    teamsHint: { text: hint("teams").textContent, title: hint("teams").title },
+    rolesHint: { text: hint("roles").textContent, title: hint("roles").title },
+    headers: [...document.querySelectorAll("#inventory-cards summary")].map((x) => x.textContent).join(" | "),
+    connector: { text: detail("connectionreferences").textContent, title: detail("connectionreferences").title },
+    view: { text: detail("userqueries").textContent, title: detail("userqueries").title },
+    queue: { disabled: q.disabled, title: q.title },
+    workflowsNote: card("workflows").querySelector(".cat-note"),
+    progressLive: document.querySelector("#progress").getAttribute("aria-live"),
+    filters: document.querySelectorAll("#inventory-cards [data-cat-filter]").length,
+  };
+});
+assert(o9.refNote?.startsWith("Note: the underlying connection stays with the leaver") && o9.refNote.includes("only supported route"), "connection reference note said once, in full, in the card: " + o9.refNote);
+assert(o9.connNote?.includes("does not re-authenticate it"), "connection note said once in the card");
+assert(o9.refRows.length === 1 && o9.refRows[0].text === "see note" && o9.refRows[0].title.includes("only supported route"), "connection reference row keeps a short “see note” flag with the full text as its tooltip");
+assert(o9.connRows.every((r) => r.text === "see note"), "connection rows say “see note”, not the long text");
+assert(o9.teamsHint.text === "teams the leaver is a member of" && o9.teamsHint.title === "teammembership_association", "team card header: friendly hint, relationship name as tooltip");
+assert(o9.rolesHint.title === "systemuserroles_association" && !o9.headers.includes("_association") && !o9.headers.includes("userqueryvisualizations"), "no raw relationship or entity set name in any card header");
+assert(o9.connector.text === "sharepointonline connector" && o9.connector.title === "shared_sharepointonline", "connector id shown friendly, raw id as tooltip: " + JSON.stringify(o9.connector));
+assert(o9.view.text === "Account" && o9.view.title === "account", "a view's table shown by display name, logical name as tooltip: " + JSON.stringify(o9.view));
+assert(o9.queue.disabled && o9.queue.title.includes("this tool does not change them") && o9.queue.title.includes("manual steps"), "disabled Queue memberships checkbox says why: " + o9.queue.title);
+assert(o9.workflowsNote === null, "no note caption on a category whose flags differ per row");
+assert(o9.progressLive === "polite", "#progress is a polite live region");
+assert(o9.filters === 0, "no per-card filter on categories of 20 items or fewer");
+
 // ---- inventory folds: flagged categories open, state kept across re-renders ----
 const isOpen = (cat) => page.$eval(`#inventory-cards details[data-cat='${cat}']`, (d) => d.open);
 const head = (cat) => page.textContent(`#inventory-cards details[data-cat='${cat}'] summary`);
@@ -316,6 +365,20 @@ assert(!(await page.$eval("#btn-preview", (b) => b.disabled)), "preview enabled 
 // default options: copy roles + profiles, remove from teams, do not remove from leaver
 const summary = await text("#plan-summary");
 assert(summary.includes("Security roles") && summary.includes("Team memberships"), "summary lists the selected categories");
+// O9: an option whose category is not ticked is disabled with the reason; ticking it back restores the choice
+const optState = (k) => page.$eval(`input[data-opt='${k}']`, (e) => ({ disabled: e.disabled, checked: e.checked, title: e.closest("label").title }));
+assert(!(await optState("roleCopy")).disabled && (await optState("roleCopy")).title === "", "role options enabled while roles are ticked");
+await tab("inventory");
+await page.uncheck("input[data-cat='roles']");
+await tab("plan");
+let rc = await optState("roleCopy");
+assert(rc.disabled && rc.checked && rc.title === "Security roles is not ticked on the Inventory tab" && (await optState("roleRemove")).disabled, "role options disabled with the reason once roles are unticked: " + JSON.stringify(rc));
+assert(!(await optState("teamRemove")).disabled && !(await optState("profileCopy")).disabled, "options of other ticked categories stay enabled");
+await tab("inventory");
+await page.check("input[data-cat='roles']");
+await tab("plan");
+rc = await optState("roleCopy");
+assert(!rc.disabled && rc.checked && rc.title === "", "re-ticking roles re-enables the options with the choice kept");
 await page.check("input[data-opt='roleRemove']");
 await page.check("input[data-opt='teamAdd']");
 await shot("plan");
@@ -592,6 +655,62 @@ assert(big.okLabel === `Apply ${opCount(big.body)}`, "the confirm button still c
   v = await view();
   assert(v.checked === false && !v.charts && !v.conns && v.caption?.startsWith("Nothing held in:"), "switching it off is remembered too");
   assert(errs.length === 0, "no errors in the empty-categories run: " + errs.join(" | "));
+  await ctx.close();
+}
+
+// ---- 8. many items: per-card filter, one note for many rows, options moot for an empty category ----
+{
+  const ctx = await browser.newContext({ viewport: { width: 1400, height: 900 } });
+  await ctx.addInitScript(MOCK);
+  const p = await ctx.newPage();
+  const errs = [];
+  p.on("pageerror", (e) => errs.push("pageerror: " + e.message));
+  await p.goto(`file://${TOOL}/dist/index.html?v=many`);
+  await p.fill("#leaver-q", "ana");
+  await p.waitForSelector("#leaver-results li button");
+  await p.click("#leaver-results li button");
+  await p.waitForFunction(() => document.querySelector("#leaver-kv")?.textContent.includes("Ana Silva"));
+  await p.click(".tab[data-tab='inventory']");
+  await p.waitForSelector("#inventory-cards");
+  const F = "input[data-cat-filter='userqueries']";
+  const rows = () => p.$$eval("#inventory-cards details[data-cat='userqueries'] tbody tr", (r) => r.length);
+  const cnt = () => p.textContent("[data-cat-count='userqueries']");
+  const clearHidden = () => p.$eval("[data-cat-clear='userqueries']", (b) => b.hidden);
+  assert((await p.$$("[data-cat-filter]")).length === 1, "only the category over 20 items gets a filter");
+  await p.click("#inventory-cards details[data-cat='userqueries'] summary .label");
+  assert((await rows()) === 24 && (await cnt()) === "24 items" && (await clearHidden()), "unfiltered: every item, “24 items”, no Clear");
+  await p.fill(F, "view 1");
+  assert((await rows()) === 10 && (await cnt()) === "10 of 24 items" && !(await clearHidden()), "card filter narrows its items, “10 of 24 items”, Clear shown: " + (await cnt()));
+  assert(await p.$eval(F, (e) => e === document.activeElement), "card filter keeps focus while typing");
+  await p.click("[data-cat-clear='userqueries']");
+  assert((await rows()) === 24 && (await p.inputValue(F)) === "" && (await clearHidden()), "Clear restores every item");
+  await p.fill(F, "contact");
+  assert((await rows()) === 12, "card filter also matches the detail column (table display name)");
+  await p.fill(F, "zzz");
+  assert((await p.textContent("#inventory-cards details[data-cat='userqueries']")).includes("No items match"), "filtered-out card shows the filtered empty state");
+  await p.click("#inventory-cards details[data-cat='userqueries'] .empty-state button:has-text('Clear filters')");
+  assert((await rows()) === 24, "the empty state's Clear filters restores the items");
+  await p.fill(F, "view 2");
+  await p.check("#scan-show-failed"); // re-renders the inventory
+  assert((await p.inputValue(F)) === "view 2" && (await cnt()) === "5 of 24 items" && (await p.$eval("#inventory-cards details[data-cat='userqueries']", (d) => d.open)), "card filter text and fold survive a re-render");
+  const refs = await p.$eval("#inventory-cards details[data-cat='connectionreferences']", (d) => ({
+    notes: d.querySelectorAll(".cat-note").length,
+    flags: [...d.querySelectorAll("tbody td:last-child")].map((td) => td.textContent),
+    head: d.querySelector("summary").textContent,
+    detail: d.querySelector("tbody td:nth-child(2) span").textContent,
+  }));
+  assert(refs.notes === 1 && refs.flags.length === 3 && refs.flags.every((f) => f === "see note") && refs.head.includes("3 flagged"), "three references: one note, three short flags, still counted as flagged");
+  assert(refs.detail === "office365 connector", "full connector path shortened to its name: " + refs.detail);
+  await p.click(".tab[data-tab='plan']");
+  const prof = await p.$eval("input[data-opt='profileCopy']", (e) => ({ disabled: e.disabled, title: e.closest("label").title }));
+  assert(prof.disabled && prof.title === "The leaver holds no field security profiles", "profile options disabled when the leaver holds none: " + JSON.stringify(prof));
+  assert(!(await p.$eval("input[data-opt='roleCopy']", (e) => e.disabled)), "role options stay enabled");
+  await p.click(".tab[data-tab='report']");
+  await p.click("#btn-export-inv-csv");
+  await p.waitForFunction(() => window.__saved.length === 1);
+  const csvOut = await p.evaluate(() => window.__saved[0].content);
+  assert(csvOut.includes("/providers/Microsoft.PowerApps/apis/shared_office365") && csvOut.split("only supported route").length - 1 === 3, "exports keep the raw connector id and the full note on every row");
+  assert(errs.length === 0, "no errors in the many-items run: " + errs.join(" | "));
   await ctx.close();
 }
 
