@@ -474,4 +474,41 @@ await checkDebugLog(page, assert, {
   ],
 });
 
+// ---- show/hide: sticky name column, count caption, Clear filters, persisted filters + tab, tab ARIA ----
+{
+  const caption = () => page.textContent("#count-caption");
+  await page.waitForFunction(() => document.querySelectorAll("table.matrix tbody tr").length === 5);
+  const pos = await page.$eval("table.matrix tbody td.name", (td) => [getComputedStyle(td).position, getComputedStyle(td).left]);
+  const selPos = await page.$eval("table.matrix tbody td.sel", (td) => getComputedStyle(td).position);
+  assert(pos[0] === "sticky" && selPos === "sticky" && pos[1] === "32px", "name + select columns sticky (name offset " + pos[1] + ")");
+  assert(JSON.stringify(await page.$$eval(".tab", (els) => els.map((e) => e.getAttribute("aria-selected")))) === '["true","false"]', "tabs carry aria-selected");
+  assert((await caption()) === "5 variables", "count caption unfiltered: " + (await caption()));
+  await page.fill("#filter-text", "api");
+  assert((await caption()) === "2 of 5 variables", "count caption filtered: " + (await caption()));
+  await page.check("#filter-diff");
+  await page.fill("#filter-text", "zzz-nothing");
+  assert((await rowNames()).length === 0 && (await page.textContent("#matrix-body")).includes("No environment variables match"), "filtered empty state");
+  await page.click('#matrix-body button:has-text("Clear filters")');
+  assert((await rowNames()).length === 5 && (await page.inputValue("#filter-text")) === "" && !(await page.isChecked("#filter-diff")), "Clear filters restores all rows and resets the controls");
+  assert((await caption()) === "5 variables", "count caption after Clear filters");
+
+  // persisted across reload (the mock init script re-runs, primary = Dev again)
+  await page.fill("#filter-text", "office");
+  await page.selectOption("#filter-solution", "sol1");
+  await page.click('.tab[data-tab="connrefs"]');
+  await page.waitForFunction(() => document.querySelectorAll("table.matrix tbody tr").length === 1);
+  assert((await caption()) === "1 of 2 connection references", "count caption on connection references: " + (await caption()));
+  await page.reload();
+  await page.waitForFunction(() => document.querySelectorAll("#columns .colchip").length === 2);
+  await page.waitForFunction(() => document.querySelector("#filter-solution").value === "sol1" && document.querySelectorAll("table.matrix tbody tr").length === 1, null, { timeout: 5000 }).catch(() => {});
+  assert((await page.inputValue("#filter-text")) === "office", "text filter persisted across reload");
+  assert((await page.inputValue("#filter-solution")) === "sol1", "solution filter persisted across reload");
+  assert((await page.getAttribute('.tab[data-tab="connrefs"]', "aria-selected")) === "true", "active tab persisted across reload");
+  assert(JSON.stringify(await rowNames()) === '["sss_office365"]', "persisted filters applied after reload");
+  await page.fill("#filter-text", "zzz-nothing");
+  await page.click('#matrix-body button:has-text("Clear filters")');
+  await page.waitForFunction(() => document.querySelectorAll("table.matrix tbody tr").length === 2);
+  assert((await page.inputValue("#filter-solution")) === "" && (await caption()) === "2 connection references", "Clear filters also resets the solution filter");
+}
+
 await finish();

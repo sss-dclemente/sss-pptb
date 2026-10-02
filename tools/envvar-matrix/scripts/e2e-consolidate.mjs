@@ -221,8 +221,11 @@ assert(refsOf("f1").includes("sss_sql"), "other connector untouched");
 const dels = writes.filter((w) => w.op === "delete").map((w) => w.id).sort();
 assert(dels.join() === "r2,r3", "unmanaged sources deleted, managed kept (" + dels.join() + ")");
 await page.click("#dlg-cancel");
-await page.waitForFunction(() => document.querySelectorAll(".cons-groups .card").length === 4, null, { timeout: 10000 });
-assert((await page.$eval(".cons-groups", (e) => e.textContent)).includes("sss_o365_m"), "managed ref still listed after merge");
+// wait for the post-merge re-render itself: a check on the old DOM can pass just before the view is rebuilt
+const managedListed = await page
+  .waitForFunction(() => document.querySelectorAll(".cons-groups .card").length === 4 && (document.querySelector(".cons-groups")?.textContent ?? "").includes("sss_o365_m"), null, { timeout: 10000 })
+  .then(() => true, () => false);
+assert(managedListed, "managed ref still listed after merge");
 
 // dependency blocks delete; activation failure reported as left off
 await page.evaluate(() => { window.__mock.failActivate = 'f5'; window.__mock.writes = []; });

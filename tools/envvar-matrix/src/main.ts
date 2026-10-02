@@ -1,5 +1,6 @@
 import { mountDebug } from "../../_shared/debug-ui";
-import { $, badge, card, emptyState, h, showDialog, wireTabs } from "../../_shared/dom";
+import { $, badge, card, emptyState, filteredEmpty, h, showDialog, shownOf, wireTabs } from "../../_shared/dom";
+import { loadView, persistControls, saveView } from "../../_shared/view-state";
 import { dataverse, getConnections, initTheme, inToolbox, notify, onConnectionChange, openText, powerplatform, saveText } from "./host";
 import { deploymentSettings, matrixCsv, safeFileName, snapshot } from "./matrix/export";
 import { fetchColumn, fetchSolutionScope, fetchSolutions, type SolutionInfo } from "./matrix/fetch";
@@ -71,6 +72,22 @@ let fitCache: { solutionId: string; url: string; flowIds: Set<string> } | null =
 let fitLoading: Promise<void> | null = null;
 
 const columns = (): ColumnData[] => [...live, ...snaps];
+
+// ---------- persisted view (per viewer, localStorage) ----------
+const VIEW = "envvar-matrix";
+/** toolbar filters, saved on change and restored now; the Solution filter is restored once its options load */
+const view = persistControls(VIEW, ["filter-text", "filter-diff", "filter-missing", "filter-solution"]);
+/** the saved Solution filter still has to be applied (first load with solutions listed) */
+let restoreSolution = true;
+
+/** Back to the default filters (all solutions) and re-render. */
+function clearFilters(): void {
+  view.reset();
+  selectedSolution = "";
+  scope = null;
+  renderHeader();
+  renderTable();
+}
 
 // ---------- run log ----------
 function safeStorage(): StoreLike | null {
@@ -201,6 +218,11 @@ function filters(): Filters {
 }
 
 // ---------- header + selects ----------
+const solutionOptions = (): HTMLOptionElement[] => [
+  h("option", { value: "" }, "all"),
+  ...solutions.map((s) => h("option", { value: s.id }, `${s.friendlyName} ${s.version}${s.isManaged ? " (managed)" : ""}`)),
+];
+
 function renderHeader(): void {
   const wrap = $("#columns");
   wrap.replaceChildren();
@@ -220,7 +242,7 @@ function renderHeader(): void {
   if (writable.length > 1 && $<HTMLSelectElement>("#copy-to").value === $<HTMLSelectElement>("#copy-from").value) $<HTMLSelectElement>("#copy-to").value = writable[1].key;
 
   const solSel = $<HTMLSelectElement>("#filter-solution");
-  solSel.replaceChildren(h("option", { value: "" }, "all"), ...solutions.map((s) => h("option", { value: s.id }, `${s.friendlyName} ${s.version}${s.isManaged ? " (managed)" : ""}`)));
+  solSel.replaceChildren(...solutionOptions());
   // Dropdown and scope stay in sync: a selection that is no longer listed means "all", never an empty scope.
   if (!solutions.some((s) => s.id === selectedSolution)) {
     selectedSolution = "";
@@ -253,8 +275,8 @@ function envVarTable(rows: EnvVarRow[]): HTMLElement {
   const head = h(
     "tr",
     {},
-    h("th", { class: "sel" }, ""),
-    h("th", {}, "Variable"),
+    h("th", { class: "sel sticky-col" }, ""),
+    h("th", { class: "name sticky-col" }, "Variable"),
     h("th", {}, "Type"),
     ...cols.map(colHead),
   );
@@ -269,8 +291,8 @@ function envVarTable(rows: EnvVarRow[]): HTMLElement {
     return h(
       "tr",
       { class: r.anyMissing || r.anyAbsent ? "missing" : r.differs ? "differs" : undefined },
-      h("td", { class: "sel" }, cb),
-      h("td", { class: "name" }, h("span", { class: "mono" }, r.schemaName), h("span", { class: "display" }, r.displayName)),
+      h("td", { class: "sel sticky-col" }, cb),
+      h("td", { class: "name sticky-col" }, h("span", { class: "mono" }, r.schemaName), h("span", { class: "display" }, r.displayName)),
       h("td", {}, badge(r.type, r.isSecret ? "warn" : "neutral")),
       ...cols.map((c) => {
         if (c.error) return errorCell(c);
@@ -300,7 +322,7 @@ function envVarTable(rows: EnvVarRow[]): HTMLElement {
 
 function connRefTable(rows: Matrix["connRefs"]): HTMLElement {
   const cols = matrix.columns;
-  const head = h("tr", {}, h("th", { class: "sel" }, ""), h("th", {}, "Connection reference"), h("th", {}, "Connector"), ...cols.map(colHead));
+  const head = h("tr", {}, h("th", { class: "sel sticky-col" }, ""), h("th", { class: "name sticky-col" }, "Connection reference"), h("th", {}, "Connector"), ...cols.map(colHead));
   const body = rows.map((r) => {
     const cb = h("input", { type: "checkbox", "aria-label": `Select ${r.logicalName}` }) as HTMLInputElement;
     cb.checked = crSelected.has(r.key);
@@ -312,8 +334,8 @@ function connRefTable(rows: Matrix["connRefs"]): HTMLElement {
     return h(
       "tr",
       { class: r.anyUnbound || r.anyAbsent ? "missing" : r.differs ? "differs" : undefined },
-      h("td", { class: "sel" }, cb),
-      h("td", { class: "name" }, h("span", { class: "mono" }, r.logicalName), h("span", { class: "display" }, r.displayName)),
+      h("td", { class: "sel sticky-col" }, cb),
+      h("td", { class: "name sticky-col" }, h("span", { class: "mono" }, r.logicalName), h("span", { class: "display" }, r.displayName)),
       h("td", {}, r.connector ?? "—"),
       ...cols.map((c) => {
         if (c.error) return errorCell(c);
@@ -335,6 +357,8 @@ function connRefTable(rows: Matrix["connRefs"]): HTMLElement {
 function renderTable(): void {
   const body = $("#matrix-body");
   body.replaceChildren();
+  const caption = $("#count-caption");
+  caption.textContent = "";
   if (!matrix.columns.length) {
     body.append(emptyState("Nothing to show", inToolbox() ? "Select a primary (and optionally secondary) connection in ToolBox, then Refresh." : "Load one or more snapshot files."));
     return;
@@ -347,10 +371,26 @@ function renderTable(): void {
   }
   if (activeTab === "envvars") {
     const rows = filterEnvVars(matrix.envVars, f);
-    body.append(rows.length ? envVarTable(rows) : emptyState("No environment variables match", "Adjust the filters."));
+    const total = matrix.envVars.length;
+    caption.textContent = shownOf(rows.length, total, "variables");
+    body.append(
+      rows.length
+        ? envVarTable(rows)
+        : total
+          ? filteredEmpty("No environment variables match", "The filters hide every variable.", clearFilters)
+          : emptyState("No environment variables", "None in the loaded columns."),
+    );
   } else {
     const rows = filterConnRefs(matrix.connRefs, f);
-    body.append(rows.length ? connRefTable(rows) : emptyState("No connection references match", "Adjust the filters."));
+    const total = matrix.connRefs.length;
+    caption.textContent = shownOf(rows.length, total, "connection references");
+    body.append(
+      rows.length
+        ? connRefTable(rows)
+        : total
+          ? filteredEmpty("No connection references match", "The filters hide every connection reference.", clearFilters)
+          : emptyState("No connection references", "None in the loaded columns."),
+    );
   }
   renderBulkbar();
 }
@@ -1031,6 +1071,14 @@ async function loadLive(): Promise<void> {
   const failed = live.filter((c) => c.meta.error);
   const primaryOk = live.some((c) => c.meta.target === "primary" && !c.meta.error);
   solutions = primaryOk ? await fetchSolutions(api, "primary").catch(() => []) : [];
+  if (restoreSolution && solutions.length) {
+    // the saved Solution filter can only be selected once its option exists
+    restoreSolution = false;
+    const solSel = $<HTMLSelectElement>("#filter-solution");
+    solSel.replaceChildren(...solutionOptions());
+    view.restore();
+    selectedSolution = solSel.value;
+  }
   // The primary may be a different org now: a solution id it doesn't list is reset to "all" (scope null), not queried.
   if (!solutions.some((s) => s.id === selectedSolution)) selectedSolution = "";
   await applySolutionFilter();
@@ -1389,8 +1437,10 @@ async function exportFile(name: string, content: string, mime = "application/jso
 function wire(): void {
   wireTabs((name) => {
     activeTab = name as typeof activeTab;
+    saveView(VIEW, "tab", name === "envvars" ? undefined : name);
     renderTable();
   });
+  if (loadView<string>(VIEW, "tab", "envvars") === "connrefs") $<HTMLButtonElement>('.tab[data-tab="connrefs"]').click();
   $("#btn-consolidate").addEventListener("click", () => {
     consolidating = !consolidating;
     renderTable();
