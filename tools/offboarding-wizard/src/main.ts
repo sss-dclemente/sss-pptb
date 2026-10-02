@@ -44,6 +44,8 @@ let lastPlan: Plan | null = null;
 let lastResults: OpResult[] | null = null;
 let envName: string | null = null;
 let control: PoolControl | null = null;
+/** Report table view: null = default (Failed when anything failed, else All); reset by every new apply. */
+let resultView: "failed" | "all" | null = null;
 
 const selectedCats = new Set<CategoryKey>();
 /** "Filter tables" inside the records card: narrows the rows shown, never what is scanned or planned. */
@@ -552,6 +554,7 @@ async function previewAndApply(): Promise<void> {
   control = null;
   clearProgress();
   lastResults = results;
+  resultView = null;
   const failed = results.filter((r) => !r.ok).length;
   await notify(failed ? "Applied with failures" : "Applied", `${results.length - failed} ok, ${failed} failed`, failed ? "warning" : "success");
   renderReport();
@@ -565,6 +568,75 @@ function exportButton(id: string, label: string, name: () => string, content: ()
     if (await saveText(name(), content(), mime)) await notify("Exported", name(), "success");
   });
   return b;
+}
+
+const ERR_PREVIEW = 80;
+
+/** Result cell: a compact badge, plus the error wrapped below it (folded behind a preview when long). */
+function resultCell(r: OpResult, openErrors: Set<OpResult>): HTMLElement {
+  if (r.ok) return badge("ok", "ok");
+  const err = r.error ?? "";
+  if (!err) return badge("failed", "bad");
+  if (err.length <= ERR_PREVIEW) return h("div", { class: "result-cell" }, badge("failed", "bad"), h("div", { class: "err" }, err));
+  const fold = h(
+    "details",
+    { class: "err-fold", open: openErrors.has(r) },
+    h("summary", { class: "chev" }, "error", h("span", { class: "err-preview" }, `: ${err.slice(0, ERR_PREVIEW).trimEnd()}…`)),
+    h("div", { class: "err" }, err),
+  );
+  // an error the user unfolded stays unfolded when the Failed / All view is switched
+  fold.addEventListener("toggle", () => (fold.open ? openErrors.add(r) : openErrors.delete(r)));
+  return h("div", { class: "result-cell" }, badge("failed", "bad"), fold);
+}
+
+/**
+ * The apply results with a Failed / All switch: one failure among thousands of rows would otherwise be
+ * buried in plan order. All lists failures first (plan order kept within each group). View only: the
+ * exports always carry every row and the full error text.
+ */
+function resultsView(results: OpResult[], failedCount: number): HTMLElement {
+  const okCount = results.length - failedCount;
+  const caption = h("span", { class: "count-caption", id: "result-count" });
+  const list = h("div", { class: "results-wrap" });
+  const openErrors = new Set<OpResult>();
+  const seg = (view: "failed" | "all", label: string): HTMLButtonElement => {
+    const b = h("button", { class: "seg-btn", type: "button", "data-view": view }, label);
+    b.disabled = view === "failed" && !failedCount;
+    b.addEventListener("click", () => show(view));
+    return b;
+  };
+  const segFailed = seg("failed", `Failed (${failedCount})`);
+  const segAll = seg("all", `All (${results.length})`);
+  const show = (view: "failed" | "all"): void => {
+    resultView = view;
+    const v = failedCount ? view : "all";
+    segFailed.setAttribute("aria-pressed", String(v === "failed"));
+    segAll.setAttribute("aria-pressed", String(v === "all"));
+    const failedRows = results.filter((r) => !r.ok);
+    const rows = v === "failed" ? failedRows : [...failedRows, ...results.filter((r) => r.ok)];
+    caption.textContent = shownOf(rows.length, results.length, "operations");
+    list.replaceChildren(
+      table(
+        ["Category", "Target", "Change", "Result"],
+        rows.map((r) => [categoryLabel(r.op.category), r.op.label, r.op.detail, resultCell(r, openErrors)]),
+        (i) => (rows[i].ok ? undefined : "is-failed"),
+        "results",
+      ),
+    );
+  };
+  const failedLink = h("button", { class: "linkbtn", type: "button", id: "result-failed-link", title: "Show only the failed operations" }, `${failedCount} failed`);
+  failedLink.addEventListener("click", () => {
+    show("failed");
+    segFailed.focus();
+  });
+  show(resultView ?? (failedCount ? "failed" : "all"));
+  return h(
+    "div",
+    { class: "stack results-view" },
+    h("p", { class: "caption", id: "result-summary" }, `${okCount} ok · `, failedCount ? failedLink : "0 failed"),
+    h("div", { class: "row" }, h("div", { class: "seg", role: "group", "aria-label": "Show results" }, segFailed, segAll), caption),
+    list,
+  );
 }
 
 function renderReport(): void {
@@ -595,13 +667,7 @@ function renderReport(): void {
           h(
             "div",
             {},
-            h("p", { class: "caption", id: "result-summary" }, `${results.length - failed.length} ok · ${failed.length} failed`),
-            table(
-              ["Category", "Target", "Change", "Result"],
-              results.map((r) => [categoryLabel(r.op.category), r.op.label, r.op.detail, r.ok ? badge("ok", "ok") : badge(r.error ?? "failed", "bad")]),
-              undefined,
-              "results",
-            ),
+            resultsView(results, failed.length),
           ),
           h(
             "span",

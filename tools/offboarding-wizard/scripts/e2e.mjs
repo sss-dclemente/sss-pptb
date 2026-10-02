@@ -184,7 +184,8 @@ const MOCK = `
     getAllEntitiesMetadata: async () => ({ value: entities }),
     update: async (entity, id, record) => {
       window.__writes.push({ op: 'update', entity, id, record });
-      if (id === ACC(3)) throw new Error('privilege denied on Account 3');
+      // a real Dataverse privilege error: long, with long unbroken tokens, so the report must wrap it
+      if (id === ACC(3)) throw new Error('privilege denied on Account 3: Principal user (Id=' + window.__ids.BRUNO + ', type=8, roleCount=3, privilegeCount=812, accessMode=0), is missing prvAssignAccount privilege (Id=7c1e4d2b-0000-0000-0000-000000000001) on OTC=1 for entity "account" (LocalizedName="Account"). context.Caller=' + window.__ids.ANA + '. Trace: Microsoft.Crm.Extensibility.OrganizationSdkServiceInternal.Update/Microsoft.Crm.BusinessEntities.SecurityLibrary.ValidatePrivilege/Microsoft.Crm.Caching.PrivilegeCacheLoader.LoadCacheData');
     },
     associate: async (entity, id, relationship, relatedEntity, relatedId) => { window.__writes.push({ op: 'associate', entity, id, relationship, relatedEntity, relatedId }); },
     disassociate: async (entity, id, relationship, relatedId) => { window.__writes.push({ op: 'disassociate', entity, id, relationship, relatedId }); },
@@ -366,12 +367,33 @@ assert(!writes.some((w) => w.id === ids.T_AAD), "Entra group team never touched"
 assert(!writes.some((w) => w.id === ids.T_DEF), "business unit default team never touched (Dataverse would refuse the removal)");
 assert(!writes.some((w) => w.entity === "systemuser" && w.id === ids.ANA && w.op === "update"), "the leaver's own user row is never updated (no disable, no licence)");
 
-// ---- failed row ----
-const resultRows = await page.$$eval("table.results tbody tr", (r) => r.map((x) => x.textContent.replace(/\s+/g, " ").trim()));
-const failedRow = resultRows.find((r) => r.includes("privilege denied on Account 3"));
-assert(!!failedRow, "the failing write surfaces as a failed row");
+// ---- failed row: the report opens on Failed, All lists failures first ----
+const rowTexts = () => page.$$eval("table.results tbody tr", (r) => r.map((x) => x.textContent.replace(/\s+/g, " ").trim()));
+const pressed = () => page.$$eval(".seg-btn", (b) => Object.fromEntries(b.map((x) => [x.dataset.view, x.getAttribute("aria-pressed")])));
+let resultRows = await rowTexts();
+assert(resultRows.length === 1 && resultRows[0].includes("privilege denied on Account 3"), "report opens on Failed, showing only the failed row: " + resultRows.length);
+assert(JSON.stringify(await pressed()) === JSON.stringify({ failed: "true", all: "false" }), "Failed is the pressed view by default");
+assert((await text(".seg-btn[data-view='failed']")) === "Failed (1)" && (await text(".seg-btn[data-view='all']")) === `All (${writes.length})`, "segmented control labels carry the counts");
+assert((await text("#result-count")) === `1 of ${writes.length} operations`, "count caption while filtered: " + (await text("#result-count")));
 assert((await text("#result-summary")).match(/^\d+ ok · 1 failed$/), "result summary counts one failure: " + (await text("#result-summary")));
-assert(resultRows.length === writes.length, "one result row per operation");
+// the error: a compact "failed" badge, the full text folded in a wrapping <details>
+const badgeText = await page.$eval("table.results tbody tr td:last-child .badge", (b) => b.textContent);
+assert(badgeText === "failed", "result badge says failed, not the error: " + badgeText);
+assert(await page.$eval("table.results tbody tr td:last-child details.err-fold", (d) => !d.open && d.querySelector("summary.chev") != null && d.querySelector(".err").textContent.includes("LoadCacheData")), "long error sits folded inside <details> with a chev summary, full text kept");
+await page.click("table.results details.err-fold > summary");
+const fit = await page.$eval(".results-wrap", (w) => ({ table: w.querySelector("table").scrollWidth, box: w.clientWidth, errH: w.querySelector(".err").getBoundingClientRect().height }));
+assert(fit.table <= fit.box, `long error wraps, no sideways overflow: table ${fit.table} <= ${fit.box}`);
+assert(fit.errH > 20, "unfolded error spans several lines: " + fit.errH);
+await page.click(".seg-btn[data-view='all']");
+resultRows = await rowTexts();
+assert(resultRows.length === writes.length, "All: one result row per operation");
+assert(resultRows[0].includes("privilege denied on Account 3") && resultRows.slice(1).every((r) => !r.includes("privilege denied")), "All lists the failure first");
+assert(JSON.stringify(await pressed()) === JSON.stringify({ failed: "false", all: "true" }), "All is pressed after the click");
+assert((await text("#result-count")) === `${writes.length} operations`, "count caption unfiltered: " + (await text("#result-count")));
+assert(await page.$eval("table.results details.err-fold", (d) => d.open), "an unfolded error stays open across a view switch");
+await page.click("#result-failed-link");
+assert((await rowTexts()).length === 1 && (await pressed()).failed === "true", "the summary's “1 failed” link switches back to Failed");
+await page.click(".seg-btn[data-view='all']"); // the export must not depend on the view: export from All, then Failed
 
 // ---- exports ----
 await page.click("#btn-export-inv-json");
@@ -379,6 +401,10 @@ await page.click("#btn-export-inv-csv");
 await page.click("#btn-export-res-json");
 await page.click("#btn-export-res-csv");
 await page.waitForFunction(() => window.__saved.length === 4);
+await page.click(".seg-btn[data-view='failed']");
+await page.click("#btn-export-res-json");
+await page.click("#btn-export-res-csv");
+await page.waitForFunction(() => window.__saved.length === 6);
 const saved = await page.evaluate(() => window.__saved);
 const invJson = JSON.parse(saved[0].content);
 const cat = (k) => invJson.categories.find((c) => c.key === k);
@@ -393,6 +419,9 @@ const resJson = JSON.parse(saved[2].content);
 assert(resJson.summary.failed === 1 && resJson.summary.ok === writes.length - 1 && resJson.successor.name === "Bruno Costa", "results JSON summary");
 assert(resJson.operations.some((o) => o.call.startsWith("associate systemuser(") && o.ok), "results JSON keeps the exact call");
 assert(saved[3].content.startsWith("category,kind,target,detail,call,result,error") && saved[3].content.includes("privilege denied on Account 3"), "results CSV");
+assert(resJson.operations.length === writes.length && resJson.operations.find((o) => !o.ok).error.endsWith("PrivilegeCacheLoader.LoadCacheData"), "results JSON: every row and the full error");
+assert(saved[3].content.trim().split("\n").length === writes.length + 1 && saved[3].content.includes("PrivilegeCacheLoader.LoadCacheData"), "results CSV: every row and the full error");
+assert(JSON.stringify(JSON.parse(saved[4].content).operations) === JSON.stringify(resJson.operations) && saved[5].content === saved[3].content, "results exports identical whichever view (Failed / All) is shown");
 
 // ---- theme ----
 await page.evaluate(() => window.__emit({ event: "settings:updated", data: { theme: "dark" } }));
