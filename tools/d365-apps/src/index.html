@@ -18,6 +18,7 @@
       <button id="btn-envs" class="btn btn-sm" type="button" disabled>Environments…</button>
       <button id="btn-refresh" class="btn btn-sm" type="button" disabled>Refresh</button>
       <button id="btn-export-csv" class="btn btn-ghost btn-sm" type="button" disabled>Matrix CSV</button>
+      <button id="btn-unused" class="btn btn-sm" type="button" disabled title="Read-only report: which installed apps in the connection's environment look unused (row counts in their own tables)">Unused apps…</button>
     </header>
 
     <div id="setup"></div>
@@ -38,6 +39,17 @@
 
     <div id="status" class="status" hidden></div>
     <div id="summary" class="summary-line"></div>
+
+    <section id="unused" class="unused" hidden>
+      <div class="run-head">
+        <h3>Unused apps: <span id="unused-env"></span></h3>
+        <label class="check caption"><input type="checkbox" id="unused-all" /> Show all (in use, platform)</label>
+        <span class="spacer"></span>
+        <button id="btn-unused-csv" class="btn btn-ghost btn-sm" type="button" disabled>Report CSV</button>
+        <button id="btn-unused-close" class="btn btn-ghost btn-sm" type="button">Close</button>
+      </div>
+      <div id="unused-body"></div>
+    </section>
 
     <main class="matrix-wrap" id="matrix"></main>
 

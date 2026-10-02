@@ -9,7 +9,7 @@ import assert from "node:assert/strict";
 const TOOL = new URL("..", import.meta.url).pathname.replace(/\/$/, "");
 const esbuild = createRequire(resolve(TOOL, "package.json"))("esbuild");
 const out = esbuild.buildSync({
-  stdin: { contents: ["api", "matrix", "run", "export"].map((m) => `export * from "./src/apps/${m}";`).join("\n"), resolveDir: TOOL, loader: "ts" },
+  stdin: { contents: ["api", "matrix", "run", "export", "unused"].map((m) => `export * from "./src/apps/${m}";`).join("\n"), resolveDir: TOOL, loader: "ts" },
   bundle: true,
   format: "esm",
   platform: "neutral",
@@ -207,4 +207,139 @@ test("failedKeys ticks every failed install; a visibility filter narrows it", ()
   assert.deepEqual(M.failedKeys(m, (u) => u !== "fs"), []);
   const plan = M.planInstalls(m, new Set(M.failedKeys(m)));
   assert.deepEqual(plan.map((p) => `${p.env.id}:${p.uniqueName}:${p.action}`), ["dev:fs:retry"]);
+});
+
+// ---------- unused apps ----------
+
+const G = (n) => `00000000-0000-0000-0000-${String(n).padStart(12, "0")}`;
+/** A fake Dataverse: solutions, history, components, metadata, counts, live rows, apps. */
+function fakeDv(o = {}) {
+  const calls = [];
+  const sols = [
+    { solutionid: G(1), uniquename: "msdyn_Sales", friendlyname: "Sales", version: "9.0" },
+    { solutionid: G(2), uniquename: "msdyn_SalesCore", friendlyname: "Sales core", version: "9.0" },
+    { solutionid: G(3), uniquename: "msdyn_Common", friendlyname: "Common", version: "1.0" },
+    { solutionid: G(4), uniquename: "msdyn_Gami", friendlyname: "Gamification", version: "1.0" },
+    { solutionid: G(5), uniquename: "msdyn_FlowApprovals", friendlyname: "Approvals", version: "2.0" },
+    { solutionid: G(6), uniquename: "msdyn_Seed", friendlyname: "Seed", version: "1.0" },
+  ];
+  const hist = [
+    { msdyn_name: "msdyn_SalesCore", msdyn_packagename: "msdyn_Sales", msdyn_operation: 0, msdyn_result: true },
+    { msdyn_name: "msdyn_Common", msdyn_packagename: "msdyn_Sales", msdyn_operation: 0, msdyn_result: true },
+    { msdyn_name: "msdyn_Common", msdyn_packagename: "Gamification", msdyn_operation: 0, msdyn_result: true },
+    { msdyn_name: "msdyn_Gami", msdyn_packagename: "Gamification", msdyn_operation: 0, msdyn_result: true },
+    { msdyn_name: "msdyn_Gone", msdyn_packagename: "Gamification", msdyn_operation: 0, msdyn_result: true },
+    { msdyn_name: "msdyn_Seed", msdyn_packagename: "SeedPkg", msdyn_operation: 1, msdyn_result: true },
+    { msdyn_name: "msdyn_Seed", msdyn_packagename: "SeedPkg", msdyn_operation: 0, msdyn_result: true },
+  ];
+  const comps = [
+    { objectid: G(101), componenttype: 1, _solutionid_value: G(2) }, // msdyn_opp: Sales only
+    { objectid: G(102), componenttype: 1, _solutionid_value: G(3) }, // msdyn_shared: common
+    { objectid: G(103), componenttype: 1, _solutionid_value: G(4) }, // msdyn_badge: Gamification only
+    { objectid: G(104), componenttype: 1, _solutionid_value: G(4) }, // account: not custom
+    { objectid: G(105), componenttype: 1, _solutionid_value: G(6) }, // msdyn_seedcfg
+    { objectid: G(106), componenttype: 1, _solutionid_value: G(2) }, // msdyn_fresh: snapshot 0, live row
+    { objectid: G(201), componenttype: 80, _solutionid_value: G(4) }, // Gamification app
+  ];
+  const defs = [
+    { MetadataId: G(101), LogicalName: "msdyn_opp", EntitySetName: "msdyn_opps", PrimaryIdAttribute: "msdyn_oppid", IsCustomEntity: true, IsIntersect: false, TableType: "Standard" },
+    { MetadataId: G(102), LogicalName: "msdyn_shared", EntitySetName: "msdyn_shareds", PrimaryIdAttribute: "msdyn_sharedid", IsCustomEntity: true, IsIntersect: false, TableType: "Standard" },
+    { MetadataId: G(103), LogicalName: "msdyn_badge", EntitySetName: "msdyn_badges", PrimaryIdAttribute: "msdyn_badgeid", IsCustomEntity: true, IsIntersect: false, TableType: "Standard" },
+    { MetadataId: G(104), LogicalName: "account", EntitySetName: "accounts", PrimaryIdAttribute: "accountid", IsCustomEntity: false, IsIntersect: false, TableType: "Standard" },
+    { MetadataId: G(105), LogicalName: "msdyn_seedcfg", EntitySetName: "msdyn_seedcfgs", PrimaryIdAttribute: "msdyn_seedcfgid", IsCustomEntity: true, IsIntersect: false, TableType: "Standard" },
+    { MetadataId: G(106), LogicalName: "msdyn_fresh", EntitySetName: "msdyn_freshes", PrimaryIdAttribute: "msdyn_freshid", IsCustomEntity: true, IsIntersect: false, TableType: "Standard" },
+  ];
+  const snapshot = { msdyn_opp: 5000, msdyn_shared: 70, msdyn_badge: 0, msdyn_seedcfg: 3, msdyn_fresh: 0 };
+  const live = { msdyn_badges: 0, msdyn_freshes: 1 };
+  const page = (value) => ({ value });
+  return {
+    calls,
+    queryData: async (q) => {
+      calls.push(q);
+      if (q.startsWith("solutions?")) return page(sols);
+      if (q.startsWith("msdyn_solutionhistories?")) {
+        if (o.historyFails) throw new Error("history down");
+        if (o.historyNoFilter && q.includes("$filter")) throw new Error("filter not supported");
+        return page(hist);
+      }
+      if (q.startsWith("solutioncomponents?")) return page(comps.filter((c) => q.includes(c._solutionid_value)));
+      if (q.startsWith("EntityDefinitions?")) return page(defs);
+      if (q.startsWith("RetrieveTotalRecordCount(")) {
+        const names = JSON.parse(decodeURIComponent(q.split("@p1=")[1]));
+        const keys = names.filter((n) => n in snapshot);
+        return { EntityRecordCountCollection: { Count: keys.length, Keys: keys, Values: keys.map((k) => snapshot[k]) } };
+      }
+      if (q.startsWith("appmodules?")) return page([{ appmoduleid: G(201), name: "Gamification", uniquename: "msdyn_gamification", appmoduleroles_association: [] }]);
+      const set = q.split("?")[0];
+      if (set in live) return page(live[set] ? [{ id: 1 }] : []);
+      throw new Error("unexpected " + q);
+    },
+  };
+}
+const installedPkgs = [pkg("msdyn_Sales", "9.0"), pkg("Gamification", "1.0"), pkg("msdyn_FlowApprovals", "2.0"), pkg("SeedPkg", "1.0"), pkg("Ghost", "1.0"), pkg("Busy", "1.0", "Installing")];
+
+test("historyMap: Import rows only, failed imports skipped, keyed lower-case", () => {
+  const m = M.historyMap([
+    { msdyn_name: "A", msdyn_packagename: "P", msdyn_operation: 0, msdyn_result: true },
+    { msdyn_name: "B", msdyn_packagename: "P", msdyn_operation: 1, msdyn_result: true },
+    { msdyn_name: "C", msdyn_packagename: "p", msdyn_operation: 0, msdyn_result: false },
+    { msdyn_name: "D", msdyn_packagename: null, msdyn_operation: 0 },
+  ]);
+  assert.deepEqual([...m.get("p")], ["a"]);
+});
+
+test("parseCounts / countPath: Keys+Values collection, names JSON-encoded", () => {
+  const c = M.parseCounts({ EntityRecordCountCollection: { Count: 2, IsReadOnly: false, Keys: ["Account", "contact"], Values: [3, 0] } });
+  assert.deepEqual([...c], [["account", 3], ["contact", 0]]);
+  assert.equal(M.countPath(["a_b"]), "RetrieveTotalRecordCount(EntityNames=@p1)?@p1=%5B%22a_b%22%5D");
+});
+
+test("verdictFor: platform, not found, no signal, unused, light, in use, fresh row", () => {
+  const t = (rows, atLeast = false) => ({ logicalName: "x", entitySet: "xs", rows, atLeast });
+  assert.equal(M.verdictFor(pkg("msdyn_PowerAppsCheckerAnchor", "1"), true, [t(0)]), "platform");
+  assert.equal(M.verdictFor(pkg("A", "1"), false, []), "not-found");
+  assert.equal(M.verdictFor(pkg("A", "1"), true, [t(null)]), "no-signal");
+  assert.equal(M.verdictFor(pkg("A", "1"), true, [t(0), t(0)]), "unused");
+  assert.equal(M.verdictFor(pkg("A", "1"), true, [t(0), t(M.LIGHT_MAX_ROWS)]), "light");
+  assert.equal(M.verdictFor(pkg("A", "1"), true, [t(M.LIGHT_MAX_ROWS + 1)]), "in-use");
+  assert.equal(M.verdictFor(pkg("A", "1"), true, [t(1, true)]), "in-use");
+});
+
+test("analyzeUnused: shared solutions and tables excluded, zeros re-checked live, sorted unused first", async () => {
+  const dv = fakeDv();
+  const r = await M.analyzeUnused({ dv, installed: installedPkgs });
+  const by = Object.fromEntries(r.packages.map((p) => [p.pkg.uniqueName, p]));
+  assert.equal(by.Busy, undefined, "packages mid-install are left out");
+  assert.equal(r.history, true);
+  // Sales: own msdyn_SalesCore (history) + msdyn_Sales (anchor); msdyn_Common shared with Gamification
+  assert.equal(by.msdyn_Sales.mappedBy, "history+anchor");
+  assert.deepEqual(by.msdyn_Sales.solutions.map((s) => s.uniqueName).sort(), ["msdyn_Sales", "msdyn_SalesCore"]);
+  assert.deepEqual(by.msdyn_Sales.shared.map((s) => s.uniqueName), ["msdyn_Common"]);
+  assert.deepEqual(by.msdyn_Sales.sharedTables, ["msdyn_shared"]);
+  assert.equal(by.msdyn_Sales.verdict, "in-use");
+  assert.ok(by.msdyn_Sales.tables.find((t) => t.logicalName === "msdyn_fresh").atLeast, "snapshot 0 but a live row: lower bound");
+  // Gamification: msdyn_badge 0 (live check), account is not custom, msdyn_Gone not installed any more
+  assert.equal(by.Gamification.verdict, "unused");
+  assert.deepEqual(by.Gamification.tables.map((t) => [t.logicalName, t.rows]), [["msdyn_badge", 0]]);
+  assert.deepEqual(by.Gamification.apps.map((a) => [a.name, a.roles]), [["Gamification", 0]]);
+  assert.equal(by.SeedPkg.verdict, "light", "uninstall history rows ignored, Import row counted");
+  assert.equal(by.msdyn_FlowApprovals.verdict, "platform");
+  assert.equal(by.Ghost.verdict, "not-found");
+  assert.equal(r.packages[0].pkg.uniqueName, "Gamification");
+  assert.ok(dv.calls.includes("msdyn_badges?$select=msdyn_badgeid&$top=1"), "a snapshot zero is re-checked live");
+  assert.ok(!dv.calls.some((q) => q.startsWith("msdyn_opps?")), "a positive snapshot count is not re-queried");
+  assert.ok(!dv.calls.some((q) => q.startsWith("msdyn_shareds?")) && !dv.calls.some((q) => q.includes("msdyn_shared%22")), "shared tables are not counted");
+  const csv = M.unusedCsv(r, "Dev");
+  assert.match(csv.split("\r\n")[1], /^Dev,Gamification,Gamification,1\.0,Probably unused,0,1,,msdyn_Gami,msdyn_Common,Gamification \(0 roles\),history$/);
+});
+
+test("analyzeUnused: history filter refused → unfiltered read; history unreadable → anchors only", async () => {
+  const a = await M.analyzeUnused({ dv: fakeDv({ historyNoFilter: true }), installed: installedPkgs });
+  assert.equal(a.history, true);
+  assert.equal(a.packages.find((p) => p.pkg.uniqueName === "Gamification").verdict, "unused");
+  const b = await M.analyzeUnused({ dv: fakeDv({ historyFails: true }), installed: installedPkgs });
+  assert.equal(b.history, false);
+  assert.match(b.warnings[0], /history down/);
+  assert.equal(b.packages.find((p) => p.pkg.uniqueName === "Gamification").verdict, "not-found");
+  assert.equal(b.packages.find((p) => p.pkg.uniqueName === "msdyn_Sales").mappedBy, "anchor");
 });

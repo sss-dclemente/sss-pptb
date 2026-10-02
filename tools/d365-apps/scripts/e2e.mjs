@@ -105,6 +105,43 @@ const MOCK = `
       if (req.operationName === 'RetrieveCurrentOrganization') return { Detail: { EnvironmentId: 'env-dev' } };
       throw new Error('mock: unexpected execute ' + req.operationName);
     },
+    // Unused apps (Dev): msdyn_sales owns msdyn_quote (rows); msdyn_teamsapp (anchor) owns msdyn_tile (empty); msdyn_common shared
+    queryData: async (q) => {
+      M.dvq = M.dvq || [];
+      M.dvq.push(q);
+      const G = (n) => '00000000-0000-0000-0000-' + String(n).padStart(12, '0');
+      const page = (value) => ({ value });
+      if (q.startsWith('solutions?')) return page([
+        { solutionid: G(1), uniquename: 'msdyn_SalesCore', friendlyname: 'Sales core', version: '1.2' },
+        { solutionid: G(2), uniquename: 'msdyn_teamsapp', friendlyname: 'Teams app', version: '3.1' },
+        { solutionid: G(3), uniquename: 'msdyn_common', friendlyname: 'Common', version: '1.0' },
+      ]);
+      if (q.startsWith('msdyn_solutionhistories?')) return page([
+        { msdyn_name: 'msdyn_SalesCore', msdyn_packagename: 'msdyn_sales', msdyn_operation: 0, msdyn_result: true },
+        { msdyn_name: 'msdyn_common', msdyn_packagename: 'msdyn_sales', msdyn_operation: 0, msdyn_result: true },
+        { msdyn_name: 'msdyn_common', msdyn_packagename: 'msdyn_teamsapp', msdyn_operation: 0, msdyn_result: true },
+      ]);
+      if (q.startsWith('solutioncomponents?')) return page([
+        { objectid: G(11), componenttype: 1, _solutionid_value: G(1) },
+        { objectid: G(12), componenttype: 1, _solutionid_value: G(2) },
+        { objectid: G(13), componenttype: 1, _solutionid_value: G(3) },
+        { objectid: G(21), componenttype: 80, _solutionid_value: G(2) },
+      ].filter((c) => q.includes(c._solutionid_value)));
+      if (q.startsWith('EntityDefinitions?')) return page([
+        { MetadataId: G(11), LogicalName: 'msdyn_quote', EntitySetName: 'msdyn_quotes', PrimaryIdAttribute: 'msdyn_quoteid', IsCustomEntity: true, IsIntersect: false, TableType: 'Standard' },
+        { MetadataId: G(12), LogicalName: 'msdyn_tile', EntitySetName: 'msdyn_tiles', PrimaryIdAttribute: 'msdyn_tileid', IsCustomEntity: true, IsIntersect: false, TableType: 'Standard' },
+        { MetadataId: G(13), LogicalName: 'msdyn_shared', EntitySetName: 'msdyn_shareds', PrimaryIdAttribute: 'msdyn_sharedid', IsCustomEntity: true, IsIntersect: false, TableType: 'Standard' },
+      ]);
+      if (q.startsWith('RetrieveTotalRecordCount(EntityNames=@p1)?@p1=')) {
+        const names = JSON.parse(decodeURIComponent(q.split('@p1=')[1]));
+        const n = { msdyn_quote: 1234, msdyn_tile: 0 };
+        const keys = names.filter((k) => k in n);
+        return { EntityRecordCountCollection: { Count: keys.length, IsReadOnly: false, Keys: keys, Values: keys.map((k) => n[k]) } };
+      }
+      if (q === 'msdyn_tiles?$select=msdyn_tileid&$top=1') return page([]);
+      if (q.startsWith('appmodules?')) return page([{ appmoduleid: G(21), name: 'Teams Hub', uniquename: 'msdyn_teamshub', appmoduleroles_association: [{ roleid: G(31) }] }]);
+      throw new Error('mock: unexpected queryData ' + q);
+    },
   };
   window.toolboxAPI = {
     connections: { getActiveConnection: async () => ({ id: 'c1', name: 'SSS Dev', url: 'https://sss-dev.crm4.dynamics.com', environment: 'Dev', environmentColor: '#0f766e' }), getSecondaryConnection: async () => null },
@@ -196,6 +233,31 @@ assert(await M(() => window.__mock.notes.some((n) => n.title === "Installs finis
 await page.click("#btn-results-csv");
 const res = await M(() => window.__mock.saved.at(-1));
 assert(res.name.endsWith(".csv") && res.content.split("\n")[0].startsWith("environment,type,app") && res.content.includes("failed"), "results CSV");
+
+// ---- unused apps report (connection's environment: Dev) ----
+assert(!(await page.$eval("#btn-unused", (b) => b.disabled)), "Unused apps enabled with a Dataverse connection");
+const postsBefore = await M(() => window.__mock.posts.length);
+await page.click("#btn-unused");
+await page.waitForSelector("#unused-table");
+assert((await txt("#unused-env")) === "SSS Dev", "report runs on the connection's environment");
+let uv = await page.$$eval("#unused-table tbody tr", (els) => els.map((e) => e.dataset.app + ":" + e.dataset.verdict));
+assert(uv[0] === "msdyn_teamsapp:unused", "anchor app with only empty own tables: probably unused, listed first: " + uv.join(","));
+assert(!uv.some((x) => x.startsWith("msdyn_sales:")), "apps in use are hidden by default: " + uv.join(","));
+const tRow = await txt('#unused-table tr[data-app="msdyn_teamsapp"]');
+assert(tRow.includes("0 of 1 with rows") && tRow.includes("Teams Hub (1 role)"), "row shows own tables and model-driven app roles: " + tRow);
+await page.check("#unused-all");
+uv = await page.$$eval("#unused-table tbody tr", (els) => els.map((e) => e.dataset.app + ":" + e.dataset.verdict));
+assert(uv.includes("msdyn_sales:in-use"), "Show all lists in-use apps: " + uv.join(","));
+assert((await txt('#unused-table tr[data-app="msdyn_sales"]')).includes("msdyn_quote: 1,234"), "in-use row names the table with rows");
+const dvq = await M(() => window.__mock.dvq);
+assert(!dvq.some((q) => q.includes("msdyn_shared")), "shared table (msdyn_common) not counted");
+assert(dvq.includes("msdyn_tiles?$select=msdyn_tileid&$top=1") && !dvq.some((q) => q.startsWith("msdyn_quotes?")), "only snapshot zeros re-checked live");
+assert((await M(() => window.__mock.posts.length)) === postsBefore && dvq.every((q) => !/^(Uninstall|Delete)/i.test(q)), "read-only: no Power Platform posts, no write calls");
+await page.click("#btn-unused-csv");
+const ucsv = await M(() => window.__mock.saved.at(-1));
+assert(ucsv.name.startsWith("d365-apps-unused-SSS_Dev-") && ucsv.content.includes("SSS Dev,TEAMSAPP,msdyn_teamsapp,3.1.0.0,Probably unused"), "report CSV: " + ucsv.content.split("\r\n")[1]);
+await page.click("#btn-unused-close");
+assert(await page.$eval("#unused", (e) => e.hidden), "Close hides the report");
 
 // ---- debug log (shared check) ----
 await checkDebugLog(page, assert, {

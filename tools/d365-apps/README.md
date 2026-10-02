@@ -16,6 +16,13 @@ Built by [Simple Smooth Safe](https://simplesmoothsafe.com).
 - **Select all failed**: ticks every failed install for a retry (rows hidden by the name filter are left out).
 - **Select all updates**: ticks every update, except packages flagged **custom upgrade**. Those handle their own upgrade; tick them by hand after reading their release notes.
 - **Preview → run**: the preview lists the installs per environment and warns about Production environments. The run does one install at a time per environment, with up to 3 environments in parallel. Each install is followed until it ends (an install can take an hour) and the result shows in the matrix and in the run table. **Stop waiting** stops following; installs already started keep running in the environment. Afterwards the environments are read again.
+- **Unused apps…** (read-only): for the **connection's** environment, which installed apps look unused.
+  - Each app is mapped to its solutions: the solutions its package imported (solution history) plus its anchor solution (same unique name as the package).
+  - The verdict comes from row counts in the tables that only that app's solutions contain. Tables and solutions shared with another installed app are listed but not counted, because they can hold the other app's data.
+  - Verdicts: **Probably unused** (every own table empty), **Seed data only?** (no own table has more than 10 rows), **In use**, **No signal** (no own tables to count), **Solutions not found**, **Platform** (auto-installed apps such as Power Apps checker or Flow approvals, which can't be removed).
+  - Each row shows the tables with rows, the model-driven apps and how many security roles they're shared with, and the solutions behind the app.
+  - Counts come from `RetrieveTotalRecordCount`, a snapshot under 24 hours old; every zero is re-checked live with a one-row read.
+  - Report CSV.
 - **Exports**:
   - Matrix CSV.
   - Run results CSV.
@@ -60,11 +67,13 @@ One connection is enough: the token covers every environment the account can see
   - **"Update available" is derived.** The API has no such state: the tool compares the installed version with the newest version of the same app in the environment's not-installed list. If an update doesn't show where PPAC shows one, save a debug log (below) and open an issue.
   - Whether the install response carries an operation id. When it doesn't, the tool follows the app's state in the environment instead.
 - Installs can't be cancelled from the API; Stop waiting only stops following them.
+- **Unused apps is a lead, not a verdict.** There's no usage telemetry in these APIs: an app whose tables are empty may still be needed (for example, it holds configuration another app reads). It covers only the connection's environment: switch the ToolBox connection to report on another one. It needs read access to solutions, solution history and table metadata (System Administrator or System Customizer).
+- **No uninstall.** The Power Platform API has no uninstall. Remove an app by deleting its solutions in the environment (Solutions page), anchor first; the report lists them.
 - Install order inside an environment is the matrix's row order. When one app depends on another, run the base app first.
 
 ## Debug log
 
-For troubleshooting, tick **Debug log** in the footer, reproduce the problem, then **Save log**. You get a `d365-apps-debug-<timestamp>.txt` file with every ToolBox and Power Platform API call the tool made (the exact path, the response or error, timing), notifications, connection events and uncaught errors. The switch is remembered for this tool; `?debug=1` also turns it on. Off, nothing is recorded.
+For troubleshooting, tick **Debug log** in the footer, reproduce the problem, then **Save log**. You get a `d365-apps-debug-<timestamp>.txt` file with every ToolBox, Dataverse and Power Platform API call the tool made (the exact path, the response or error, timing), notifications, connection events and uncaught errors. The switch is remembered for this tool; `?debug=1` also turns it on. Off, nothing is recorded.
 
 The file is written only where you save it. Secrets (keys named like password, secret, token, authorization) are redacted, and long strings, arrays and binary payloads are truncated. Responses still contain tenant data such as environment names and URLs: review the file before you share it.
 
