@@ -17,6 +17,7 @@
   padding: var(--s-1) var(--s-2); min-width: 200px;
 }
 .toolbar input[type="search"]:focus-visible { outline: none; box-shadow: var(--shadow-teal); }
+.toolbar > .btn { margin-left: 0; } /* selection buttons follow the filters; .right alone takes the free space */
 .toolbar .right { margin-left: auto; display: inline-flex; gap: var(--s-2); align-items: center; }
 .status { padding: var(--s-2) var(--s-5); font-size: var(--fs-caption); color: var(--fg-muted); }
 .summary-line { display: flex; flex-wrap: wrap; gap: var(--s-2); align-items: center; padding: 0 var(--s-5) var(--s-2); font-size: var(--fs-caption); }
@@ -27,7 +28,8 @@
 
 .matrix-wrap { overflow: auto; flex: 1; padding: 0 var(--s-5); }
 table.matrix { min-width: 100%; }
-table.matrix thead th { position: sticky; top: 0; background: var(--bg); z-index: 1; vertical-align: bottom; }
+table.matrix thead th { position: sticky; top: 0; background: var(--bg); z-index: 2; vertical-align: bottom; } /* above the sticky App cells */
+table.matrix thead th.sticky-col { z-index: 3; } /* top-left corner over both sticky edges */
 table.matrix th.col { min-width: 170px; }
 table.matrix th.col .env { display: block; font-size: var(--fs-caption); text-transform: none; letter-spacing: 0; color: var(--fg-primary); }
 table.matrix th.col .col-error { display: block; text-transform: none; letter-spacing: 0; font-weight: normal; color: var(--status-bad-fg); white-space: normal; }

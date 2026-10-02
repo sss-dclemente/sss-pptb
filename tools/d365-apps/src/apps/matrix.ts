@@ -62,10 +62,10 @@ export function buildMatrix(results: EnvPackages[], opts: { showNotInstalled: bo
   return { envs, rows, errors };
 }
 
-/** Cells "Select all updates" ticks: updates, except custom-upgrade packages (plan D8). */
-export function updateKeys(m: Matrix): string[] {
+/** Cells "Select all updates" ticks: updates, except custom-upgrade packages (plan D8). Rows the filter hides are included only when `visible` allows them. */
+export function updateKeys(m: Matrix, visible: (uniqueName: string) => boolean = () => true): string[] {
   const out: string[] = [];
-  for (const r of m.rows) for (const env of m.envs) if (r.cells.get(env.id)?.kind === "update" && !r.customHandleUpgrade) out.push(cellKey(env.id, r.uniqueName));
+  for (const r of m.rows) if (visible(r.uniqueName)) for (const env of m.envs) if (r.cells.get(env.id)?.kind === "update" && !r.customHandleUpgrade) out.push(cellKey(env.id, r.uniqueName));
   return out;
 }
 

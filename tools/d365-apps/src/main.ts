@@ -1,15 +1,17 @@
 import { mountDebug } from "../../_shared/debug-ui";
-import { $, append, badge, emptyState, h, showDialog, type Child } from "../../_shared/dom";
+import { $, append, badge, emptyState, filteredEmpty, h, showDialog, shownOf, type Child } from "../../_shared/dom";
+import { persistControls } from "../../_shared/view-state";
 import { errText, isSetupError, listEnvironments, listPackages, type PpLike } from "./apps/api";
 import { matrixCsv, pacScript, resultsCsv } from "./apps/export";
 import { buildMatrix, cellKey, counts, failedKeys, isProduction, planInstalls, updateKeys } from "./apps/matrix";
 import { runInstalls, toRunItems } from "./apps/run";
 import type { DvLike } from "./apps/unused";
-import type { Cell, EnvPackages, Environment, Matrix, PlannedInstall, RunItem } from "./apps/types";
+import type { Cell, EnvPackages, Environment, Matrix, PlannedInstall, Row, RunItem } from "./apps/types";
 import { initUnused, unusedAvailable } from "./unused-ui";
 import { dataverse, getConnections, initTheme, inToolbox, notify, onConnectionChange, powerplatform, saveText, type LiveConnection } from "./host";
 
 const STORE_KEY = "sss-d365-apps:envs";
+const TOOL_ID = "d365-apps";
 const ENV_CONCURRENCY = 4;
 /** poll interval; ?pollMs= overrides it (tests) */
 const POLL_MS = (() => {
@@ -269,6 +271,14 @@ function cellNode(envId: string, uniqueName: string, c: Cell): HTMLElement {
   return td;
 }
 
+/** The rows the matrix shows (name filter, "Only updates / failed"). The select-all buttons and the hidden count use the same test. */
+function shownFilter(): (r: Row) => boolean {
+  const q = $<HTMLInputElement>("#filter-text").value.toLowerCase();
+  const onlyUpd = $<HTMLInputElement>("#only-updates").checked;
+  return (r) => (!q || `${r.name} ${r.uniqueName} ${r.publisher ?? ""}`.toLowerCase().includes(q)) && (!onlyUpd || [...r.cells.values()].some((c) => c.kind === "update" || c.kind === "failed"));
+}
+const shownNames = (m: Matrix): Set<string> => new Set(m.rows.filter(shownFilter()).map((r) => r.uniqueName));
+
 function render(): void {
   const wrap = $("#matrix");
   const sum = $("#summary");
@@ -285,21 +295,19 @@ function render(): void {
   }
   const m = matrix;
   const n = counts(m);
+  const rows = m.rows.filter(shownFilter());
   append(
     sum,
-    h("strong", { id: "counts" }, `${m.rows.length} apps × ${m.envs.length} environments`),
+    h("strong", { id: "counts" }, `${shownOf(rows.length, m.rows.length, "apps")} × ${m.envs.length} environments`),
     badge(`${n.updates} update${n.updates === 1 ? "" : "s"}`, n.updates ? "warn" : "ok"),
     n.failed ? badge(`${n.failed} failed`, "bad") : null,
     n.busy ? badge(`${n.busy} in progress`, "warn") : null,
     m.errors.size ? badge(`${m.errors.size} environment(s) unreadable`, "bad") : null,
   );
-  const q = $<HTMLInputElement>("#filter-text").value.toLowerCase();
-  const onlyUpd = $<HTMLInputElement>("#only-updates").checked;
-  const rows = m.rows.filter((r) => (!q || `${r.name} ${r.uniqueName} ${r.publisher ?? ""}`.toLowerCase().includes(q)) && (!onlyUpd || [...r.cells.values()].some((c) => c.kind === "update" || c.kind === "failed")));
   const head = h(
     "tr",
     {},
-    h("th", {}, "App"),
+    h("th", { class: "sticky-col" }, "App"),
     ...m.envs.map((e) =>
       h(
         "th",
@@ -314,16 +322,27 @@ function render(): void {
     h(
       "tr",
       { "data-app": r.uniqueName },
-      h("td", { class: "name" }, h("span", {}, r.name), r.customHandleUpgrade ? " " : null, r.customHandleUpgrade ? badge("custom upgrade", "warn") : null, h("span", { class: "uname" }, r.uniqueName)),
+      h("td", { class: "name sticky-col" }, h("span", {}, r.name), r.customHandleUpgrade ? " " : null, r.customHandleUpgrade ? badge("custom upgrade", "warn") : null, h("span", { class: "uname" }, r.uniqueName)),
       ...m.envs.map((e) => cellNode(e.id, r.uniqueName, r.cells.get(e.id)!)),
     ),
   );
-  wrap.replaceChildren(rows.length ? h("table", { class: "matrix", id: "grid" }, h("thead", {}, head), h("tbody", {}, ...body)) : emptyState("No apps", m.rows.length ? "Nothing matches the filter." : "No Dynamics 365 apps installed in the selected environments."));
+  wrap.replaceChildren(
+    rows.length
+      ? h("table", { class: "matrix", id: "grid" }, h("thead", {}, head), h("tbody", {}, ...body))
+      : m.rows.length
+        ? filteredEmpty("No apps", "Nothing matches the filter.", () => {
+            filters.reset();
+            render();
+          })
+        : emptyState("No apps", "No Dynamics 365 apps installed in the selected environments."),
+  );
   renderSelection();
 }
 
 function renderSelection(): void {
-  $("#sel-count").textContent = selected.size ? `${selected.size} selected` : "";
+  const shown = matrix ? new Set([...shownNames(matrix)].map((u) => u.toLowerCase())) : null;
+  const hidden = shown ? [...selected].filter((k) => !shown.has(k.split("|")[1])).length : 0;
+  $("#sel-count").textContent = selected.size ? `${selected.size} selected${hidden ? ` (${hidden} hidden by filter)` : ""}` : "";
   for (const id of ["#btn-preview", "#btn-pac"]) $<HTMLButtonElement>(id).disabled = running || !selected.size;
   $<HTMLButtonElement>("#btn-clear-sel").disabled = running || !selected.size;
 }
@@ -422,6 +441,10 @@ async function exportFile(name: string, content: string, mime: string): Promise<
 const stamp = () => new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
 
 // ---------- wiring ----------
+/** Toolbar filters, restored on open; "Clear filters" resets only these (not Show not installed / Unused Show all). */
+const filters = persistControls(TOOL_ID, ["filter-text", "only-updates"]);
+persistControls(TOOL_ID, ["show-available", "unused-all"]);
+
 function wire(): void {
   $("#btn-envs").addEventListener("click", () => void pickEnvironments());
   $("#btn-refresh").addEventListener("click", () => void loadPackages());
@@ -430,14 +453,14 @@ function wire(): void {
   $("#show-available").addEventListener("change", () => matrix && rebuild());
   $("#btn-select-failed").addEventListener("click", () => {
     if (!matrix) return;
-    const q = $<HTMLInputElement>("#filter-text").value.toLowerCase();
-    const shown = new Set(matrix.rows.filter((r) => !q || `${r.name} ${r.uniqueName} ${r.publisher ?? ""}`.toLowerCase().includes(q)).map((r) => r.uniqueName));
+    const shown = shownNames(matrix);
     for (const k of failedKeys(matrix, (u) => shown.has(u))) selected.add(k);
     render();
   });
   $("#btn-select-updates").addEventListener("click", () => {
     if (!matrix) return;
-    for (const k of updateKeys(matrix)) selected.add(k);
+    const shown = shownNames(matrix);
+    for (const k of updateKeys(matrix, (u) => shown.has(u))) selected.add(k);
     render();
   });
   $("#btn-clear-sel").addEventListener("click", () => {

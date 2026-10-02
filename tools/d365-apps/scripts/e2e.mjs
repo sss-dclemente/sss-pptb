@@ -186,6 +186,43 @@ assert(!(await page.$(`${cell("env-prod", "msdyn_portal")} input`)), "busy cell 
 assert((await txt('tr[data-app="msdyn_custom"]')).includes("custom upgrade"), "custom upgrade package flagged");
 assert((await txt("#counts")).includes("5 apps × 2 environments") && (await txt("#summary")).includes("2 updates") && (await txt("#summary")).includes("1 failed"), "summary counts: " + (await txt("#summary")));
 
+// ---- filter: shown rows, count caption, select-all respects it, hidden count, persisted, sticky App column ----
+await page.fill("#filter-text", "fs");
+assert((await page.$$eval("#grid tbody tr", (els) => els.map((e) => e.dataset.app))).join(",") === "msdyn_fs", "name filter shows only FS");
+assert((await txt("#counts")).includes("1 of 5 apps × 2 environments"), "count caption while filtered: " + (await txt("#counts")));
+await page.click("#btn-select-updates");
+assert((await page.$$eval("td.cell.is-selected", (els) => els.length)) === 0 && (await txt("#sel-count")) === "", "Select all updates leaves out rows the name filter hides (regression: ticked hidden SALES)");
+await page.fill("#filter-text", "");
+await page.click("#btn-select-updates");
+await page.fill("#filter-text", "fs");
+assert((await txt("#sel-count")) === "1 selected (1 hidden by filter)", "selection hidden by the filter is counted: " + (await txt("#sel-count")));
+const bU = await page.$eval("#btn-select-updates", (b) => b.getBoundingClientRect().right);
+const bF = await page.$eval("#btn-select-failed", (b) => b.getBoundingClientRect().left);
+assert(bF - bU < 20, "toolbar: Select all updates / failed sit together: gap " + (bF - bU));
+await M(() => {
+  const u = document.querySelector("#unused-all");
+  u.checked = true;
+  u.dispatchEvent(new Event("change"));
+});
+await page.reload();
+await page.waitForSelector("#grid");
+assert((await page.inputValue("#filter-text")) === "fs" && (await txt("#counts")).includes("1 of 5 apps"), "name filter persisted across reload");
+assert(await page.$eval("#unused-all", (e) => e.checked), "Unused Show all persisted across reload");
+await M(() => {
+  const u = document.querySelector("#unused-all");
+  u.checked = false;
+  u.dispatchEvent(new Event("change"));
+});
+const sticky = await page.$$eval(["#grid thead th:first-child", "#grid td.name"].join(","), (els) => els.map((e) => getComputedStyle(e).position + ":" + getComputedStyle(e).left));
+assert(sticky.length === 2 && sticky.every((s) => s === "sticky:0px"), "App column sticky on the left: " + sticky.join(","));
+await page.fill("#filter-text", "nothing-like-this");
+await page.waitForSelector("#matrix .empty-state");
+assert((await txt("#matrix .empty-state")).includes("Nothing matches the filter."), "filtered empty state");
+await page.click("#matrix .empty-state button");
+await page.waitForSelector("#grid");
+assert((await page.inputValue("#filter-text")) === "" && (await page.$$eval("#grid tbody tr", (els) => els.length)) === 5 && (await txt("#counts")).includes("5 apps × 2"), "Clear filters resets the filter and shows every app");
+assert(await M(() => !JSON.parse(localStorage.getItem("sss-view:d365-apps") || "{}")["ctl:filter-text"]), "cleared filter saved as default");
+
 // ---- selection ----
 await page.click("#btn-select-updates");
 let sel = await page.$$eval("td.cell.is-selected", (els) => els.map((e) => e.dataset.cell));

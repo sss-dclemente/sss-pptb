@@ -86,6 +86,7 @@ test("buildMatrix: rows from installed apps, newest catalog version wins, not-in
 test("updateKeys skips custom-upgrade packages; planInstalls orders by environment then app", () => {
   const m = M.buildMatrix(results(), { showNotInstalled: true });
   assert.deepEqual(M.updateKeys(m), [M.cellKey("dev", "sales")]);
+  assert.deepEqual(M.updateKeys(m, (u) => u !== "sales"), [], "rows hidden by the filter are left out");
   const sel = new Set([M.cellKey("prod", "sales"), M.cellKey("dev", "sales"), M.cellKey("dev", "fs"), M.cellKey("dev", "extra")]);
   const plan = M.planInstalls(m, sel);
   assert.deepEqual(plan.map((p) => `${p.env.id}:${p.uniqueName}:${p.action}`), ["dev:extra:install", "dev:fs:retry", "dev:sales:update"]);
