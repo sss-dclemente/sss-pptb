@@ -274,6 +274,18 @@ assert((await chip("Assign")).includes("granted") && (await chip("Assign")).incl
 const why1 = await text("#why");
 assert(why1.includes("Deep via Sales Person") && why1.includes("Local via Sharer (team Sales EU)"), "why summaries name roles and team");
 assert(why1.includes("agrees") && !why1.includes("platform says otherwise"), "tool agrees with RetrieveUserPrivilegeByPrivilegeName");
+// Why rows: chevron cue, denied rights open by default, granted closed, expand/collapse all.
+{
+  const whyOpen = (right) => page.$eval(`#why li[data-right="${right}"] details`, (d) => d.open);
+  assert(await page.$$eval("#why summary", (s) => s.length > 0 && s.every((x) => x.classList.contains("chev"))), "why: summaries carry the chev class");
+  assert(await page.$eval("#why summary", (s) => getComputedStyle(s, "::before").content !== "none" && getComputedStyle(s).display === "flex"), "why: chevron rendered, summary still flex");
+  assert((await whyOpen("Delete")) === true && (await whyOpen("Read")) === false, "why: denied Delete open by default, granted Read closed");
+  const card = page.locator(".card", { has: page.locator("#why") });
+  await card.locator(".fold-all button", { hasText: "Expand all" }).click();
+  assert(await page.$$eval("#why details", (d) => d.every((x) => x.open)), "why: Expand all opens every row");
+  await card.locator(".fold-all button", { hasText: "Collapse all" }).click();
+  assert(await page.$$eval("#why details", (d) => d.every((x) => !x.open)), "why: Collapse all closes every row");
+}
 // The point of moving off RetrieveUserPrivileges: prvShareAccount comes from a role held
 // through a team, and its real depth is Local. The old message reports team-inherited
 // privileges as Basic, which would have shown "Basic" here and flagged a disagreement.
@@ -298,6 +310,7 @@ assert((await text("#record-sel")).includes("Bruno Corp"), "record selected");
 await page.click("#btn-check");
 await page.waitForFunction(() => document.querySelector("#tab-check h2")?.textContent.includes("Bruno Corp"));
 assert((await chip("Read")).includes("granted") && (await chip("Write")).includes("denied") && (await chip("Share")).includes("granted") && (await chip("Append")).includes("granted"), "record verdicts from platform");
+assert(await page.$eval('#why li[data-right="Write"] details', (d) => d.open) && !(await page.$eval('#why li[data-right="Read"] details', (d) => d.open)), "why: a new record check starts from defaults (denied Write open, granted Read closed)");
 const why2 = await text("#why");
 assert(why2.includes("Deep depth: record BU Sales is under Sales"), "Read reach explained");
 assert(why2.includes("Basic depth covers only records the user"), "Write miss explained");
@@ -330,6 +343,7 @@ assert((await chip("AppendTo")).includes("granted") && why3.includes("Root Appen
 assert((await text("#relation")).includes("outside the user's BU subtree"), "BU relation outside");
 assert((await text("#tab-check")).includes("Shares affecting this user") && (await text("#tab-check")).includes("team Sales EU"), "share affecting user listed");
 await page.click(".tab[data-tab='shares']");
+assert(await page.$$eval(".tab", (t) => t.every((x) => x.getAttribute("role") === "tab" && x.getAttribute("aria-selected") === String(x.dataset.tab === "shares"))), "tabs: aria-selected follows the active tab");
 const sharesRows = await page.$$eval("#tab-shares table.shares tbody tr", (r) => r.map((x) => x.textContent));
 assert(sharesRows.length === 2 && sharesRows[0].includes("Sales EU") && sharesRows[0].includes("via team") && sharesRows[1].includes("Bruno Costa") && !sharesRows[1].includes("via"), "shares table with affects badge");
 
@@ -485,10 +499,12 @@ await page.click("#btn-check");
 await page.waitForFunction(() => document.querySelector("#tab-check h2")?.textContent.includes("Ana Silva on table Account"));
 await settle();
 assert((await chip("Delete")).includes("denied"), "before role change: Delete denied");
+await page.click('#why li[data-right="Read"] summary');
 await page.evaluate(() => window.__mock.rolePrivs[window.__mock.R_SALES].push(["prvDeleteAccount", "Local"]));
 await page.click("#btn-check");
 await page.waitForTimeout(100);
 await settle();
+assert(await page.$eval('#why li[data-right="Read"] details', (d) => d.open), "why: a row the user opened stays open when the same check re-runs");
 assert((await chip("Delete")).includes("granted") && (await chip("Delete")).includes("Local"), "after role change: platform Delete Local (not cached)");
 assert(!(await text("#why")).includes("platform says otherwise"), "after role change: role depth re-read, tool agrees");
 await page.evaluate(() => window.__mock.rolePrivs[window.__mock.R_SALES].pop());

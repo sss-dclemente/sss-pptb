@@ -1,5 +1,5 @@
 import { mountDebug } from "../../_shared/debug-ui";
-import { $, append, badge, card, emptyState, h, table, wireTabs, type BadgeKind } from "../../_shared/dom";
+import { $, append, badge, card, emptyState, foldAllButtons, h, keepFold, table, wireTabs, type BadgeKind } from "../../_shared/dom";
 import { dataverse, getConnections, initTheme, inToolbox, notify, onConnectionChange, saveText } from "../../_shared/host";
 import { columnAccess } from "./access/columns";
 import { explain } from "./access/explain";
@@ -277,32 +277,33 @@ function renderCheck(): void {
     }),
   );
 
+  // Fold memory is keyed per check (user + table + record) and right: re-rendering the same check keeps what the
+  // user opened; checking another user/table/record starts from the defaults (denied or disagreeing rights open).
+  const foldScope = `why:${d.user.id}:${d.table.logicalName}:${d.record?.id ?? "table"}`;
   const why = h(
     "ul",
     { class: "why", id: "why" },
     ...x.verdicts
       .filter((v) => v.applicable)
-      .map((v) =>
-        h(
-          "li",
+      .map((v) => {
+        const denied = (v.platform === "n/a" ? v.computed : v.platform) === "no";
+        const row = h(
+          "details",
           {},
+          h("summary", { class: "chev" }, h("span", { class: "right" }, v.right), h("span", { class: "summary" }, v.summary), v.agrees === false ? badge("platform says otherwise", "warn") : v.agrees === true ? badge("agrees", "ok") : null),
           h(
-            "details",
-            {},
-            h("summary", {}, h("span", { class: "right" }, v.right), h("span", { class: "summary" }, v.summary), v.agrees === false ? badge("platform says otherwise", "warn") : v.agrees === true ? badge("agrees", "ok") : null),
-            h(
-              "div",
-              { class: "detail" },
-              v.paths.length
-                ? h("ul", {}, ...v.paths.map((p) => h("li", { class: `path ${p.reaches === false ? "is-miss" : "is-ok"}` }, `${p.role.name}${p.viaTeam ? ` via team ${p.viaTeam.name}` : " (direct)"} · ${depthLabel(p.depth)}${x.mode === "record" ? ` · ${p.reason}` : ""}`)))
-                : h("p", { class: "caption" }, `No role grants ${d.tablePrivileges[v.right] ?? tablePrivilegeName(d.tablePrivileges, v.right, d.table.logicalName) ?? v.right}.`),
-              v.sharePaths.length ? h("ul", {}, ...v.sharePaths.map((s) => h("li", { class: `path ${v.sharesEffective ? "is-ok" : "is-miss"}` }, `Share: ${s}${v.sharesEffective ? "" : " (no effect: the user holds no role with this privilege)"}`))) : null,
-              v.hierarchyHint ? h("p", { class: "caption" }, v.hierarchyHint) : null,
-              x.mode === "table" && v.platformDepth != null ? h("p", { class: "caption" }, `Platform effective depth: ${depthLabel(v.platformDepth)}`) : null,
-            ),
+            "div",
+            { class: "detail" },
+            v.paths.length
+              ? h("ul", {}, ...v.paths.map((p) => h("li", { class: `path ${p.reaches === false ? "is-miss" : "is-ok"}` }, `${p.role.name}${p.viaTeam ? ` via team ${p.viaTeam.name}` : " (direct)"} · ${depthLabel(p.depth)}${x.mode === "record" ? ` · ${p.reason}` : ""}`)))
+              : h("p", { class: "caption" }, `No role grants ${d.tablePrivileges[v.right] ?? tablePrivilegeName(d.tablePrivileges, v.right, d.table.logicalName) ?? v.right}.`),
+            v.sharePaths.length ? h("ul", {}, ...v.sharePaths.map((s) => h("li", { class: `path ${v.sharesEffective ? "is-ok" : "is-miss"}` }, `Share: ${s}${v.sharesEffective ? "" : " (no effect: the user holds no role with this privilege)"}`))) : null,
+            v.hierarchyHint ? h("p", { class: "caption" }, v.hierarchyHint) : null,
+            x.mode === "table" && v.platformDepth != null ? h("p", { class: "caption" }, `Platform effective depth: ${depthLabel(v.platformDepth)}`) : null,
           ),
-        ),
-      ),
+        );
+        return h("li", { "data-right": v.right }, keepFold(row, `${foldScope}:${v.right}`, denied || v.agrees === false));
+      }),
   );
 
   const roles = d.heldRoles.length
@@ -342,7 +343,7 @@ function renderCheck(): void {
     h("h2", {}, title),
     verdicts,
     x.notes.length ? h("div", { class: "warnings" }, h("ul", { class: "notes" }, ...x.notes.map((n) => h("li", {}, n)))) : null,
-    card("Why", why),
+    card("Why", why, foldAllButtons(why, "details")),
     card("Roles", roles),
     card("Ownership & business unit", ownership),
     card("Shares affecting this user", sharesForUser),
