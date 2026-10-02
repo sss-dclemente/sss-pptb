@@ -107,13 +107,21 @@ export function planInstalls(m: Matrix, selected: Set<string>): PlannedInstall[]
 
 export const isProduction = (e: Environment): boolean => /production/i.test(e.type);
 
-/** Row counts for the summary line. */
-export function counts(m: Matrix): { updates: number; failed: number; busy: number } {
+/** The summary badges that filter rows by state: update available, failed install, install in progress. */
+export type StateKind = Extract<CellKind, "update" | "failed" | "busy">;
+export const STATE_KINDS: readonly StateKind[] = ["update", "failed", "busy"];
+
+/** True when the row has any of `states` in one of the `cols` environment columns (the pressed badges combine as OR). */
+export const rowHasState = (r: Row, states: ReadonlySet<CellKind>, cols: ReadonlySet<string>): boolean => [...r.cells].some(([id, c]) => cols.has(id) && states.has(c.kind));
+
+/** Cell counts for the summary line; only the `cols` environment columns when given (the shown ones). */
+export function counts(m: Matrix, cols?: ReadonlySet<string>): { updates: number; failed: number; busy: number } {
   let updates = 0;
   let failed = 0;
   let busy = 0;
   for (const r of m.rows)
-    for (const c of r.cells.values()) {
+    for (const [id, c] of r.cells) {
+      if (cols && !cols.has(id)) continue;
       if (c.kind === "update") updates++;
       if (c.kind === "failed") failed++;
       if (c.kind === "busy") busy++;

@@ -9,19 +9,21 @@ Built by [Simple Smooth Safe](https://simplesmoothsafe.com).
 - **Environments**: lists every environment your account can see that has a Dataverse database. Pick the columns; the selection is remembered. The first time, the connection's own environment is used.
 - **Matrix**: for each picked environment, the installed Dynamics 365 apps and the apps available to install.
   - `1.0 → 1.2` (amber): an update is available.
-  - `failed` (red): the last install failed; the error is shown.
+  - `failed` (red): the last install failed; the error is shown on one line (hover for the full text).
   - `Installing` and similar: an operation is in progress; the cell can't be selected.
   - With **Show not installed**: apps available but installed in no picked environment.
-  - Filter by name; **Only updates / failed** hides the rest.
+  - Filter by name. The counts above the matrix (**updates**, **failed**, **in progress**) are toggles: press one or more to show only the apps in that state (any of them). **Clear filters** resets the name filter and the toggles.
 - **Select all failed**: ticks every failed install for a retry (rows hidden by the name filter are left out).
 - **Select all updates**: ticks every update, except packages flagged **custom upgrade**. Those handle their own upgrade; tick them by hand after reading their release notes.
-- **Preview → run**: the preview lists the installs per environment and warns about Production environments. The run does one install at a time per environment, with up to 3 environments in parallel. Each install is followed until it ends (an install can take an hour) and the result shows in the matrix and in the run table. **Stop waiting** stops following; installs already started keep running in the environment. Afterwards the environments are read again.
+- **Preview → run**: the preview lists the installs per environment and warns about Production environments. The run does one install at a time per environment, with up to 3 environments in parallel. Each install is followed until it ends (an install can take an hour) and the result shows in the matrix and in the run table. **Stop waiting** stops following; installs already started keep running in the environment. Afterwards the environments are read again. The run section folds away when every install succeeded; **Only problems** hides the installs that succeeded, and **Dismiss** clears the run list.
 - **Unused apps…** (read-only): for the **connection's** environment, which installed apps look unused.
   - Each app is mapped to its solutions: the solutions its package imported (solution history) plus its anchor solution (same unique name as the package).
   - The verdict comes from row counts in the tables that only that app's solutions contain. Tables and solutions shared with another installed app are listed but not counted, because they can hold the other app's data.
   - Verdicts: **Probably unused** (every own table empty), **Seed data only?** (no own table has more than 10 rows), **In use**, **No signal** (no own tables to count), **Solutions not found**, **Platform** (auto-installed apps such as Power Apps checker or Flow approvals, which can't be removed).
   - Each row shows the tables with rows, the model-driven apps and how many security roles they're shared with, and the solutions behind the app.
   - Counts come from `RetrieveTotalRecordCount`, a snapshot under 24 hours old; every zero is re-checked live with a one-row read.
+  - Filter by name, or press verdict counts (any of them) to show only those apps. **Expand all / Collapse all** for the solutions behind each app; **How verdicts work** explains the method.
+  - **Hide** keeps the report: **Unused apps…** shows it again without reading anything. **Re-run** reads it again.
   - Report CSV.
 - **Exports**:
   - Matrix CSV.

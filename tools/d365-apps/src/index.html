@@ -25,10 +25,9 @@
 
     <div class="toolbar">
       <input id="filter-text" type="search" placeholder="Filter apps…" aria-label="Filter apps" />
-      <label class="check"><input type="checkbox" id="only-updates" /> Only updates / failed</label>
       <label class="check" title="Also list apps available to install that no selected environment has"><input type="checkbox" id="show-available" /> Show not installed</label>
       <label class="check" title="Hide environment columns with nothing installed, failed or in progress (apps only available to install do not count). Unreadable environments always show."><input type="checkbox" id="hide-empty" checked /> Hide empty environments</label>
-      <button id="btn-select-updates" class="btn btn-sm" type="button" disabled title="Tick every update (rows hidden by the filter and hidden environment columns are left out)">Select all updates</button>
+      <button id="btn-select-updates" class="btn btn-sm" type="button" disabled title="Tick every update (rows hidden by the filters and hidden environment columns are left out)">Select all updates</button>
       <button id="btn-select-failed" class="btn btn-sm" type="button" disabled title="Tick every failed install for a retry (rows hidden by the filter and hidden environment columns are left out)">Select all failed</button>
       <button id="btn-clear-sel" class="btn btn-ghost btn-sm" type="button" disabled>Clear selection</button>
       <div class="right">
@@ -44,10 +43,12 @@
     <section id="unused" class="unused" hidden>
       <div class="run-head">
         <h3>Unused apps: <span id="unused-env"></span></h3>
+        <input id="unused-filter" type="search" placeholder="Filter apps…" aria-label="Filter the unused apps report" />
         <label class="check caption"><input type="checkbox" id="unused-all" /> Show all (in use, platform)</label>
         <span class="spacer"></span>
+        <button id="btn-unused-rerun" class="btn btn-ghost btn-sm" type="button" disabled title="Read the row counts again (the report is kept while hidden)">Re-run</button>
         <button id="btn-unused-csv" class="btn btn-ghost btn-sm" type="button" disabled>Report CSV</button>
-        <button id="btn-unused-close" class="btn btn-ghost btn-sm" type="button">Close</button>
+        <button id="btn-unused-hide" class="btn btn-ghost btn-sm" type="button" title="Hide the report; Unused apps… shows it again without re-reading">Hide</button>
       </div>
       <div id="unused-body"></div>
     </section>
@@ -55,13 +56,16 @@
     <main class="matrix-wrap" id="matrix"></main>
 
     <section id="run" class="run" hidden>
-      <div class="run-head">
-        <h3 id="run-title">Run</h3>
-        <span class="spacer"></span>
+      <details id="run-fold" open>
+        <summary class="chev"><h3 id="run-title">Run</h3></summary>
+        <div id="run-body"></div>
+      </details>
+      <div class="run-actions">
+        <label class="check caption" title="Hide installs that succeeded"><input type="checkbox" id="run-problems" /> Only problems</label>
         <button id="btn-stop" class="btn btn-sm" type="button" hidden>Stop waiting</button>
         <button id="btn-results-csv" class="btn btn-ghost btn-sm" type="button">Results CSV</button>
+        <button id="btn-run-dismiss" class="btn btn-ghost btn-sm" type="button" title="Clear the run list (export Results CSV first to keep it)">Dismiss</button>
       </div>
-      <div id="run-body"></div>
     </section>
 
     <footer class="footer" style="padding: var(--s-2) var(--s-5); margin-top: 0; flex-direction: row; justify-content: space-between; align-items: center;">

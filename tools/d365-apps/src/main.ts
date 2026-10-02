@@ -1,13 +1,14 @@
 import { mountDebug } from "../../_shared/debug-ui";
-import { $, append, badge, emptyState, filteredEmpty, h, showDialog, shownOf, type Child } from "../../_shared/dom";
+import { $, append, badge, emptyState, filteredEmpty, h, showDialog, shownOf, type BadgeKind, type Child } from "../../_shared/dom";
 import { loadView, persistControls, saveView } from "../../_shared/view-state";
 import { errText, isSetupError, listEnvironments, listPackages, type PpLike } from "./apps/api";
 import { matrixCsv, pacScript, resultsCsv } from "./apps/export";
-import { buildMatrix, cellKey, counts, emptyEnvIds, failedKeys, isProduction, planInstalls, updateKeys, visibleEnvs } from "./apps/matrix";
-import { runInstalls, toRunItems } from "./apps/run";
+import { buildMatrix, cellKey, counts, emptyEnvIds, failedKeys, isProduction, planInstalls, rowHasState, STATE_KINDS, updateKeys, visibleEnvs, type StateKind } from "./apps/matrix";
+import { runInstalls, runProblems, toRunItems } from "./apps/run";
 import type { DvLike } from "./apps/unused";
 import type { Cell, EnvPackages, Environment, Matrix, PlannedInstall, Row, RunItem } from "./apps/types";
-import { initUnused, unusedAvailable } from "./unused-ui";
+import { toggleBadge } from "./toggle";
+import { initUnused, resetUnused, unusedAvailable } from "./unused-ui";
 import { dataverse, getConnections, initTheme, inToolbox, notify, onConnectionChange, powerplatform, saveText, type LiveConnection } from "./host";
 
 const STORE_KEY = "sss-d365-apps:envs";
@@ -37,6 +38,24 @@ const hiddenEnvs = new Set<string>(
     return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
   })(),
 );
+/** Summary badges pressed as row filters (any of them); persisted per viewer. */
+const stateFilter = new Set<StateKind>(loadStates());
+/** Environments whose cells still show the last run's status note: until their apps are read again after the run. */
+const runNoteEnvs = new Set<string>();
+
+function loadStates(): StateKind[] {
+  const v = loadView<unknown>(TOOL_ID, "states", null);
+  if (Array.isArray(v)) return v.filter((x): x is StateKind => STATE_KINDS.includes(x as StateKind));
+  // the "Only updates / failed" checkbox these badges replace: its saved tick becomes the update + failed badges
+  if (loadView<unknown>(TOOL_ID, "ctl:only-updates", false) !== true) return [];
+  const migrated: StateKind[] = ["update", "failed"];
+  saveView(TOOL_ID, "ctl:only-updates", undefined);
+  saveView(TOOL_ID, "states", migrated);
+  return migrated;
+}
+function saveStates(): void {
+  saveView(TOOL_ID, "states", stateFilter.size ? [...stateFilter] : undefined);
+}
 
 const pp = (): PpLike | undefined => powerplatform() as unknown as PpLike | undefined;
 
@@ -94,6 +113,7 @@ async function start(): Promise<void> {
   const g = ++gen;
   $("#setup").replaceChildren();
   unusedAvailable(false);
+  resetUnused();
   results = [];
   matrix = null;
   selected.clear();
@@ -181,6 +201,8 @@ async function loadPackages(only?: string[]): Promise<void> {
   setStatus(null);
   const order = new Map(picked.map((id, i) => [id, i]));
   results = [...keep, ...fresh].sort((a, b) => (order.get(a.env.id) ?? 0) - (order.get(b.env.id) ?? 0));
+  // fresh data carries the package's own state and error: the run's note for these cells is stale now
+  if (!running) for (const r of fresh) runNoteEnvs.delete(r.env.id);
   if (fresh.length && fresh.every((r) => r.setupError)) setupBanner("api", fresh[0].error ?? undefined);
   rebuild();
 }
@@ -242,7 +264,7 @@ const ACTION_LABEL = { update: "Update", retry: "Retry", install: "Install" } as
 
 function cellNode(envId: string, uniqueName: string, c: Cell): HTMLElement {
   const k = cellKey(envId, uniqueName);
-  const live = run.find((i) => i.env.id === envId && i.uniqueName.toLowerCase() === uniqueName.toLowerCase() && (running || i.status !== "succeeded"));
+  const live = runNoteEnvs.has(envId) ? run.find((i) => i.env.id === envId && i.uniqueName.toLowerCase() === uniqueName.toLowerCase() && (running || i.status !== "succeeded")) : undefined;
   const td = h("td", { class: `cell k-${c.kind}${selected.has(k) ? " is-selected" : ""}`, "data-cell": k });
   const ver = (v: string | null | undefined) => h("span", { class: "ver" }, v ?? "?");
   let main: Child;
@@ -276,8 +298,12 @@ function cellNode(envId: string, uniqueName: string, c: Cell): HTMLElement {
     });
     td.append(h("label", { title: ACTION_LABEL[c.action] }, cb, main));
   } else td.append(main as Node | string);
-  if (c.note && c.kind !== "busy") td.append(h("span", { class: "note" }, c.note));
-  if (live) td.append(h("span", { class: "note", "data-run": live.status }, `${live.status}${live.message ? `: ${live.message}` : ""}`));
+  // one line each (ellipsis), the full text on hover: a long package error and a run note no longer stack up
+  if (c.note && c.kind !== "busy") td.append(h("span", { class: "note", title: c.note }, c.note));
+  if (live) {
+    const t = `${live.status}${live.message ? `: ${live.message}` : ""}`;
+    td.append(h("span", { class: "note", "data-run": live.status, title: t }, t));
+  }
   return td;
 }
 
@@ -308,12 +334,35 @@ function showAllEnvs(): void {
   render();
 }
 
-/** The rows the matrix shows (name filter, "Only updates / failed" in the shown columns). The select-all buttons and the hidden count use the same test. */
+/** The rows the matrix shows (name filter, pressed state badges in the shown columns). The select-all buttons and the hidden count use the same test. */
 function shownFilter(m: Matrix): (r: Row) => boolean {
   const q = $<HTMLInputElement>("#filter-text").value.toLowerCase();
-  const onlyUpd = $<HTMLInputElement>("#only-updates").checked;
   const cols = shownEnvIds(m);
-  return (r) => (!q || `${r.name} ${r.uniqueName} ${r.publisher ?? ""}`.toLowerCase().includes(q)) && (!onlyUpd || [...r.cells].some(([id, c]) => cols.has(id) && (c.kind === "update" || c.kind === "failed")));
+  return (r) => (!q || `${r.name} ${r.uniqueName} ${r.publisher ?? ""}`.toLowerCase().includes(q)) && (!stateFilter.size || rowHasState(r, stateFilter, cols));
+}
+const filtersActive = (): boolean => filters.active() || stateFilter.size > 0;
+/** "Clear filters": the name filter and the state badges (not Show not installed / Hide empty environments: view preferences). */
+function clearFilters(): void {
+  filters.reset();
+  stateFilter.clear();
+  saveStates();
+  render();
+}
+function toggleState(k: StateKind): void {
+  if (!stateFilter.delete(k)) stateFilter.add(k);
+  saveStates();
+  render();
+}
+const STATE_TITLE: Record<StateKind, string> = {
+  update: "Show only apps with an update in a shown environment",
+  failed: "Show only apps with a failed install in a shown environment",
+  busy: "Show only apps with an install in progress in a shown environment",
+};
+/** A summary count that filters the rows to that state; pressed badges combine (any of them). Shown while it counts something or is pressed. */
+function stateBadge(k: StateKind, n: number, text: string, kind: BadgeKind): HTMLElement | null {
+  const on = stateFilter.has(k);
+  if (!n && !on && k !== "update") return null;
+  return toggleBadge(text, kind, on, () => toggleState(k), { id: `f-${k}`, title: `${STATE_TITLE[k]}. Pressed badges combine: rows with any of them.`, disabled: !n && !on });
 }
 const shownNames = (m: Matrix): Set<string> => new Set(m.rows.filter(shownFilter(m)).map((r) => r.uniqueName));
 /** Cell visibility for the select-all buttons and the hidden count: shown row and shown column. */
@@ -338,8 +387,8 @@ function render(): void {
     return;
   }
   const m = matrix;
-  const n = counts(m);
   const cols = shownEnvs(m);
+  const n = counts(m, new Set(cols.map((e) => e.id)));
   const rows = m.rows.filter(shownFilter(m));
   const hiddenCols = m.envs.filter((e) => !cols.includes(e));
   let showAll: HTMLElement | null = null;
@@ -359,10 +408,11 @@ function render(): void {
           showAll,
         )
       : null,
-    badge(`${n.updates} update${n.updates === 1 ? "" : "s"}`, n.updates ? "warn" : "ok"),
-    n.failed ? badge(`${n.failed} failed`, "bad") : null,
-    n.busy ? badge(`${n.busy} in progress`, "warn") : null,
+    stateBadge("update", n.updates, `${n.updates} update${n.updates === 1 ? "" : "s"}`, n.updates ? "warn" : "ok"),
+    stateBadge("failed", n.failed, `${n.failed} failed`, "bad"),
+    stateBadge("busy", n.busy, `${n.busy} in progress`, "warn"),
     m.errors.size ? badge(`${m.errors.size} environment(s) unreadable`, "bad") : null,
+    filtersActive() ? clearButton() : null,
   );
   const head = h(
     "tr",
@@ -393,12 +443,15 @@ function render(): void {
         ? filteredEmpty("All environments hidden", "Every environment column is hidden (✕ or Hide empty environments).", showAllEnvs, "Show all")
         : rows.length
           ? h("table", { class: "matrix", id: "grid" }, h("thead", {}, head), h("tbody", {}, ...body))
-          : filteredEmpty("No apps", "Nothing matches the filter.", () => {
-              filters.reset();
-              render();
-            }),
+          : filteredEmpty("No apps", "Nothing matches the filter.", clearFilters),
   );
   renderSelection();
+}
+
+function clearButton(): HTMLElement {
+  const b = h("button", { class: "btn btn-ghost btn-sm", type: "button", id: "btn-clear-filters", title: "Clear the name filter and the pressed state badges" }, "Clear filters");
+  b.addEventListener("click", clearFilters);
+  return b;
 }
 
 function hideButton(e: Environment): HTMLElement {
@@ -458,12 +511,25 @@ async function preview(): Promise<void> {
 function renderRun(): void {
   const sec = $("#run");
   sec.hidden = !run.length;
+  $<HTMLButtonElement>("#btn-run-dismiss").disabled = running;
   if (!run.length) return;
   const done = run.filter((i) => !["queued", "starting", "running"].includes(i.status)).length;
   $("#run-title").textContent = running ? `Running: ${done} / ${run.length} done` : `Last run: ${run.filter((i) => i.status === "succeeded").length} succeeded, ${run.filter((i) => i.status === "failed").length} failed, ${run.filter((i) => i.status === "stopped" || i.status === "canceled").length} stopped`;
   $("#btn-stop").hidden = !running;
   const tone = (s: RunItem["status"]) => (s === "succeeded" ? "ok" : s === "failed" ? "bad" : s === "running" || s === "starting" ? "warn" : "neutral");
+  const items = $<HTMLInputElement>("#run-problems").checked ? runProblems(run) : run;
+  if (!items.length) {
+    $("#run-body").replaceChildren(
+      filteredEmpty("No problems", `All ${run.length} install${run.length === 1 ? "" : "s"} succeeded (Only problems hides them).`, () => {
+        const cb = $<HTMLInputElement>("#run-problems");
+        cb.checked = false;
+        cb.dispatchEvent(new Event("change")); // saved by persistControls, re-renders
+      }, "Show all"),
+    );
+    return;
+  }
   $("#run-body").replaceChildren(
+    items.length < run.length ? h("p", { class: "count-caption", id: "run-count" }, `${shownOf(items.length, run.length, "installs")} (succeeded hidden)`) : "",
     h(
       "table",
       { id: "run-table" },
@@ -471,7 +537,7 @@ function renderRun(): void {
       h(
         "tbody",
         {},
-        ...run.map((i) =>
+        ...items.map((i) =>
           h("tr", { "data-status": i.status }, h("td", {}, i.env.name), h("td", {}, i.name), h("td", {}, `${ACTION_LABEL[i.action]}${i.to ? ` ${i.to}` : ""}`), h("td", {}, badge(i.status, tone(i.status))), h("td", { class: "caption" }, i.message ?? "")),
         ),
       ),
@@ -485,7 +551,10 @@ async function execute(plan: PlannedInstall[]): Promise<void> {
   running = true;
   stopFlag = false;
   run = toRunItems(plan);
+  runNoteEnvs.clear();
+  for (const i of run) runNoteEnvs.add(i.env.id);
   selected.clear();
+  $<HTMLDetailsElement>("#run-fold").open = true;
   render();
   renderRun();
   let pending = false;
@@ -503,6 +572,8 @@ async function execute(plan: PlannedInstall[]): Promise<void> {
   } finally {
     running = false;
   }
+  // a clean run (every install succeeded) folds away; anything else stays open to read
+  if (!runProblems(run).length) $<HTMLDetailsElement>("#run-fold").open = false;
   renderRun();
   const ok = run.filter((i) => i.status === "succeeded").length;
   const bad = run.filter((i) => i.status === "failed").length;
@@ -517,15 +588,23 @@ async function exportFile(name: string, content: string, mime: string): Promise<
 const stamp = () => new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
 
 // ---------- wiring ----------
-/** Toolbar filters, restored on open; "Clear filters" resets only these (not Show not installed / Hide empty environments / Unused Show all: view preferences). */
-const filters = persistControls(TOOL_ID, ["filter-text", "only-updates"]);
-persistControls(TOOL_ID, ["show-available", "hide-empty", "unused-all"]);
+/** The name filter, restored on open; "Clear filters" resets it and the state badges (not Show not installed / Hide empty environments / Unused Show all / Only problems: view preferences). */
+const filters = persistControls(TOOL_ID, ["filter-text"]);
+persistControls(TOOL_ID, ["show-available", "hide-empty", "unused-all", "run-problems"]);
+
+/** Clear the run list (not while running): its section and the run notes in the cells go. */
+function dismissRun(): void {
+  if (running) return;
+  run = [];
+  runNoteEnvs.clear();
+  renderRun();
+  render();
+}
 
 function wire(): void {
   $("#btn-envs").addEventListener("click", () => void pickEnvironments());
   $("#btn-refresh").addEventListener("click", () => void loadPackages());
   $("#filter-text").addEventListener("input", render);
-  $("#only-updates").addEventListener("change", render);
   $("#show-available").addEventListener("change", () => matrix && rebuild());
   $("#hide-empty").addEventListener("change", render);
   $("#btn-select-failed").addEventListener("click", () => {
@@ -552,6 +631,8 @@ function wire(): void {
   $("#btn-results-csv").addEventListener("click", () => {
     if (run.length) void exportFile(`d365-apps-run-${stamp()}.csv`, resultsCsv(run), "text/csv");
   });
+  $("#run-problems").addEventListener("change", renderRun);
+  $("#btn-run-dismiss").addEventListener("click", dismissRun);
   $("#btn-stop").addEventListener("click", () => {
     stopFlag = true;
     $("#btn-stop").hidden = true;
@@ -563,6 +644,7 @@ function wire(): void {
 }
 
 initUnused({
+  tool: TOOL_ID,
   pp,
   dv: () => dataverse() as unknown as DvLike | undefined,
   envId: connectionEnvId,

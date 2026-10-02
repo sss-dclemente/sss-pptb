@@ -228,6 +228,43 @@ await page.waitForSelector("#grid");
 assert((await page.inputValue("#filter-text")) === "" && (await page.$$eval("#grid tbody tr", (els) => els.length)) === 5 && (await txt("#counts")).includes("5 apps × 2"), "Clear filters resets the filter and shows every app");
 assert(await M(() => !JSON.parse(localStorage.getItem("sss-view:d365-apps") || "{}")["ctl:filter-text"]), "cleared filter saved as default");
 
+// ---- state badges filter rows (any pressed one), persisted, Clear filters, old checkbox migrated ----
+const appsShown = () => page.$$eval("#grid tbody tr", (els) => els.map((e) => e.dataset.app).join(","));
+const pressed = (sel) => page.$eval(sel, (b) => b.getAttribute("aria-pressed"));
+assert(!(await page.$("#only-updates")), "the Only updates / failed checkbox is replaced by the badges");
+assert((await txt("#f-update")) === "2 updates" && (await txt("#f-busy")) === "1 in progress" && (await pressed("#f-update")) === "false" && (await pressed("#f-failed")) === "false", "update / failed / in progress badges are toggles, not pressed");
+assert(!(await page.$("#btn-clear-filters")), "no Clear filters while nothing filters");
+await page.click("#f-busy");
+assert((await appsShown()) === "msdyn_portal" && (await pressed("#f-busy")) === "true" && (await txt("#counts")).includes("1 of 5 apps"), "in progress badge: only the app being installed: " + (await appsShown()));
+await page.click("#f-failed");
+assert((await appsShown()) === "msdyn_fs,msdyn_portal" && (await txt("#counts")).includes("2 of 5 apps"), "pressed badges combine (any of them): " + (await appsShown()));
+await page.click("#btn-select-updates");
+assert((await txt("#sel-count")) === "", "Select all updates follows the badge filter (SALES row hidden): " + (await txt("#sel-count")));
+await page.click("#btn-select-failed");
+await page.click("#f-failed");
+assert((await appsShown()) === "msdyn_portal" && (await txt("#sel-count")) === "1 selected (1 hidden by filter)", "the hidden count follows the badge filter: " + (await txt("#sel-count")));
+await page.click("#btn-clear-sel");
+await page.click("#f-failed");
+await page.reload();
+await page.waitForSelector("#grid");
+assert((await appsShown()) === "msdyn_fs,msdyn_portal" && (await pressed("#f-failed")) === "true" && (await pressed("#f-busy")) === "true", "pressed badges persisted across reload");
+await page.click("#btn-clear-filters");
+assert((await appsShown()).split(",").length === 5 && (await pressed("#f-failed")) === "false" && (await pressed("#f-busy")) === "false" && !(await page.$("#btn-clear-filters")), "Clear filters releases the badges");
+await M(() => {
+  const v = JSON.parse(localStorage.getItem("sss-view:d365-apps") || "{}");
+  delete v.states;
+  v["ctl:only-updates"] = true;
+  localStorage.setItem("sss-view:d365-apps", JSON.stringify(v));
+});
+await page.reload();
+await page.waitForSelector("#grid");
+assert((await appsShown()) === "msdyn_custom,msdyn_fs,msdyn_sales" && (await pressed("#f-update")) === "true" && (await pressed("#f-failed")) === "true" && (await pressed("#f-busy")) === "false", "a saved Only updates / failed tick becomes the update + failed badges: " + (await appsShown()));
+assert(await M(() => {
+  const v = JSON.parse(localStorage.getItem("sss-view:d365-apps"));
+  return !("ctl:only-updates" in v) && v.states.join(",") === "update,failed";
+}), "migrated once: the old key is gone");
+await page.click("#btn-clear-filters");
+
 // ---- selection ----
 await page.click("#btn-select-updates");
 let sel = await page.$$eval("td.cell.is-selected", (els) => els.map((e) => e.dataset.cell));
@@ -271,10 +308,40 @@ await page.waitForFunction(() => /1\.2\.0\.0/.test(document.querySelector('td[da
 assert(true, "environments read again after the run: Dev sales now 1.2 current");
 assert(await M(() => window.__mock.notes.some((n) => n.title === "Installs finished with failures")), "notification summarises the run");
 
+// ---- run section: stays open with a failure, Only problems; cell notes one line, run note dropped after the reload ----
+assert(await page.$eval("#run-fold", (d) => d.open), "a run with a failure stays open");
+const fsNote = await page.$eval(`${cell("env-dev", "msdyn_fs")} .note`, (e) => ({ ws: getComputedStyle(e).whiteSpace, to: getComputedStyle(e).textOverflow, title: e.title, h: e.getBoundingClientRect().height }));
+assert(fsNote.ws === "nowrap" && fsNote.to === "ellipsis" && fsNote.title === "Dependency msdyn_anchor missing" && fsNote.h < 20, "cell error: one line with ellipsis, the full text in its title: " + JSON.stringify(fsNote));
+assert((await page.$$eval(`${cell("env-dev", "msdyn_fs")} .note`, (els) => els.length)) === 1 && !(await page.$("#grid [data-run]")), "the run's note is dropped once the environments were read again");
+await page.check("#run-problems");
+assert((await page.$$eval("#run-table tbody tr", (els) => els.map((e) => e.children[1].textContent).join(","))) === "FS" && (await txt("#run-count")).startsWith("1 of 3 installs"), "Only problems hides the succeeded installs");
+await page.uncheck("#run-problems");
+assert((await page.$$eval("#run-table tbody tr", (els) => els.length)) === 3, "Only problems off: every install listed");
+
 // ---- results CSV ----
 await page.click("#btn-results-csv");
 const res = await M(() => window.__mock.saved.at(-1));
 assert(res.name.endsWith(".csv") && res.content.split("\n")[0].startsWith("environment,type,app") && res.content.includes("failed"), "results CSV");
+
+// ---- a clean run folds away; Dismiss (not while running) clears it ----
+await page.check(`${cell("env-dev", "msdyn_custom")} input`);
+await page.click("#btn-preview");
+await page.waitForSelector("#plan");
+await page.click("#dlg-ok");
+const during = await page.waitForFunction(() => {
+  const t = document.querySelector("#run-title")?.textContent ?? "";
+  if (/^Running/.test(t)) return document.querySelector("#btn-run-dismiss").disabled && document.querySelector("#run-fold").open ? "ok" : "bad";
+  return /^Last run: 1 succeeded/.test(t) ? "missed" : false;
+});
+assert((await during.jsonValue()) !== "bad", "while running: the run section is open and Dismiss disabled (" + (await during.jsonValue()) + ")");
+await page.waitForFunction(() => /^Last run: 1 succeeded, 0 failed/.test(document.querySelector("#run-title")?.textContent ?? ""), null, { timeout: 20000 });
+await page.waitForFunction(() => /1\.5\.0\.0/.test(document.querySelector('td[data-cell="env-dev|msdyn_custom"]')?.textContent ?? "") && !/→/.test(document.querySelector('td[data-cell="env-dev|msdyn_custom"]')?.textContent ?? ""));
+assert(!(await page.$eval("#run-fold", (d) => d.open)), "a clean run folds the run section");
+assert(!(await page.$eval("#btn-run-dismiss", (b) => b.disabled)) && (await page.$eval("#btn-results-csv", (b) => b.getBoundingClientRect().height)) > 0, "folded: Results CSV and Dismiss stay reachable");
+await page.click("#run-fold > summary");
+assert(await page.$eval("#run-fold", (d) => d.open), "the run title unfolds it");
+await page.click("#btn-run-dismiss");
+assert(await page.$eval("#run", (e) => e.hidden), "Dismiss clears the run list");
 
 // ---- unused apps report (connection's environment: Dev) ----
 assert(!(await page.$eval("#btn-unused", (b) => b.disabled)), "Unused apps enabled with a Dataverse connection");
@@ -298,8 +365,41 @@ assert((await M(() => window.__mock.posts.length)) === postsBefore && dvq.every(
 await page.click("#btn-unused-csv");
 const ucsv = await M(() => window.__mock.saved.at(-1));
 assert(ucsv.name.startsWith("d365-apps-unused-SSS_Dev-") && ucsv.content.includes("SSS Dev,TEAMSAPP,msdyn_teamsapp,3.1.0.0,Probably unused"), "report CSV: " + ucsv.content.split("\r\n")[1]);
-await page.click("#btn-unused-close");
-assert(await page.$eval("#unused", (e) => e.hidden), "Close hides the report");
+
+// ---- unused: notes folded, verdict badges filter, name filter, expand / collapse all, Hide keeps the report, Re-run ----
+assert(!(await page.$eval("#unused-how", (d) => d.open)) && (await txt("#unused-how")).includes("RetrieveTotalRecordCount"), "How verdicts work: folded by default");
+const uApps = () => page.$$eval("#unused-table tbody tr", (els) => els.map((e) => e.dataset.app).join(","));
+const uAll = await uApps();
+await page.click('#unused-counts button[data-verdict="unused"]');
+assert((await uApps()) === "msdyn_teamsapp" && (await pressed('#unused-counts button[data-verdict="unused"]')) === "true" && (await txt("#unused-shown")).startsWith("1 of "), "probably unused badge filters the report: " + (await uApps()));
+await page.click('#unused-counts button[data-verdict="in-use"]');
+assert((await uApps()) === "msdyn_teamsapp,msdyn_sales", "verdict badges combine (any of them): " + (await uApps()));
+assert(await M(() => JSON.parse(localStorage.getItem("sss-view:d365-apps")).unusedVerdicts.join(",") === "unused,in-use"), "pressed verdicts saved in the view state");
+await page.fill("#unused-filter", "sales");
+assert((await uApps()) === "msdyn_sales", "name filter on top of the verdicts");
+await page.fill("#unused-filter", "nothing-like-this");
+await page.waitForSelector("#unused-body .empty-state");
+await page.click("#unused-body .empty-state button");
+assert((await uApps()) === uAll && (await page.inputValue("#unused-filter")) === "" && (await pressed('#unused-counts button[data-verdict="unused"]')) === "false", "Clear filters: name and verdicts reset, every app back");
+const folds = () => page.$$eval("#unused-table details.sol-fold", (els) => els.map((d) => d.open));
+assert((await folds()).length >= 2 && (await folds()).every((o) => !o), "per-app solution folds start closed");
+await page.click("#unused-counts .fold-all button:first-child");
+assert((await folds()).every((o) => o), "Expand all opens every app's solutions");
+await M(() => new Promise((r) => setTimeout(r, 50))); // the toggle events (recorded by keepFold) are queued tasks
+await page.fill("#unused-filter", "teams");
+assert((await folds()).length === 1 && (await folds())[0], "an unfolded app stays open while filtering: " + JSON.stringify(await folds()) + (await uApps()));
+await page.fill("#unused-filter", "");
+await page.click("#unused-counts .fold-all button:last-child");
+assert((await folds()).every((o) => !o), "Collapse all closes them");
+const q0 = await M(() => window.__mock.dvq.length);
+await page.click("#btn-unused-hide");
+assert(await page.$eval("#unused", (e) => e.hidden), "Hide hides the report");
+await page.click("#btn-unused");
+assert(!(await page.$eval("#unused", (e) => e.hidden)) && !!(await page.$("#unused-table")) && (await M(() => window.__mock.dvq.length)) === q0, "Unused apps… shows the kept report again without reading");
+await page.click("#btn-unused-rerun");
+await page.waitForFunction((q) => window.__mock.dvq.length > q && !!document.querySelector("#unused-table") && !document.querySelector("#btn-unused-rerun").disabled, q0);
+assert((await uApps()) === uAll, "Re-run reads the report again");
+await page.click("#btn-unused-hide");
 
 // ---- environment columns: Hide empty environments (default on), ✕ per column, Show all ----
 const colIds = () => page.$$eval("#grid th.col", (els) => els.map((e) => e.dataset.env).join(","));
@@ -321,6 +421,7 @@ let before = await calls();
 await page.click('#grid th.col[data-env="env-dev"] button[aria-label="Hide SSS Dev"]');
 assert((await colIds()) === "env-broken,env-prod" && (await calls()) === before, "✕ hides the column locally, no API call");
 assert((await txt("#counts")).includes("× 2 of 4 environments") && (await txt("#env-hidden")).startsWith("2 environments hidden"), "2 hidden: " + (await txt("#summary")));
+assert(!(await page.$("#f-failed")), "badge counts cover the shown columns only (the failed install is in hidden Dev)");
 assert((await txt("#sel-count")) === "1 selected (1 hidden by filter)", "selection in a hidden column counted as hidden: " + (await txt("#sel-count")));
 await page.click("#btn-select-failed");
 assert((await txt("#sel-count")) === "1 selected (1 hidden by filter)", "Select all failed leaves out hidden columns");

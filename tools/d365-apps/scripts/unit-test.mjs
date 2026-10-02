@@ -83,6 +83,19 @@ test("buildMatrix: rows from installed apps, newest catalog version wins, not-in
   assert.deepEqual(M.counts(m), { updates: 2, failed: 1, busy: 0 });
 });
 
+test("state badges: counts per shown column, rowHasState combines states as OR in shown columns", () => {
+  const m = M.buildMatrix(results(), { showNotInstalled: false });
+  assert.deepEqual(M.counts(m, new Set(["prod"])), { updates: 0, failed: 0, busy: 0 }, "only the given columns");
+  assert.deepEqual(M.counts(m, new Set(["dev", "prod"])), M.counts(m));
+  const row = (u) => m.rows.find((r) => r.uniqueName === u);
+  const both = new Set(["dev", "prod"]);
+  assert.equal(M.rowHasState(row("fs"), new Set(["failed"]), both), true);
+  assert.equal(M.rowHasState(row("fs"), new Set(["update", "busy"]), both), false);
+  assert.equal(M.rowHasState(row("sales"), new Set(["failed", "update"]), both), true, "any of the states");
+  assert.equal(M.rowHasState(row("sales"), new Set(["update"]), new Set(["prod"])), false, "hidden columns do not count");
+  assert.deepEqual([...M.STATE_KINDS], ["update", "failed", "busy"]);
+});
+
 test("updateKeys skips custom-upgrade packages; planInstalls orders by environment then app", () => {
   const m = M.buildMatrix(results(), { showNotInstalled: true });
   assert.deepEqual(M.updateKeys(m), [M.cellKey("dev", "sales")]);
@@ -349,6 +362,27 @@ test("analyzeUnused: shared solutions and tables excluded, zeros re-checked live
   assert.ok(!dv.calls.some((q) => q.startsWith("msdyn_shareds?")) && !dv.calls.some((q) => q.includes("msdyn_shared%22")), "shared tables are not counted");
   const csv = M.unusedCsv(r, "Dev");
   assert.match(csv.split("\r\n")[1], /^Dev,Gamification,Gamification,1\.0,Probably unused,0,1,,msdyn_Gami,msdyn_Common,Gamification \(0 roles\),history$/);
+});
+
+test("unusedShown: pressed verdicts (any, not found as no signal) override Show all; name filter on top", () => {
+  const P = (uniqueName, verdict) => ({ pkg: pkg(uniqueName, "1.0", "Installed", { name: uniqueName.toUpperCase() }), verdict });
+  const list = [P("a", "unused"), P("b", "in-use"), P("c", "not-found"), P("d", "platform"), P("e", "no-signal")];
+  const names = (v) => M.unusedShown(list, { all: false, verdicts: new Set(), query: "", ...v }).map((p) => p.pkg.uniqueName).join(",");
+  assert.equal(names({}), "a,c,e", "in use and platform hidden by default");
+  assert.equal(names({ all: true }), "a,b,c,d,e");
+  assert.equal(names({ verdicts: new Set(["in-use"]) }), "b", "a pressed verdict shows its rows without Show all");
+  assert.equal(names({ verdicts: new Set(["no-signal", "unused"]), all: true }), "a,c,e", "no signal covers not found; pressed badges win over Show all");
+  assert.equal(names({ all: true, query: " B " }), "b", "name filter, trimmed, case-insensitive");
+  assert.equal(M.verdictGroup("not-found"), "no-signal");
+});
+
+test("runProblems: everything that did not succeed", () => {
+  const items = M.toRunItems([1, 2, 3].map((n) => ({ env: env("a"), uniqueName: `p${n}`, name: `p${n}`, action: "update", from: "1", to: "2", customHandleUpgrade: false })));
+  items[0].status = "succeeded";
+  items[1].status = "failed";
+  items[2].status = "stopped";
+  assert.deepEqual(M.runProblems(items).map((i) => i.uniqueName), ["p2", "p3"]);
+  assert.equal(M.runProblems([items[0]]).length, 0, "a clean run");
 });
 
 test("analyzeUnused: history filter refused → unfiltered read; history unreadable → anchors only", async () => {

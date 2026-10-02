@@ -11,12 +11,12 @@
 .connchip .env { font-weight: var(--fw-bold); color: var(--fg-primary); }
 .connchip .kind { color: var(--fg-muted); }
 
-.toolbar input[type="search"] {
+.toolbar input[type="search"], .unused input[type="search"] {
   font: inherit; font-size: var(--fs-caption); color: var(--fg-primary);
   background: var(--bg-card); border: 1px solid var(--border-color); border-radius: var(--radius-sm);
   padding: var(--s-1) var(--s-2); min-width: 200px;
 }
-.toolbar input[type="search"]:focus-visible { outline: none; box-shadow: var(--shadow-teal); }
+.toolbar input[type="search"]:focus-visible, .unused input[type="search"]:focus-visible { outline: none; box-shadow: var(--shadow-teal); }
 .toolbar > .btn { margin-left: 0; } /* selection buttons follow the filters; .right alone takes the free space */
 .toolbar .right { margin-left: auto; display: inline-flex; gap: var(--s-2); align-items: center; }
 .status { padding: var(--s-2) var(--s-5); font-size: var(--fs-caption); color: var(--fg-muted); }
@@ -41,17 +41,31 @@ table.matrix td.name .uname { display: block; font-family: var(--font-mono); fon
 table.matrix td.cell { font-size: var(--fs-caption); }
 table.matrix td.cell label { display: inline-flex; gap: var(--s-1); align-items: center; cursor: pointer; }
 table.matrix td.cell .ver { font-family: var(--font-mono); color: var(--fg-primary); }
-table.matrix td.cell .note { display: block; font-size: var(--fs-micro); color: var(--fg-muted); white-space: normal; max-width: 260px; }
+table.matrix td.cell .note { display: block; font-size: var(--fs-micro); color: var(--fg-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 260px; } /* one line; full text in title */
 table.matrix td.cell.k-update { background: var(--status-warn-bg); }
 table.matrix td.cell.k-failed { background: var(--status-bad-bg); }
 table.matrix td.cell.k-absent, table.matrix td.cell.k-available { color: var(--fg-muted); }
 table.matrix td.cell.is-selected { box-shadow: inset 0 0 0 2px var(--accent); }
 table.matrix input[type="checkbox"] { accent-color: var(--accent); }
 
-.run { border-top: 1px solid var(--border-subtle); padding: var(--s-2) var(--s-5); max-height: 40vh; overflow: auto; }
+.run { position: relative; border-top: 1px solid var(--border-subtle); padding: var(--s-2) var(--s-5); }
+/* the fold's summary holds the title only; the actions sit over its right end so they stay reachable while folded */
+.run > details > summary { display: flex; align-items: center; min-height: 28px; cursor: pointer; margin-right: 380px; }
+.run > details > summary h3 { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.run-actions { position: absolute; top: var(--s-2); right: var(--s-5); display: flex; align-items: center; gap: var(--s-2); min-height: 28px; }
+#run-body { max-height: 40vh; overflow: auto; }
 .run-head { display: flex; align-items: center; gap: var(--s-2); }
-.run-head h3 { font-size: var(--fs-body); }
+.run-head h3, .run h3 { font-size: var(--fs-body); }
 .run table { width: 100%; }
+
+/* summary counts that filter (toggle badges) */
+button.badge-toggle { font-family: inherit; line-height: inherit; border: 1px solid transparent; cursor: pointer; }
+button.badge-toggle:hover:not(:disabled) { border-color: currentColor; border-style: dashed; }
+button.badge-toggle[aria-pressed="true"] { border-color: currentColor; border-style: solid; box-shadow: inset 0 0 0 1px currentColor; }
+button.badge-toggle[aria-pressed="true"]::before { content: "✓ "; }
+button.badge-toggle:focus-visible { outline: none; box-shadow: var(--shadow-teal); }
+button.badge-toggle[aria-pressed="true"]:focus-visible { box-shadow: var(--shadow-teal), inset 0 0 0 1px currentColor; }
+button.badge-toggle:disabled { cursor: default; opacity: 0.7; }
 
 .unused { border-bottom: 1px solid var(--border-subtle); padding: var(--s-2) var(--s-5); max-height: 55vh; overflow: auto; }
 .unused h3 { font-size: var(--fs-body); }
@@ -60,6 +74,10 @@ table.matrix input[type="checkbox"] { accent-color: var(--accent); }
 .unused td .note { display: block; font-size: var(--fs-micro); color: var(--fg-muted); }
 .unused details ul { padding-left: var(--s-5); margin: var(--s-1) 0; }
 .unused .summary-line { padding: var(--s-1) 0; }
+.unused .summary-line .fold-all { margin-left: auto; }
+.unused .how { font-size: var(--fs-caption); color: var(--fg-muted); margin-bottom: var(--s-1); }
+.unused .how > summary { cursor: pointer; }
+.unused .how p { margin: var(--s-1) 0 0; }
 
 .envpick { display: flex; flex-direction: column; gap: var(--s-2); }
 .envpick .list { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: var(--s-1) var(--s-3); font-size: var(--fs-caption); }
