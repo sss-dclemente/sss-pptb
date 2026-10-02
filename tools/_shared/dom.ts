@@ -94,7 +94,10 @@ export function foldCard(title: string, count: number, body: Node, open = false,
 export function foldAllButtons(scope: ParentNode | (() => ParentNode | null), selector = "details"): HTMLElement {
   const set = (open: boolean) => {
     const root = typeof scope === "function" ? scope() : scope;
-    root?.querySelectorAll<HTMLDetailsElement>(selector).forEach((d) => (d.open = open));
+    // folds inside something hidden (a filtered-out card or row) stay as they are
+    root?.querySelectorAll<HTMLDetailsElement>(selector).forEach((d) => {
+      if (!d.closest("[hidden]")) d.open = open;
+    });
   };
   const btn = (label: string, open: boolean) => {
     const b = h("button", { class: "btn btn-ghost btn-sm", type: "button" }, label);
