@@ -30,6 +30,10 @@
       <label class="check"><input type="checkbox" id="filter-diff" /> Only differences</label>
       <label class="check"><input type="checkbox" id="filter-missing" /> Only missing / unbound</label>
       <label>Solution <select id="filter-solution"><option value="">all</option></select></label>
+      <details id="colmenu" class="colmenu" hidden>
+        <summary id="colmenu-sum" class="btn btn-sm chev" title="Show or hide environment columns; hidden columns are not compared">Columns</summary>
+        <div id="colmenu-list" class="colmenu-panel" role="group" aria-label="Visible columns"></div>
+      </details>
       <span id="count-caption" class="count-caption" aria-live="polite"></span>
       <button id="btn-consolidate" class="btn btn-sm" type="button" hidden>Consolidate…</button>
       <div class="right">

@@ -13,9 +13,15 @@ function connRefCell(rec: ColumnData["connRefs"][number] | null): ConnRefCell {
   return { state: rec.connectionId ? "bound" : "unbound", connector: rec.connector, connectionId: rec.connectionId, record: rec };
 }
 
-export function buildMatrix(columns: ColumnData[]): Matrix {
+/**
+ * Rows are the union over every column and carry cells for every column (copy and bind read any of them), but
+ * `differs` / `anyMissing` / `anyAbsent` compare only the visible ones: keys in `hidden` are left out of the
+ * comparison and of `Matrix.columns` (the rendered and CSV-exported columns).
+ */
+export function buildMatrix(columns: ColumnData[], hidden: ReadonlySet<string> = new Set()): Matrix {
+  const visible = columns.filter((c) => !hidden.has(c.meta.key));
   // Columns that failed to load have no data: show them, but leave them out of the comparison.
-  const keys = columns.filter((c) => !c.meta.error).map((c) => c.meta.key);
+  const keys = visible.filter((c) => !c.meta.error).map((c) => c.meta.key);
 
   const evNames = new Map<string, { schemaName: string; displayName: string; type: string; isSecret: boolean }>();
   for (const c of columns)
@@ -35,7 +41,8 @@ export function buildMatrix(columns: ColumnData[]): Matrix {
         key,
         ...head,
         cells,
-        differs: values.size > 1 || present.length !== keys.length,
+        // absent from every compared column (only in a hidden one) is not a difference between the visible ones
+        differs: values.size > 1 || (present.length > 0 && present.length !== keys.length),
         anyMissing: keys.some((k) => cells[k].source === "missing"),
         anyAbsent: keys.some((k) => cells[k].source === "absent"),
       };
@@ -65,7 +72,7 @@ export function buildMatrix(columns: ColumnData[]): Matrix {
       };
     });
 
-  return { columns: columns.map((c) => c.meta), envVars, connRefs };
+  return { columns: visible.map((c) => c.meta), envVars, connRefs };
 }
 
 export function filterEnvVars(rows: EnvVarRow[], f: Filters): EnvVarRow[] {

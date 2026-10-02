@@ -99,6 +99,7 @@ export interface ConnRefRow {
 }
 
 export interface Matrix {
+  /** visible columns (rendered, compared, exported to CSV); hidden ones still have cells in every row */
   columns: ColumnMeta[];
   envVars: EnvVarRow[];
   connRefs: ConnRefRow[];

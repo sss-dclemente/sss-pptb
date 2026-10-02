@@ -80,6 +80,27 @@ const view = persistControls(VIEW, ["filter-text", "filter-diff", "filter-missin
 /** the saved Solution filter still has to be applied (first load with solutions listed) */
 let restoreSolution = true;
 
+/**
+ * Column keys the user hid (Columns menu). Live keys ("primary" / "secondary") are stable across reloads and saved;
+ * snapshot / settings keys ("snap:<n>", "settings:<n>") are numbered per page load, so their hiding lasts the session.
+ */
+const isLiveKey = (k: string): boolean => k === "primary" || k === "secondary";
+const hiddenCols = new Set<string>(((): string[] => {
+  const v = loadView<unknown>(VIEW, "hiddenCols", []);
+  return Array.isArray(v) ? v.filter((k): k is string => typeof k === "string" && isLiveKey(k)) : [];
+})());
+function saveHidden(): void {
+  const live = [...hiddenCols].filter(isLiveKey).sort();
+  saveView(VIEW, "hiddenCols", live.length ? live : undefined);
+}
+/** Hidden keys among the loaded columns; never all of them (the first stays visible, e.g. a reload with fewer columns). */
+function hiddenKeys(): Set<string> {
+  const all = columns().map((c) => c.meta.key);
+  const out = new Set(all.filter((k) => hiddenCols.has(k)));
+  if (all.length && out.size === all.length) out.delete(all[0]);
+  return out;
+}
+
 /** Back to the default filters (all solutions) and re-render. */
 function clearFilters(): void {
   view.reset();
@@ -174,6 +195,10 @@ const fileKind = (m: ColumnMeta): string => (m.key.startsWith("settings:") ? "se
 /** columns with data (a live column whose load failed has none) */
 const okColumns = (): ColumnData[] => columns().filter((c) => !c.meta.error);
 const liveCols = (): ColumnMeta[] => live.filter((c) => !c.meta.error).map((c) => c.meta);
+/** shown in the matrix (not hidden through the Columns menu) */
+const isShown = (m: ColumnMeta): boolean => matrix.columns.some((c) => c.key === m.key);
+/** live columns that can be written and are shown: copy / bind targets */
+const writableCols = (): ColumnMeta[] => liveCols().filter(isShown);
 
 function colChip(meta: ColumnMeta, removable: boolean): HTMLElement {
   const dot = h("span", { class: "dot" });
@@ -195,6 +220,7 @@ function colChip(meta: ColumnMeta, removable: boolean): HTMLElement {
     x.addEventListener("click", () => {
       const i = snaps.findIndex((s) => s.meta.key === meta.key);
       if (i >= 0) snaps.splice(i, 1);
+      hiddenCols.delete(meta.key);
       rebuild();
     });
     chip.append(x);
@@ -227,7 +253,16 @@ function renderHeader(): void {
   const wrap = $("#columns");
   wrap.replaceChildren();
   if (!columns().length) wrap.append(h("span", { class: "caption" }, inToolbox() ? "No connection. Pick a primary connection in ToolBox." : "Standalone mode: load snapshots to compare."));
-  for (const c of columns()) wrap.append(colChip(c.meta, c.meta.kind === "snapshot"));
+  for (const c of columns()) {
+    const chip = colChip(c.meta, c.meta.kind === "snapshot");
+    if (!isShown(c.meta)) {
+      chip.classList.add("is-hidden");
+      const b = badge("hidden", "neutral");
+      b.title = "Hidden through Columns: not shown or compared";
+      chip.insertBefore(b, chip.querySelector(".btn-icon"));
+    }
+    wrap.append(chip);
+  }
 
   const fill = (id: string, metas: ColumnMeta[], keep = true) => {
     const sel = $<HTMLSelectElement>(id);
@@ -235,10 +270,12 @@ function renderHeader(): void {
     sel.replaceChildren(...metas.map((m) => h("option", { value: m.key }, `${m.name} (${m.kind === "live" ? m.target : fileKind(m)})`)));
     if (keep && [...sel.options].some((o) => o.value === prev)) sel.value = prev;
   };
-  fill("#export-col", okColumns().map((c) => c.meta));
-  fill("#copy-from", okColumns().map((c) => c.meta));
-  fill("#copy-to", liveCols());
-  const writable = liveCols();
+  // Hidden columns are left out of copy, bind and export: act only on what is on screen.
+  const shownOk = okColumns().map((c) => c.meta).filter(isShown);
+  fill("#export-col", shownOk);
+  fill("#copy-from", shownOk);
+  fill("#copy-to", writableCols());
+  const writable = writableCols();
   if (writable.length > 1 && $<HTMLSelectElement>("#copy-to").value === $<HTMLSelectElement>("#copy-from").value) $<HTMLSelectElement>("#copy-to").value = writable[1].key;
 
   const solSel = $<HTMLSelectElement>("#filter-solution");
@@ -251,10 +288,52 @@ function renderHeader(): void {
   solSel.value = selectedSolution;
   solSel.disabled = !live.length;
 
-  const canWrite = liveCols().length > 0;
+  const canWrite = writable.length > 0;
   $("#btn-refresh").toggleAttribute("disabled", !inToolbox());
-  for (const id of ["#btn-export-settings", "#btn-export-snap", "#btn-export-csv"]) $(id).toggleAttribute("disabled", !okColumns().length);
+  for (const id of ["#btn-export-settings", "#btn-export-snap", "#btn-export-csv"]) $(id).toggleAttribute("disabled", !shownOk.length);
   $("#copy-to").toggleAttribute("disabled", !canWrite);
+  renderColMenu();
+}
+
+/** The Columns menu applies to the matrix only: hidden in the consolidate view (one environment, its own picker). */
+function syncColMenu(): void {
+  const menu = $<HTMLDetailsElement>("#colmenu");
+  menu.hidden = !columns().length || (activeTab === "connrefs" && consolidating);
+  if (menu.hidden) menu.open = false;
+}
+
+/** Columns menu: one checkbox per loaded column; the last visible one cannot be unchecked. */
+function renderColMenu(): void {
+  const menu = $<HTMLDetailsElement>("#colmenu");
+  const all = columns().map((c) => c.meta);
+  const shown = all.filter(isShown).length;
+  syncColMenu();
+  menu.classList.toggle("is-filtered", shown < all.length);
+  $("#colmenu-sum").textContent = shown < all.length ? `Columns (${shown} of ${all.length})` : "Columns";
+  const focused = (document.activeElement as HTMLElement | null)?.dataset?.colKey;
+  const boxes = all.map((m) => {
+    const on = isShown(m);
+    const cb = h("input", { type: "checkbox", "data-col-key": m.key, checked: on, disabled: on && shown === 1 }) as HTMLInputElement;
+    if (cb.disabled) cb.title = "At least one column stays visible";
+    cb.addEventListener("change", () => {
+      if (cb.checked) hiddenCols.delete(m.key);
+      else hiddenCols.add(m.key);
+      saveHidden();
+      rebuild();
+      // the menu was re-rendered: keep keyboard focus on the same checkbox
+      document.querySelector<HTMLInputElement>(`#colmenu-list input[data-col-key="${CSS.escape(m.key)}"]`)?.focus();
+    });
+    return h(
+      "label",
+      { class: "check" },
+      cb,
+      m.name,
+      h("span", { class: "kind" }, ` · ${m.kind === "live" ? m.target : fileKind(m)}${m.error ? " (load failed)" : ""}`),
+    );
+  });
+  const note = all.some((m) => m.kind === "snapshot") ? h("span", { class: "caption" }, "Hidden snapshot columns show again when the tool reloads.") : null;
+  $("#colmenu-list").replaceChildren(...boxes, ...(note ? [note] : []));
+  if (focused) document.querySelector<HTMLInputElement>(`#colmenu-list input[data-col-key="${CSS.escape(focused)}"]`)?.focus();
 }
 
 // ---------- tables ----------
@@ -377,7 +456,7 @@ function renderTable(): void {
       rows.length
         ? envVarTable(rows)
         : total
-          ? filteredEmpty("No environment variables match", "The filters hide every variable.", clearFilters)
+          ? filteredEmpty("No environment variables match", `The filters hide every variable.${hiddenNote()}`, clearFilters)
           : emptyState("No environment variables", "None in the loaded columns."),
     );
   } else {
@@ -388,18 +467,21 @@ function renderTable(): void {
       rows.length
         ? connRefTable(rows)
         : total
-          ? filteredEmpty("No connection references match", "The filters hide every connection reference.", clearFilters)
+          ? filteredEmpty("No connection references match", `The filters hide every connection reference.${hiddenNote()}`, clearFilters)
           : emptyState("No connection references", "None in the loaded columns."),
     );
   }
   renderBulkbar();
 }
 
+/** Appended to a filtered-empty hint: differences are computed over the visible columns only. */
+const hiddenNote = (): string => (matrix.columns.length < columns().length ? " Hidden columns are not compared (Columns)." : "");
+
 function renderBulkbar(): void {
   const bar = $("#bulkbar");
   const bind = activeTab === "connrefs";
   const n = bind ? crSelected.size : selected.size;
-  bar.hidden = (bind && consolidating) || n === 0 || liveCols().length === 0;
+  bar.hidden = (bind && consolidating) || n === 0 || writableCols().length === 0;
   $("#sel-count").textContent = String(n);
   $("#btn-copy").textContent = bind ? "Preview bind…" : "Preview copy…";
   $("#bind-restart-wrap").hidden = !bind;
@@ -408,11 +490,12 @@ function renderBulkbar(): void {
   cons.hidden = activeTab !== "connrefs";
   cons.textContent = consolidating ? "Back to matrix" : "Consolidate…";
   cons.toggleAttribute("disabled", !consolidating && !liveCols().length);
+  syncColMenu();
   renderMergebar();
 }
 
 function rebuild(): void {
-  matrix = buildMatrix(columns());
+  matrix = buildMatrix(columns(), hiddenKeys());
   for (const k of [...selected]) if (!matrix.envVars.some((r) => r.key === k)) selected.delete(k);
   for (const k of [...crSelected]) if (!matrix.connRefs.some((r) => r.key === k)) crSelected.delete(k);
   renderHeader();
@@ -1444,6 +1527,17 @@ function wire(): void {
   $("#btn-consolidate").addEventListener("click", () => {
     consolidating = !consolidating;
     renderTable();
+  });
+  // Columns menu: closes on Escape (focus back on its button) and on a click outside it
+  const colMenu = $<HTMLDetailsElement>("#colmenu");
+  document.addEventListener("keydown", (e) => {
+    if (e.key !== "Escape" || !colMenu.open) return;
+    e.preventDefault();
+    colMenu.open = false;
+    $("#colmenu-sum").focus();
+  });
+  document.addEventListener("click", (e) => {
+    if (colMenu.open && !colMenu.contains(e.target as Node)) colMenu.open = false;
   });
   $("#btn-merge-preview").addEventListener("click", () => void previewMerge());
   $("#btn-merge-clear").addEventListener("click", () => {

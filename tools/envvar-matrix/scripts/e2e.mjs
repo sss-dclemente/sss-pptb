@@ -511,4 +511,69 @@ await checkDebugLog(page, assert, {
   assert((await page.inputValue("#filter-solution")) === "" && (await caption()) === "2 connection references", "Clear filters also resets the solution filter");
 }
 
+// ---- E2: Columns menu hides environment columns (not rendered, not compared, persisted) ----
+{
+  const colBox = (key) => `#colmenu-list input[data-col-key="${key}"]`;
+  const heads = () => page.$$eval("table.matrix thead th.col", (els) => els.map((e) => e.textContent));
+  await page.click('.tab[data-tab="envvars"]');
+  await page.waitForFunction(() => document.querySelectorAll("table.matrix tbody tr").length === 5);
+  assert(await page.isVisible("#colmenu") && (await page.textContent("#colmenu-sum")) === "Columns", "Columns menu shown, all columns visible");
+  await page.check("#filter-diff");
+  const diffBoth = await rowNames();
+  assert(diffBoth.includes("sss_apiurl"), "apiurl differs with both columns: " + diffBoth.join(","));
+  // keyboard: focus the summary, open with Enter
+  await page.focus("#colmenu-sum");
+  await page.keyboard.press("Enter");
+  assert(await page.$eval("#colmenu", (d) => d.open), "Columns menu opens from the keyboard");
+  const boxes = await page.$$eval("#colmenu-list input", (els) => els.map((e) => [e.dataset.colKey, e.checked]));
+  assert(JSON.stringify(boxes) === '[["primary",true],["secondary",true]]', "one checkbox per column, all on: " + JSON.stringify(boxes));
+  await page.uncheck(colBox("secondary"));
+  assert(await page.$eval("#colmenu", (d) => d.open), "menu stays open while toggling");
+  assert(await page.$eval(colBox("secondary"), (e) => document.activeElement === e), "focus kept on the toggled checkbox");
+  await page.screenshot({ path: resolve(OUT, "05-columns-menu.png") });
+  const diffOne = await rowNames();
+  assert(!diffOne.includes("sss_apiurl"), "row that differed only because of the hidden column no longer under Only differences: " + diffOne.join(","));
+  await page.uncheck("#filter-diff");
+  assert(JSON.stringify(await heads()) === JSON.stringify(["primarySSS Dev"]), "secondary header gone: " + (await heads()).join("|"));
+  assert(!(await page.textContent("table.matrix, #matrix-body")).includes("https://test.api"), "secondary cells gone");
+  assert((await page.textContent("#colmenu-sum")) === "Columns (1 of 2)", "summary counts visible columns");
+  assert((await page.textContent("#columns")).includes("hidden"), "hidden column marked in the header chips");
+  assert(JSON.stringify(await page.$$eval("#copy-to option", (els) => els.map((e) => e.value))) === '["primary"]' && JSON.stringify(await page.$$eval("#export-col option", (els) => els.map((e) => e.value))) === '["primary"]', "hidden column not offered as copy target or export");
+  // last visible column cannot be hidden (the filter click above closed the menu as an outside click)
+  assert(!(await page.$eval("#colmenu", (d) => d.open)), "click outside the menu closed it");
+  await page.click("#colmenu-sum");
+  assert(await page.$eval(colBox("primary"), (e) => e.disabled && e.checked), "last visible column's checkbox disabled");
+  await page.click(colBox("primary"), { force: true });
+  assert((await heads()).length === 1, "last column still shown after clicking its disabled checkbox");
+  // Escape closes, focus back on the summary; outside click closes too
+  await page.keyboard.press("Escape");
+  assert(!(await page.$eval("#colmenu", (d) => d.open)) && (await page.$eval("#colmenu-sum", (e) => document.activeElement === e)), "Escape closes the menu and returns focus");
+  await page.click("#colmenu-sum");
+  await page.click("#count-caption");
+  assert(!(await page.$eval("#colmenu", (d) => d.open)), "outside click closes the menu");
+  // connection references table follows too
+  await page.click('.tab[data-tab="connrefs"]');
+  assert((await page.$$eval("table.matrix thead th.col", (els) => els.length)) === 1 && !(await page.textContent("#matrix-body")).includes("conn-test"), "hidden on connection references too");
+  await page.click('.tab[data-tab="envvars"]');
+  // persisted across reload
+  await page.reload();
+  await page.waitForFunction(() => document.querySelectorAll("#columns .colchip").length === 2 && document.querySelectorAll("table.matrix tbody tr").length > 0);
+  assert(JSON.stringify(await heads()) === JSON.stringify(["primarySSS Dev"]) && (await page.textContent("#colmenu-sum")) === "Columns (1 of 2)", "hidden column persisted across reload");
+  // show again
+  await page.click("#colmenu-sum");
+  await page.check(colBox("secondary"));
+  assert((await heads()).length === 2 && (await page.textContent("#colmenu-sum")) === "Columns", "showing the column again restores it");
+  await page.check("#filter-diff");
+  assert((await rowNames()).includes("sss_apiurl"), "row counts as a difference again once the column is shown");
+  await page.uncheck("#filter-diff");
+  assert(!(await page.$eval(colBox("primary"), (e) => e.disabled)), "primary can be hidden again with two visible");
+  await page.keyboard.press("Escape");
+  // consolidate view: no Columns menu
+  await page.click('.tab[data-tab="connrefs"]');
+  await page.click("#btn-consolidate");
+  assert(await page.isHidden("#colmenu"), "Columns menu hidden in the consolidate view");
+  await page.click("#btn-consolidate");
+  assert(await page.isVisible("#colmenu"), "Columns menu back with the matrix");
+}
+
 await finish();

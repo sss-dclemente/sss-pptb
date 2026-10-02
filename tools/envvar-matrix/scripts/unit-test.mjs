@@ -14,7 +14,7 @@ const TOOL = new URL("..", import.meta.url).pathname.replace(/\/$/, "");
 const esbuild = createRequire(resolve(TOOL, "package.json"))("esbuild");
 const out = esbuild.buildSync({
   stdin: {
-    contents: ["consolidate", "bind", "settings", "ppconnections", "runlog"].map((m) => `export * from "./src/matrix/${m}";`).join("\n"),
+    contents: ["consolidate", "bind", "settings", "ppconnections", "runlog", "matrix"].map((m) => `export * from "./src/matrix/${m}";`).join("\n"),
     resolveDir: TOOL,
     loader: "ts",
   },
@@ -361,4 +361,34 @@ test("RunLog CSV neutralises formulas and quotes; JSON carries every entry", () 
   const j = JSON.parse(log.json());
   assert.equal(j.kind, "sss-envvar-matrix-runlog");
   assert.equal(j.entries.length, 1);
+});
+
+test("buildMatrix: hidden columns keep their cells but are not shown or compared", () => {
+  const ev = (schemaName, value, defaultValue = null) => ({ definitionId: schemaName, schemaName, displayName: schemaName, typeCode: 100000000, type: "String", defaultValue, value, valueId: null, isManaged: false });
+  const crec = (logicalName, connectionId) => ({ id: logicalName, logicalName, displayName: logicalName, connectorId: "/apis/shared_sql", connector: "shared_sql", connectionId, isManaged: false });
+  const col = (key, envVars, connRefs = []) => ({ meta: { key, kind: "live", target: key, name: key, url: "", environment: key, takenAt: "" }, envVars, connRefs });
+  const cols = [
+    col("primary", [ev("a", "1"), ev("b", "x"), ev("c", null)], [crec("r", "c1")]),
+    col("secondary", [ev("a", "2"), ev("b", "x"), ev("d", "only")], [crec("r", null)]),
+    col("snap:1", [ev("a", "1"), ev("b", "y")], [crec("r", "c9")]),
+  ];
+  const row = (m, k) => m.envVars.find((r) => r.key === k);
+  const all = M.buildMatrix(cols);
+  assert.deepEqual(all.columns.map((c) => c.key), ["primary", "secondary", "snap:1"]);
+  assert.deepEqual(all.envVars.filter((r) => r.differs).map((r) => r.key), ["a", "b", "c", "d"]);
+  assert.equal(all.connRefs[0].anyUnbound, true);
+
+  const m = M.buildMatrix(cols, new Set(["secondary"]));
+  assert.deepEqual(m.columns.map((c) => c.key), ["primary", "snap:1"], "hidden column not in Matrix.columns");
+  assert.equal(row(m, "a").differs, false, "a only differed because of secondary");
+  assert.equal(row(m, "b").differs, true, "b still differs between primary and snapshot");
+  assert.equal(row(m, "d").differs, false, "absent from every visible column is not a difference");
+  assert.equal(row(m, "a").cells.secondary.effective, "2", "hidden column still has cells (copy from / bind read them)");
+  assert.equal(m.connRefs[0].anyUnbound, false, "unbound only in the hidden column");
+  assert.equal(m.connRefs[0].differs, false);
+
+  const only = M.buildMatrix(cols, new Set(["secondary", "snap:1"]));
+  assert.equal(only.envVars.some((r) => r.differs), false, "one visible column: nothing differs");
+  assert.equal(row(only, "c").anyMissing && !row(only, "c").anyAbsent, true, "missing still flagged in the visible column");
+  assert.equal(row(only, "d").anyAbsent, true, "absent in the visible column");
 });

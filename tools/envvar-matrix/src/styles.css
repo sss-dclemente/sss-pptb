@@ -87,3 +87,18 @@ dialog textarea, dialog input[type="text"] {
 .cons-groups input { accent-color: var(--accent); }
 .changes { font-family: var(--font-mono); font-size: var(--fs-micro); }
 .cons-groups td.name .display { display: block; font-size: var(--fs-micro); color: var(--fg-muted); }
+
+/* ---- columns menu (show / hide environment columns) ---- */
+.colmenu { position: relative; }
+.colmenu > summary { display: inline-flex; align-items: center; cursor: pointer; user-select: none; }
+.colmenu.is-filtered > summary { border-color: var(--accent); color: var(--accent); }
+.colmenu-panel {
+  position: absolute; top: calc(100% + var(--s-1)); left: 0; z-index: 10; min-width: 240px;
+  display: flex; flex-direction: column; gap: var(--s-1); padding: var(--s-2) var(--s-3);
+  background: var(--bg-card); border: 1px solid var(--border-color); border-radius: var(--radius-sm); box-shadow: var(--shadow-xs);
+}
+.toolbar .colmenu-panel label.check { color: var(--fg-primary); white-space: nowrap; }
+.colmenu-panel .kind { color: var(--fg-muted); }
+.colmenu-panel input[type="checkbox"] { accent-color: var(--accent); }
+.colmenu-panel .caption { white-space: normal; max-width: 280px; }
+.colchip.is-hidden { opacity: 0.6; }
