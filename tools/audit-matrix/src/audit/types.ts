@@ -21,6 +21,11 @@ export interface TableAudit {
   displayName: string;
   audit: ManagedFlag;
   isManaged: boolean;
+  /**
+   * EntityMetadata.IsCustomEntity: true for a table someone created, false for one Microsoft ships
+   * (whatever its solution layer). null when the source did not say, e.g. an older snapshot.
+   */
+  isCustom: boolean | null;
   ownership: string;
 }
 
@@ -107,6 +112,8 @@ export interface MatrixTableRow {
   displayName: string;
   ownership: string;
   isManaged: boolean;
+  /** See TableAudit.isCustom. */
+  isCustom: boolean | null;
   locked: boolean;
   state: FlagState;
   otherState: FlagState;
@@ -139,13 +146,18 @@ export interface Matrix {
 }
 
 export type AuditFilter = "all" | "on" | "off";
-export type ManagedFilter = "all" | "custom" | "managed";
+/** Solution layer: unmanaged (customizations made in this environment) or managed (installed by a solution). */
+export type ManagedFilter = "all" | "unmanaged" | "managed";
+/** Who made the table: a custom table (IsCustomEntity) or one Microsoft ships. */
+export type OriginFilter = "all" | "custom" | "microsoft";
 
 export interface Filters {
   text: string;
   audit: AuditFilter;
   onlyDiff: boolean;
   managed: ManagedFilter;
+  /** Tables whose origin is unknown (isCustom null) pass "all" only. */
+  origin: OriginFilter;
   /** Only tables whose loaded columns include an audited or secured column. */
   withColumns: boolean;
 }

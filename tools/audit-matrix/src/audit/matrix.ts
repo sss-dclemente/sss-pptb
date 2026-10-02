@@ -66,6 +66,7 @@ export function buildMatrix(primary: EnvData | null, other: EnvData | null): Mat
         displayName: head.displayName,
         ownership: head.ownership,
         isManaged: head.isManaged,
+        isCustom: p?.isCustom ?? o?.isCustom ?? null,
         locked: !p || !p.audit.canBeChanged,
         state: state(p),
         otherState,
@@ -102,21 +103,40 @@ const columnMatches = (c: MatrixColumnRow, t: string): boolean => c.logicalName.
 
 /**
  * Table rows passing the filters. The text matches the table's names, or the name of one of its
- * loaded columns: column flags are only read when a row is expanded, so a column name cannot find
- * a table that was never expanded.
+ * loaded columns: column flags are only read when a row's columns are loaded, so a column name
+ * cannot find a table whose columns never were.
+ *
+ * "Only differences" (at column level) and "Has audited / secured columns" can likewise only judge
+ * loaded tables. `pending` names the rows whose columns are still to be loaded; those pass these two
+ * column tests instead of failing them, which is how the tool finds the tables worth loading.
  */
-export function filterRows(rows: MatrixTableRow[], f: Filters): MatrixTableRow[] {
+export function filterRows(rows: MatrixTableRow[], f: Filters, pending?: (r: MatrixTableRow) => boolean): MatrixTableRow[] {
   const t = f.text.trim().toLowerCase();
   return rows.filter((r) => {
     if (t && !tableMatches(r, t) && !(r.columns ?? []).some((c) => columnMatches(c, t))) return false;
     if (f.audit === "on" && r.state !== "on") return false;
     if (f.audit === "off" && r.state !== "off") return false;
-    if (f.onlyDiff && !r.differs && !(r.stats && r.stats.differs > 0)) return false;
     if (f.managed === "managed" && !r.isManaged) return false;
-    if (f.managed === "custom" && r.isManaged) return false;
-    if (f.withColumns && !(r.stats && (r.stats.audited > 0 || r.stats.secured > 0))) return false;
+    if (f.managed === "unmanaged" && r.isManaged) return false;
+    if (f.origin === "custom" && r.isCustom !== true) return false;
+    if (f.origin === "microsoft" && r.isCustom !== false) return false;
+    const unknown = !!pending?.(r);
+    if (f.onlyDiff && !r.differs && !(r.stats && r.stats.differs > 0) && !unknown) return false;
+    if (f.withColumns && !(r.stats && (r.stats.audited > 0 || r.stats.secured > 0)) && !unknown) return false;
     return true;
   });
+}
+
+/** Above this many tables a first-time viewer starts on custom tables only (see originDefault). */
+export const ORIGIN_DEFAULT_THRESHOLD = 100;
+
+/**
+ * Whether a viewer who never chose an origin should start on "custom": a typical environment carries
+ * hundreds of Microsoft tables that bury the few someone built. Only when the environment says which
+ * tables are custom at all — with IsCustomEntity missing everywhere the default would hide every table.
+ */
+export function originDefault(tables: TableAudit[]): "custom" | null {
+  return tables.length > ORIGIN_DEFAULT_THRESHOLD && tables.some((t) => t.isCustom !== null) ? "custom" : null;
 }
 
 /**

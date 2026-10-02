@@ -31,11 +31,14 @@
     <section id="tab-matrix" class="panel">
       <div class="toolbar">
         <input id="filter-text" type="search" placeholder="Filter tables…" aria-label="Filter tables" aria-describedby="filter-text-hint" />
-        <span id="filter-text-hint" class="count-caption" hidden>Column names match expanded tables only.</span>
+        <span id="filter-text-hint" class="count-caption" hidden>Column names match loaded tables only.</span>
         <label>Audit <select id="filter-audit"><option value="all">all</option><option value="on">on</option><option value="off">off</option></select></label>
-        <label class="check"><input type="checkbox" id="filter-diff" /> Only differences</label>
-        <label>Layer <select id="filter-managed"><option value="all">all</option><option value="custom">custom</option><option value="managed">managed</option></select></label>
-        <label class="check"><input type="checkbox" id="filter-cols" /> Has audited / secured columns</label>
+        <label class="check" title="Table flags are compared for every table; column flags only for tables whose columns are loaded."><input type="checkbox" id="filter-diff" aria-describedby="filter-loaded-hint" /> Only differences</label>
+        <label title="Who made the table: custom tables (IsCustomEntity) or the ones Microsoft ships. Tables whose origin is unknown show under all only.">Origin <select id="filter-origin"><option value="all">all</option><option value="custom">custom</option><option value="microsoft">Microsoft</option></select></label>
+        <label title="Solution layer: unmanaged customizations made in this environment, or managed ones installed by a solution. A Microsoft table can be either.">Layer <select id="filter-managed"><option value="all">all</option><option value="unmanaged">unmanaged</option><option value="managed">managed</option></select></label>
+        <label class="check" title="Column flags are read per table: tables whose columns are not loaded are left out."><input type="checkbox" id="filter-cols" aria-describedby="filter-loaded-hint" /> Has audited / secured columns (loaded tables)</label>
+        <span id="filter-loaded-hint" class="count-caption" hidden>Column filters see loaded tables only.</span>
+        <button id="btn-load-cols" class="btn btn-sm" type="button" hidden>Load columns</button>
         <div class="right">
           <button id="btn-plan-match" class="btn btn-sm" type="button" disabled>Plan: match other env</button>
           <button id="btn-export-csv" class="btn btn-ghost btn-sm" type="button">Matrix CSV</button>

@@ -1,12 +1,12 @@
 import { mountDebug } from "../../_shared/debug-ui";
 import { $, badge, card, emptyState, filteredEmpty, h, showDialog, shownOf, table as domTable, wireTabs } from "../../_shared/dom";
 import { dataverse, getConnections, initTheme, inToolbox, notify, onConnectionChange, openText, saveText } from "../../_shared/host";
-import { persistControls, type PersistedControls } from "../../_shared/view-state";
+import { loadView, persistControls, saveView, type PersistedControls } from "../../_shared/view-state";
 import { matrixCsv, planCsv, planScript, safeFileName } from "./audit/export";
 import { fetchColumns, fetchEnv, type DataverseLike } from "./audit/fetch";
-import { buildMatrix, filterRows, visibleColumns } from "./audit/matrix";
+import { buildMatrix, filterRows, originDefault, visibleColumns } from "./audit/matrix";
 import { parseSnapshot, serializeSnapshot } from "./audit/snapshot";
-import type { EnvData, EnvMeta, Filters, FlagState, Matrix, MatrixTableRow, OrgAudit } from "./audit/types";
+import type { EnvData, EnvMeta, Filters, FlagState, Matrix, MatrixTableRow, OrgAudit, TableAudit } from "./audit/types";
 import { applyPlan, planMatchOther, planSet, publishTables, tablesToPublish, type Plan, type PlanBuild, type PlanItem, type PlanResult } from "./audit/write";
 
 // ---------- state ----------
@@ -20,6 +20,9 @@ const expanded = new Set<string>();
 const selected = new Set<string>();
 let plan: PlanItem[] = [];
 let cancelRun = false;
+/** Set while "Load columns for N tables" runs; its Cancel sets cancelCols. */
+let loadingCols = false;
+let cancelCols = false;
 /** Comparison column to select on the next render (a snapshot just loaded). */
 let preferCompare: string | null = null;
 /** Saved toolbar filters (wired in wire()). */
@@ -32,11 +35,35 @@ let visibleTableKeys: string[] = [];
 const api = (): DataverseLike | null => (dataverse() as unknown as DataverseLike) ?? null;
 const otherEnv = (): EnvData | null => others.find((o) => o.meta.key === $<HTMLSelectElement>("#compare").value) ?? null;
 
+const TOOL = "audit-matrix";
+/**
+ * Set once the origin filter has been decided for this viewer: by the first-load default, by
+ * choosing an origin, or by clearing filters while one was set. persistControls drops a value equal
+ * to the HTML default, so "chose all" and "never chose" look alike without this marker.
+ */
+const ORIGIN_DECIDED = "origin-decided";
+
 const filtersActive = (): boolean => view?.active() ?? false;
 
 function clearFilters(): void {
+  if ($<HTMLSelectElement>("#filter-origin").value !== "all") saveView(TOOL, ORIGIN_DECIDED, true);
   view?.reset();
   renderMatrix();
+}
+
+/**
+ * First load ever of a large environment: start on custom tables, since hundreds of Microsoft tables
+ * bury the handful someone built. The count caption then reads "N of M tables shown" with Clear
+ * filters next to it, so nothing is hidden silently. A saved choice, any choice, always wins.
+ */
+function applyOriginDefault(env: EnvData | null): void {
+  if (!env || loadView(TOOL, ORIGIN_DECIDED, false)) return;
+  const want = originDefault(env.tables);
+  if (!want) return;
+  const sel = $<HTMLSelectElement>("#filter-origin");
+  sel.value = want;
+  sel.dispatchEvent(new Event("change")); // persistControls saves it like a choice
+  saveView(TOOL, ORIGIN_DECIDED, true);
 }
 
 function filters(): Filters {
@@ -45,6 +72,7 @@ function filters(): Filters {
     audit: $<HTMLSelectElement>("#filter-audit").value as Filters["audit"],
     onlyDiff: $<HTMLInputElement>("#filter-diff").checked,
     managed: $<HTMLSelectElement>("#filter-managed").value as Filters["managed"],
+    origin: $<HTMLSelectElement>("#filter-origin").value as Filters["origin"],
     withColumns: $<HTMLInputElement>("#filter-cols").checked,
   };
 }
@@ -111,7 +139,7 @@ function renderCounts(shown: number): void {
     h("span", { class: "metric" }, h("span", { class: "count-caption", id: "shown-count" }, `${shownOf(shown, c.tables, "tables")} shown`), filtersActive() ? clear : null),
     metric(`${c.tablesAudited} / ${c.tables}`, "tables audited"),
     metric(String(c.tablesDiffer), matrix.other ? `table differences vs ${matrix.other.name}` : "table differences (no comparison)"),
-    metric(String(c.columnsAudited), `columns audited in ${c.loadedTables} expanded table${c.loadedTables === 1 ? "" : "s"}`, "Column flags are read when a row is expanded, so this counts expanded tables only."),
+    metric(String(c.columnsAudited), `columns audited in ${c.loadedTables} loaded table${c.loadedTables === 1 ? "" : "s"}`, "Column flags are read when a row is expanded or its columns are loaded, so this counts loaded tables only."),
     metric(String(c.columnsDiffer), "column differences"),
   ];
   if (c.columnsInert) items.push(metric(String(c.columnsInert), "audited columns capturing nothing", "Their table, or the organization, has auditing off."));
@@ -171,7 +199,15 @@ function tableRow(r: MatrixTableRow, f: Filters): HTMLElement[] {
       { class: [r.differs ? "differs" : "", r.locked ? "locked" : ""].filter(Boolean).join(" ") || undefined },
       h("td", { class: "sel" }, cb),
       h("td", { class: "name" }, exp, h("span", { class: "mono" }, r.logicalName), h("span", { class: "display" }, r.displayName)),
-      h("td", {}, badge(r.isManaged ? "managed" : "custom", "neutral"), " ", badge(r.ownership, "neutral")),
+      h(
+        "td",
+        {},
+        r.isCustom === null ? null : badge(r.isCustom ? "custom" : "Microsoft", "neutral"),
+        r.isCustom === null ? null : " ",
+        badge(r.isManaged ? "managed" : "unmanaged", "neutral"),
+        " ",
+        badge(r.ownership, "neutral"),
+      ),
       h("td", { class: "cell" }, flagBadge(r.state, r.locked)),
       h("td", { class: "cell" }, matrix.other ? flagBadge(r.otherState) : h("span", { class: "caption" }, "—")),
       h("td", {}, r.differs ? h("span", { class: "diffmark", title: "Differs from the comparison environment" }, "≠") : ""),
@@ -180,7 +216,7 @@ function tableRow(r: MatrixTableRow, f: Filters): HTMLElement[] {
         { class: "caption" },
         r.stats
           ? `${r.stats.audited} / ${r.stats.total} audited${r.stats.inert ? ` (${r.stats.inert} capturing nothing)` : ""}${r.stats.differs ? ` · ${r.stats.differs} ≠` : ""}${r.stats.secured ? ` · ${r.stats.secured} secured` : ""}`
-          : "expand to load",
+          : r.state === "absent" ? "" : "expand to load",
       ),
     ),
   ];
@@ -238,6 +274,7 @@ function renderMatrix(): void {
   visibleKeys = new Set(rows.flatMap((r) => [`t:${r.key}`, ...(expanded.has(r.logicalName) && r.columns ? visibleColumns(r, f).map((c) => `c:${c.key}`) : [])]));
   visibleTableKeys = rows.filter((r) => !r.locked).map((r) => `t:${r.key}`);
   $("#filter-text-hint").hidden = !f.text.trim();
+  renderLoadColumns(f, rows);
   const planMatch = $("#btn-plan-match");
   planMatch.textContent = filtersActive() ? `Plan: match (visible ${rows.length})` : "Plan: match other env";
   planMatch.toggleAttribute("disabled", !otherEnv() || !primary || !rows.length);
@@ -278,7 +315,7 @@ function renderMatrix(): void {
           {},
           h("th", { class: "sel" }, all),
           h("th", {}, "Table"),
-          h("th", {}, "Layer"),
+          h("th", {}, "Origin · layer"),
           h("th", { class: "col" }, "primary", h("span", { class: "env" }, matrix.primary?.name ?? "—")),
           h("th", { class: "col" }, matrix.other ? (matrix.other.kind === "live" ? "secondary" : "snapshot") : "comparison", h("span", { class: "env" }, matrix.other?.name ?? "none")),
           h("th", {}, "Diff"),
@@ -513,11 +550,91 @@ async function refresh(): Promise<void> {
     const secondary = loaded.find((l) => l.meta.target === "secondary");
     others = [...(secondary ? [secondary] : []), ...others.filter((o) => o.meta.kind === "snapshot")];
     expanded.clear();
+    applyOriginDefault(primary);
     setStatus(null);
   } catch (e) {
     setStatus(null);
     await notify("Load failed", (e as Error).message, "error");
   }
+  rebuild();
+}
+
+/** Logical names per environment, so "does this env have the table" is not a scan per row. */
+const tableNames = new WeakMap<TableAudit[], Set<string>>();
+function hasTable(e: EnvData, name: string): boolean {
+  let names = tableNames.get(e.tables);
+  if (!names) tableNames.set(e.tables, (names = new Set(e.tables.map((t) => t.logicalName))));
+  return names.has(name);
+}
+
+/** Live environments (primary, live comparison) that have this table but not its columns yet. */
+function needsColumns(name: string): EnvData[] {
+  const other = otherEnv();
+  return [primary, other?.meta.kind === "live" ? other : null].filter((e): e is EnvData => !!e && !!e.meta.target && !e.columns[name] && hasTable(e, name));
+}
+
+/** Read a table's columns into every live environment that lacks them. Throws on the first failure. */
+async function loadColumns(a: DataverseLike, name: string): Promise<void> {
+  await Promise.all(needsColumns(name).map(async (e) => (e.columns[name] = await fetchColumns(a, name, e.meta.target!))));
+}
+
+/** A row whose column flags are still to be read, so the column filters cannot judge it yet. */
+const columnsPending = (r: MatrixTableRow): boolean => !!api() && r.state !== "absent" && needsColumns(r.logicalName).length > 0;
+
+/**
+ * Tables the "Load columns" button would read: those passing every filter once the column tests are
+ * taken as unknown. Under "Has audited / secured columns" none of them is on screen yet.
+ */
+const loadCandidates = (f: Filters): MatrixTableRow[] => (primary ? filterRows(matrix.rows, f, columnsPending).filter(columnsPending) : []);
+
+function renderLoadColumns(f: Filters, shownRows: MatrixTableRow[]): void {
+  const todo = loadingCols ? [] : loadCandidates(f);
+  const btn = $<HTMLButtonElement>("#btn-load-cols");
+  btn.hidden = !todo.length;
+  const shown = new Set(shownRows);
+  const allShown = todo.every((r) => shown.has(r));
+  const n = todo.length;
+  btn.textContent = `Load columns for ${n} ${allShown ? "visible " : ""}table${n === 1 ? "" : "s"}${allShown ? "" : " to check"}`;
+  btn.title = allShown
+    ? "Reads the column flags of these tables without expanding them, so the column filters and counts cover them."
+    : "These tables pass the other filters, but the column filters can only judge a table once its columns are loaded.";
+  $("#filter-loaded-hint").hidden = !((f.onlyDiff || f.withColumns) && (todo.length || loadingCols));
+}
+
+/** Load the columns of every table the filters leave in play, three at a time; rows stay collapsed. */
+async function loadVisibleColumns(): Promise<void> {
+  const a = api();
+  if (!a || loadingCols) return;
+  const queue = loadCandidates(filters()).map((r) => r.logicalName);
+  const total = queue.length;
+  if (!total) return;
+  loadingCols = true;
+  cancelCols = false;
+  let done = 0;
+  const failed: string[] = [];
+  const cancel = () => {
+    cancelCols = true;
+    setStatus("Cancelling…");
+  };
+  const progress = () => setStatus(`Loading columns ${done} / ${total}…`, cancel);
+  progress();
+  renderMatrix();
+  const worker = async (): Promise<void> => {
+    for (let name = queue.shift(); name && !cancelCols; name = queue.shift()) {
+      try {
+        await loadColumns(a, name);
+      } catch {
+        failed.push(name);
+      }
+      done++;
+      if (!cancelCols) progress();
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(3, total) }, worker));
+  loadingCols = false;
+  setStatus(null);
+  if (failed.length) await notify("Some columns failed", `${failed.length} table${failed.length === 1 ? "" : "s"}: ${failed.slice(0, 5).join(", ")}${failed.length > 5 ? ", …" : ""}`, "warning");
+  else if (cancelCols) await notify("Loading cancelled", `Columns loaded for ${done} of ${total} tables`, "warning");
   rebuild();
 }
 
@@ -529,12 +646,10 @@ async function toggleRow(r: MatrixTableRow): Promise<void> {
   }
   expanded.add(r.logicalName);
   const a = api();
-  const other = otherEnv();
-  const needs = [primary, other?.meta.kind === "live" ? other : null].filter((e): e is EnvData => !!e && !e.columns[r.logicalName] && !!e.meta.target);
-  if (a && needs.length) {
+  if (a && needsColumns(r.logicalName).length) {
     setStatus(`Loading columns of ${r.logicalName}…`);
     try {
-      await Promise.all(needs.map(async (e) => (e.columns[r.logicalName] = await fetchColumns(a, r.logicalName, e.meta.target!))));
+      await loadColumns(a, r.logicalName);
     } catch (e) {
       await notify("Columns failed", `${r.logicalName}: ${(e as Error).message}`, "error");
     }
@@ -578,8 +693,10 @@ async function exportFile(name: string, content: string, mime = "application/jso
 // ---------- wiring ----------
 function wire(): void {
   wireTabs(() => undefined);
-  view = persistControls("audit-matrix", ["filter-text", "filter-audit", "filter-diff", "filter-managed", "filter-cols"]);
-  for (const id of ["#filter-text", "#filter-diff", "#filter-audit", "#filter-managed", "#filter-cols"]) $(id).addEventListener("input", renderMatrix);
+  view = persistControls(TOOL, ["filter-text", "filter-audit", "filter-diff", "filter-origin", "filter-managed", "filter-cols"]);
+  for (const id of ["#filter-text", "#filter-diff", "#filter-audit", "#filter-origin", "#filter-managed", "#filter-cols"]) $(id).addEventListener("input", renderMatrix);
+  $("#filter-origin").addEventListener("change", () => saveView(TOOL, ORIGIN_DECIDED, true));
+  $("#btn-load-cols").addEventListener("click", () => void loadVisibleColumns());
   $("#compare").addEventListener("change", rebuild);
   $("#btn-refresh").addEventListener("click", () => void refresh());
   $("#btn-load-snap").addEventListener("click", () => void loadSnapshot());

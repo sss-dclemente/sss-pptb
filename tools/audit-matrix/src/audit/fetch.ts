@@ -48,6 +48,7 @@ export const TABLE_PROPS = [
   "IsPrivate",
   "IsLogicalEntity",
   "OwnershipType",
+  "IsCustomEntity",
 ];
 
 export const ATTRIBUTE_PROPS = ["LogicalName", "DisplayName", "IsAuditEnabled", "IsValidForRead", "IsSecured", "AttributeType", "IsManaged"];
@@ -63,6 +64,8 @@ export async function fetchTables(api: DataverseLike, target: Target): Promise<T
       displayName: label(e.DisplayName, String(e.LogicalName)),
       audit: toFlag(e.IsAuditEnabled),
       isManaged: !!e.IsManaged,
+      // Not every bridge returns it; unknown stays null rather than guessing Microsoft or custom.
+      isCustom: typeof e.IsCustomEntity === "boolean" ? e.IsCustomEntity : null,
       ownership: ownershipLabel(e.OwnershipType),
     }))
     .sort((a, b) => a.displayName.localeCompare(b.displayName) || a.logicalName.localeCompare(b.logicalName));
