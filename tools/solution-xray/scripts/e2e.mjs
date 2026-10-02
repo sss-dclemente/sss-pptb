@@ -235,7 +235,28 @@ const solK = await zip({
   }),
 });
 
-const files = { "SolK.zip": solK, "SolA_1_0_0_0.zip": solA1, "SolA_1_1_0_0_managed.zip": solA2, "SolB_2_0_0_0_managed.zip": solB, "SolC_1_0_0_0_managed.zip": solC, "SolD.zip": solD, "SolE.zip": solE, "SolF.zip": solF, "SolF_copy.zip": solF, "SolG.zip": solG, "SolH_1_0.zip": solH1, "SolH_1_1.zip": solH2, "SolI_1.zip": solI1, "SolI_2.zip": solI2, "SolJ_1.zip": solJ1, "SolJ_2.zip": solJ2 };
+// hide system tables + other collections (X7): only the prefix-less system table contact; two collections the tool does not itemise
+const solL = await zip({
+  "solution.xml": solutionXml({ name: "SolL", version: "1.0.0.0", managed: 1, roots: [{ type: 1, schemaName: "contact", behavior: 2 }] }),
+  "customizations.xml": customizationsXml({ entities: entity("contact", "Contact", [["sss_extra", "nvarchar"]]), extra: "<Dashboards><Dashboard /><Dashboard /></Dashboards><SiteMaps><SiteMap /></SiteMaps>" }),
+});
+// hide system tables keeps another publisher's table (abc_thing): same rule as the Risk tab's system-table factor
+const solO = await zip({
+  "solution.xml": solutionXml({ name: "SolO", version: "1.0.0.0", managed: 1, roots: [{ type: 1, schemaName: "abc_thing" }, { type: 1, schemaName: "contact", behavior: 2 }] }),
+  "customizations.xml": customizationsXml({ entities: entity("abc_thing", "Thing", [["abc_name", "nvarchar"]]) + entity("contact", "Contact", [["sss_extra", "nvarchar"]]) }),
+});
+// install-order reasons (X8): SolN needs 7 components of SolM -> 5 reasons + "(+2)"
+const M_TABLES = Array.from({ length: 7 }, (_, i) => `sss_m${i}`);
+const solM = await zip({
+  "solution.xml": solutionXml({ name: "SolM", version: "1.0.0.0", managed: 1, roots: M_TABLES.map((t) => ({ type: 1, schemaName: t })) }),
+  "customizations.xml": customizationsXml({}),
+});
+const solN = await zip({
+  "solution.xml": solutionXml({ name: "SolN", version: "1.0.0.0", managed: 1, roots: [{ type: 1, schemaName: "sss_n" }], missing: M_TABLES.map((t) => ({ type: 1, schemaName: t, solution: "SolM (1.0.0.0)" })) }),
+  "customizations.xml": customizationsXml({}),
+});
+
+const files = { "SolL.zip": solL, "SolO.zip": solO, "SolM.zip": solM, "SolN.zip": solN, "SolK.zip": solK, "SolA_1_0_0_0.zip": solA1, "SolA_1_1_0_0_managed.zip": solA2, "SolB_2_0_0_0_managed.zip": solB, "SolC_1_0_0_0_managed.zip": solC, "SolD.zip": solD, "SolE.zip": solE, "SolF.zip": solF, "SolF_copy.zip": solF, "SolG.zip": solG, "SolH_1_0.zip": solH1, "SolH_1_1.zip": solH2, "SolI_1.zip": solI1, "SolI_2.zip": solI2, "SolJ_1.zip": solJ1, "SolJ_2.zip": solJ2 };
 for (const [n, b] of Object.entries(files)) writeFileSync(resolve(OUT, n), b);
 
 const { page, assert, finish } = await launchPage(import.meta.url, { width: 1280, height: 900 });
@@ -612,6 +633,68 @@ assert((await evChips()).length === 8 && (await evMore()) === "+3 more", "eviden
 const [dlr] = await Promise.all([page.waitForEvent("download"), page.click("#risk-export")]);
 const riskK = JSON.parse(readFileSync(await dlr.path(), "utf8"));
 assert(riskK.factors.find((f) => f.id === "env-vars")?.evidence.length === 11, "risk export keeps the full evidence list");
+
+// ---- inventory: hide system tables + other collections (X7) ----
+await page.reload(); // fresh fold memory
+await addOne("SolA_1_0_0_0.zip", 1);
+await addOne("SolL.zip", 2);
+await page.click('.tab[data-tab="inventory"]');
+await page.selectOption("#inv-select", { index: 0 });
+const hideSys = () => page.$eval("#inv-hide-sys", (e) => e.checked);
+const tableNames = () => page.$$eval(`${invCard("Tables")} tbody > tr`, (els) => els.map((e) => e.querySelector("td").textContent)).catch(() => null);
+assert(!(await hideSys()) && (await invCardOf("Tables")).count === "2" && (await tableNames()).join() === "sss_project,account", "hide system tables: off by default, every table listed");
+await page.click("#inv-hide-sys");
+assert((await invCardOf("Tables")).count === "1 of 2" && (await tableNames()).join() === "sss_project", "hide system tables: account hidden, badge '1 of 2'");
+await page.fill("#inv-q", "sss_tier"); // a column of the hidden account table only
+assert(!(await invCardOf("Tables")) && (await page.textContent("#inv-body .empty-state")).includes("1 system table is hidden"), "hide system tables + search: matches in hidden tables not shown, empty state says so");
+await page.click('#inv-body .empty-state button:text-is("Clear search")');
+assert((await page.inputValue("#inv-q")) === "" && (await hideSys()) && (await invCardOf("Tables")).count === "1 of 2", "Clear search keeps system tables hidden");
+await page.fill("#inv-q", "s");
+assert((await invCardOf("Tables")).count === "1 of 2" && (await tableNames()).join() === "sss_project", "hide system tables + search: both narrow Tables");
+await page.fill("#inv-q", "");
+await page.reload();
+assert(await hideSys(), "hide system tables: restored after reload");
+await addOne("SolA_1_0_0_0.zip", 1);
+await addOne("SolL.zip", 2);
+assert((await invCardOf("Tables")).count === "1 of 2", "hide system tables: applied after reload");
+await page.selectOption("#inv-select", { index: 1 });
+const onlySys = await page.textContent(`${invCard("Tables")} .empty-state`).catch(() => "");
+assert((await invCardOf("Tables")).count === "0 of 1" && onlySys.includes("Only system tables") && onlySys.includes("no publisher prefix"), "every table hidden: card says so: " + onlySys);
+await page.click(`${invCard("Tables")} .empty-state button:text-is("Show system tables")`);
+assert(!(await hideSys()) && (await tableNames()).join() === "contact" && (await invCardOf("Tables")).count === "1", "Show system tables unticks the toggle");
+// other:* collections share one closed card
+let cards = await invCards();
+const other = cards.find((c) => c.title === "Other collections");
+assert(other && other.open === false && other.count === "3" && !cards.some((c) => c.title === "Dashboards" || c.title === "SiteMaps"), "other collections: one closed card, total count: " + JSON.stringify(cards));
+const otherRows = () => page.$$eval(`${invCard("Other collections")} tbody > tr`, (els) => els.map((e) => e.textContent));
+assert(JSON.stringify(await otherRows()) === '["Dashboards2","SiteMaps1"]', "other collections: name + count per collection: " + (await otherRows()));
+await page.fill("#inv-q", "sitemap");
+cards = await invCards();
+assert(JSON.stringify(cards.map((c) => [c.title, c.open, c.count])) === '[["Other collections",true,"1 of 3"]]' && JSON.stringify(await otherRows()) === '["SiteMaps1"]', "other collections: search narrows the list: " + JSON.stringify(cards));
+await page.fill("#inv-q", "");
+assert((await invCardOf("Other collections")).open === false, "other collections: closed again after clearing the search");
+await addOne("SolO.zip", 3);
+await page.selectOption("#inv-select", { index: 2 });
+await page.check("#inv-hide-sys");
+assert((await tableNames()).join() === "abc_thing" && (await invCardOf("Tables")).count === "1 of 2", "hide system tables: another publisher's table stays, only prefix-less contact hidden: " + (await tableNames()));
+await page.uncheck("#inv-hide-sys");
+
+// ---- install order reasons (X8): "(+N)" reveals the full list inline ----
+await addOne("SolM.zip", 3);
+await addOne("SolN.zip", 4);
+await page.click('.tab[data-tab="order"]');
+const edgeCell = "#order-body .reasons"; // the only edge: SolM -> SolN
+const reasonCount = () => page.$eval(edgeCell, (el) => el.firstChild.textContent.split("; ").length);
+const reasonsMore = () => page.textContent(`${edgeCell} .reasons-more`).catch(() => null);
+assert((await reasonCount()) === 5 && (await reasonsMore()) === "(+2)", "reasons: first 5 + '(+2)' button");
+await page.click(`${edgeCell} .reasons-more`);
+assert((await reasonCount()) === 7 && (await page.textContent(edgeCell)).includes("sss_m6") && (await reasonsMore()) === "Show less", "reasons: '(+2)' reveals all 7 inline");
+assert(await page.$eval(`${edgeCell} .reasons-more`, (b) => b === document.activeElement && b.getAttribute("aria-expanded") === "true"), "reasons: toggle keeps focus, aria-expanded");
+await page.click('.tab[data-tab="inventory"]');
+await page.click('.tab[data-tab="order"]');
+assert((await reasonCount()) === 7, "reasons: expanded state kept across re-render");
+await page.click(`${edgeCell} .reasons-more`);
+assert((await reasonCount()) === 5 && (await reasonsMore()) === "(+2)", "reasons: 'Show less' folds back to 5");
 
 // ---- debug mode (standalone: no host, the log still records the switch and saves as a download) ----
 await checkDebugLog(page, assert, {

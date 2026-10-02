@@ -6,7 +6,7 @@ import { diffSolutions, type DiffEntry, type SolutionDiff } from "./xray/diff";
 import { buildInventory, managedLabel, type InventoryGroup } from "./xray/inventory";
 import { computeInstallOrder, latestByName } from "./xray/order";
 import { parseSolutionZip } from "./xray/parse";
-import { scoreRisk } from "./xray/risk";
+import { hasPublisherPrefix, scoreRisk } from "./xray/risk";
 import type { AttributeInfo, SolutionInfo } from "./xray/types";
 
 // ---------- state ----------
@@ -22,6 +22,9 @@ let invFind: PersistedControls;
 /** Risk factors whose evidence list the user expanded past the first EVIDENCE_SHOWN items. */
 const evidenceOpen = new Set<string>();
 const EVIDENCE_SHOWN = 8;
+/** Install-order edges ("from→to") whose reasons the user expanded past the first REASONS_SHOWN. */
+const reasonsOpen = new Set<string>();
+const REASONS_SHOWN = 5;
 
 function idOf(s: SolutionInfo): string {
   let id = ids.get(s);
@@ -124,6 +127,16 @@ function itemDetail(it: InventoryGroup["items"][number], q: string): Child {
   return h("div", { class: "row-detail" }, it.detail ? h("div", {}, it.detail) : null, columnsFold(it.name, it.columns, q));
 }
 
+/** Table hidden by "Hide system tables": no publisher prefix at all (same rule as the Risk tab; abc_thing is custom, just another publisher's). */
+const isSystemTable = (name: string): boolean => !hasPublisherPrefix(name);
+
+/** Untick "Hide system tables" the way the user would (saves the setting and re-renders). */
+function showSystemTables(): void {
+  const hide = $<HTMLInputElement>("#inv-hide-sys");
+  hide.checked = false;
+  hide.dispatchEvent(new Event("change"));
+}
+
 function renderInventory(): void {
   const body = $("#inv-body");
   body.replaceChildren();
@@ -135,7 +148,9 @@ function renderInventory(): void {
   const inv = buildInventory(s);
   const raw = $<HTMLInputElement>("#inv-q").value.trim();
   const q = raw.toLowerCase();
+  const hideSys = $<HTMLInputElement>("#inv-hide-sys").checked;
   let shownCards = 0;
+  let hiddenSys = 0;
 
   if (s.warnings.length) body.append(h("div", { class: "warnings" }, ...s.warnings.map((w) => h("div", {}, w))));
 
@@ -164,24 +179,59 @@ function renderInventory(): void {
     );
   }
 
+  // collections the tool does not itemise share one card after the itemised groups
+  const others = inv.groups.filter((g) => g.key.startsWith("other:"));
   for (const g of inv.groups) {
-    // rows match on name, detail or a table's column names; a group that is not itemised matches on its label
-    const items = q ? g.items.filter((it) => hit(q, it.name, it.detail) || !!it.columns?.some((c) => hit(q, c.name))) : g.items;
-    if (q && (g.items.length ? !items.length : !hit(q, g.label))) continue;
+    if (g.key.startsWith("other:")) continue;
+    // "Hide system tables" narrows Tables first; the badge counts against every table
+    const pool = hideSys && g.key === "entities" ? g.items.filter((it) => !isSystemTable(it.name)) : g.items;
+    if (g.key === "entities") hiddenSys = g.items.length - pool.length;
+    // rows match on name, detail or a table's column names
+    const items = q ? pool.filter((it) => hit(q, it.name, it.detail) || !!it.columns?.some((c) => hit(q, c.name))) : pool;
+    if (q && !items.length) continue;
     shownCards++;
     body.append(
       shownFold(
         g.label,
-        g.items.length ? items.length : g.count,
+        items.length,
         g.count,
-        g.items.length
+        items.length
           ? table(
               ["Name", "Detail"],
               items.map((it) => [h("span", { class: "mono" }, it.name), itemDetail(it, q)]),
             )
-          : h("p", { class: "caption" }, "Present in customizations.xml; not itemised by this tool."),
+          : filteredEmpty(
+              "Only system tables",
+              `All ${g.count} ${g.count === 1 ? "table is a system table" : "tables are system tables"} (no publisher prefix) and hidden.`,
+              showSystemTables,
+              "Show system tables",
+            ),
         !!q || g.key === "entities",
         findKey(`inv:${g.key}`, q),
+      ),
+    );
+  }
+
+  const otherRows = others.filter((g) => !q || hit(q, g.label));
+  if (otherRows.length) {
+    shownCards++;
+    const sum = (gs: InventoryGroup[]) => gs.reduce((n, g) => n + g.count, 0);
+    body.append(
+      shownFold(
+        "Other collections",
+        sum(otherRows),
+        sum(others),
+        h(
+          "div",
+          {},
+          h("p", { class: "caption" }, "Present in customizations.xml; not itemised by this tool."),
+          table(
+            ["Collection", "#Count"],
+            otherRows.map((g) => [h("span", { class: "mono" }, g.label), String(g.count)]),
+          ),
+        ),
+        !!q,
+        findKey("inv:other", q),
       ),
     );
   }
@@ -213,7 +263,7 @@ function renderInventory(): void {
     body.append(
       filteredEmpty(
         "No components match",
-        `Nothing in ${s.uniqueName} matches "${raw}" (names, details and column names are searched).`,
+        `Nothing in ${s.uniqueName} matches "${raw}" (names, details and column names are searched)${hiddenSys ? `; ${hiddenSys} system ${hiddenSys === 1 ? "table is" : "tables are"} hidden` : ""}.`,
         () => {
           invFind.reset();
           renderInventory();
@@ -410,6 +460,27 @@ function renderRisk(): void {
 }
 
 // ---------- order ----------
+/** An edge's reasons: the first REASONS_SHOWN, then "(+N)" reveals the rest inline ("Show less" folds them back). */
+function reasonsCell(id: string, reasons: string[]): HTMLElement {
+  const box = h("span", { class: "reasons" });
+  const draw = () => {
+    const open = reasonsOpen.has(id);
+    const rest = reasons.length - REASONS_SHOWN;
+    const more = rest > 0 ? h("button", { class: "btn btn-ghost btn-sm reasons-more", type: "button", "aria-expanded": String(open) }, open ? "Show less" : `(+${rest})`) : null;
+    more?.addEventListener("click", () => {
+      if (open) reasonsOpen.delete(id);
+      else reasonsOpen.add(id);
+      draw();
+      box.querySelector<HTMLButtonElement>(".reasons-more")?.focus();
+    });
+    if (more) more.title = open ? "Show the first reasons only" : `Show ${rest} more ${rest === 1 ? "reason" : "reasons"}`;
+    box.replaceChildren((open ? reasons : reasons.slice(0, REASONS_SHOWN)).join("; "));
+    if (more) box.append(" ", more);
+  };
+  draw();
+  return box;
+}
+
 function renderOrder(): void {
   const body = $("#order-body");
   body.replaceChildren();
@@ -456,7 +527,7 @@ function renderOrder(): void {
       o.edges.length
         ? table(
             ["Install first", "Then", "Because"],
-            o.edges.map((e) => [h("span", { class: "mono" }, e.from), h("span", { class: "mono" }, e.to), e.reasons.slice(0, 5).join("; ") + (e.reasons.length > 5 ? ` (+${e.reasons.length - 5})` : "")]),
+            o.edges.map((e) => [h("span", { class: "mono" }, e.from), h("span", { class: "mono" }, e.to), reasonsCell(`${e.from}→${e.to}`, e.reasons)]),
           )
         : h("p", { class: "caption" }, "No dependencies detected between the loaded solutions; any order works."),
       true,
@@ -513,6 +584,7 @@ function wire(): void {
   persistControls("solution-xray", ["cmp-hide-root"]);
   cmpFilters = persistControls("solution-xray", ["cmp-added", "cmp-changed", "cmp-removed", "cmp-q"]);
   invFind = persistControls("solution-xray", ["inv-q"]);
+  persistControls("solution-xray", ["inv-hide-sys"]); // separate: "Clear search" must not show system tables again
   // Expand / collapse all next to the export button (fold state is kept per card across re-renders)
   $("#inv-export").before(foldAllButtons(() => document.getElementById("inv-body"), "details.card"));
   $("#cmp-export").before(foldAllButtons(() => document.getElementById("cmp-body"), "details.card"));
@@ -529,6 +601,7 @@ function wire(): void {
 
   $("#inv-select").addEventListener("change", renderInventory);
   $("#inv-q").addEventListener("input", renderInventory);
+  $("#inv-hide-sys").addEventListener("change", renderInventory);
   $("#cmp-a").addEventListener("change", renderCompare);
   $("#cmp-b").addEventListener("change", renderCompare);
   for (const id of ["#cmp-hide-root", "#cmp-added", "#cmp-changed", "#cmp-removed"]) $(id).addEventListener("change", renderCompare);

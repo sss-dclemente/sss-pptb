@@ -42,6 +42,7 @@
         <div class="toolbar">
           <label>Solution <select id="inv-select"></select></label>
           <input id="inv-q" type="search" placeholder="Find component…" aria-label="Find component" />
+          <label class="check" title="Hide tables whose schema name does not start with the solution publisher's prefix (e.g. account, contact)"><input type="checkbox" id="inv-hide-sys" /> Hide system tables</label>
           <button id="inv-export" class="btn btn-ghost btn-sm" type="button">Export JSON</button>
         </div>
         <div id="inv-body" class="panel-body"></div>

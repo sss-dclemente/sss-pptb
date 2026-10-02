@@ -39,6 +39,7 @@
 .order-list li { display: flex; gap: var(--s-3); align-items: baseline; padding: var(--s-2) var(--s-3); background: var(--bg-card); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); }
 .order-list li::before { counter-increment: step; content: counter(step); font-weight: var(--fw-black); color: var(--accent); min-width: 1.5em; }
 .order-list .name { font-weight: var(--fw-bold); color: var(--fg-primary); }
+.reasons .reasons-more { padding-block: 0; } /* inline with the reason text */
 
 .diff-added td:first-child { border-left: 3px solid var(--status-ok-fg); }
 .diff-removed td:first-child { border-left: 3px solid var(--status-bad-fg); }

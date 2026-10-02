@@ -34,7 +34,7 @@ function isCustom(schema: string | null, prefix: string): boolean {
 }
 
 /** Publisher-style prefix (xxx_) of any publisher: a custom component, not a system one. */
-function hasPublisherPrefix(schema: string | null): boolean {
+export function hasPublisherPrefix(schema: string | null): boolean {
   return !!schema && /^[a-z0-9]+_/i.test(schema);
 }
 
