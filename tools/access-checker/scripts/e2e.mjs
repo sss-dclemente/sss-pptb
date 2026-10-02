@@ -23,6 +23,8 @@ const MOCK = `
   const EVA = 'a0000000-0000-0000-0000-000000000005', PLUS = 'a0000000-0000-0000-0000-000000000006';
   const R_CREADER = 'c0000000-0000-0000-0000-000000000006', R_CAPP = 'c0000000-0000-0000-0000-000000000007';
   const T_READERS = 'd0000000-0000-0000-0000-000000000002';
+  // "Report Viewer" (held by Ana directly) grants nothing on any table: the Roles table hides it by default.
+  const R_NOPRIV = 'c0000000-0000-0000-0000-000000000008';
   const CON_E = 'e1000000-0000-0000-0000-000000000001', ACC_T = 'e0000000-0000-0000-0000-000000000004';
   const ANA = 'a0000000-0000-0000-0000-000000000001', BRUNO = 'a0000000-0000-0000-0000-000000000002', CARLA = 'a0000000-0000-0000-0000-000000000003', DIEGO = 'a0000000-0000-0000-0000-000000000004';
   const R_SALES = 'c0000000-0000-0000-0000-000000000001', R_SHARER = 'c0000000-0000-0000-0000-000000000002', R_TEAMONLY = 'c0000000-0000-0000-0000-000000000003', R_ROOTAPP = 'c0000000-0000-0000-0000-000000000004', R_ADMIN = 'c0000000-0000-0000-0000-000000000005';
@@ -58,6 +60,7 @@ const MOCK = `
     [R_ADMIN]: privNames.map((n) => [n, 'Global']),
     [R_CREADER]: [['prvReadContact','Local'],['prvWriteContact','Deep']],
     [R_CAPP]: [['prvAppendContact','Local']],
+    [R_NOPRIV]: [],
   };
   const users = [
     { systemuserid: ANA, fullname: 'Ana Silva', domainname: 'ana@sss.test', internalemailaddress: 'ana@sss.test', _businessunitid_value: BU_SALES, _parentsystemuserid_value: CARLA, isdisabled: false, applicationid: null },
@@ -77,18 +80,19 @@ const MOCK = `
     [R_ADMIN]: role(R_ADMIN, 'Administrador do Sistema', BU_ROOT, 1, SYSADMIN_TEMPLATE),
     [R_CREADER]: role(R_CREADER, 'Contact Reader', BU_SALES, 1),
     [R_CAPP]: role(R_CAPP, 'Contact Appender', BU_SALES, 1),
+    [R_NOPRIV]: role(R_NOPRIV, 'Report Viewer', BU_SALES, 1),
   };
   const teams = [{ teamid: T_EU, name: 'Sales EU', teamtype: 0, _businessunitid_value: BU_SALES }];
   const readers = { teamid: T_READERS, name: 'Sales Readers', teamtype: 0, _businessunitid_value: BU_SALES };
   const expand = {
-    systemuserroles_association: { [ANA]: [roles[R_SALES], roles[R_ROOTAPP]], [DIEGO]: [roles[R_ADMIN]], [EVA]: [roles[R_CAPP]] },
+    systemuserroles_association: { [ANA]: [roles[R_SALES], roles[R_ROOTAPP], roles[R_NOPRIV]], [DIEGO]: [roles[R_ADMIN]], [EVA]: [roles[R_CAPP]] },
     teammembership_association: { [ANA]: teams, [EVA]: [readers] },
     systemuserprofiles_association: { [ANA]: [] },
     teamroles_association: { [T_EU]: [roles[R_SHARER], roles[R_TEAMONLY]], [T_READERS]: [roles[R_CREADER]] },
     teamprofiles_association: { [T_EU]: [{ fieldsecurityprofileid: FSP, name: 'Margin Readers' }] },
   };
   // Roles a user holds directly or through teams, for RetrieveUserPrivilegeByPrivilegeName.
-  const heldBy = { [ANA]: [R_SALES, R_ROOTAPP, R_SHARER, R_TEAMONLY], [DIEGO]: [R_ADMIN], [EVA]: [R_CAPP, R_CREADER] };
+  const heldBy = { [ANA]: [R_SALES, R_ROOTAPP, R_SHARER, R_TEAMONLY, R_NOPRIV], [DIEGO]: [R_ADMIN], [EVA]: [R_CAPP, R_CREADER] };
   // Tests mutate these to model a role change between two checks.
   window.__mock = { rolePrivs, R_SALES };
   const acc = (accountid, name, owner, ownerName, bu) => ({ accountid, name, _ownerid_value: owner, '_ownerid_value@Microsoft.Dynamics.CRM.lookuplogicalname': 'systemuser', '_ownerid_value@OData.Community.Display.V1.FormattedValue': ownerName, _owningbusinessunit_value: bu });
@@ -292,6 +296,23 @@ assert(why1.includes("agrees") && !why1.includes("platform says otherwise"), "to
 assert((await chip("Share")).includes("Local") && !(await chip("Share")).includes("Basic"), "team-inherited depth is the real depth, not Basic");
 assert((await text("#tab-check table.roles")).includes("via team Sales EU (owner team)"), "roles table shows team role");
 assert((await text("#tab-check table.roles")).includes("Team Assigner") && (await text("#tab-check table.roles")).includes("team privileges only"), "roles table flags the isinherited = 0 team role");
+// Roles with no privilege on the table are hidden by default (team-held roles that grant one stay).
+{
+  const roleNames = () => page.$$eval("#tab-check table.roles tbody tr td:first-child", (t) => t.map((x) => x.textContent));
+  assert(await page.$eval("#hide-irrelevant-roles", (b) => b.checked), "roles: 'Hide roles with no privilege' on by default");
+  const shown = await roleNames();
+  assert(shown.length === 4 && !shown.includes("Report Viewer") && shown.includes("Sharer") && shown.includes("Team Assigner"), "roles: no-privilege role hidden, team-held roles kept: " + shown.join(","));
+  assert((await text("#roles-count")) === "4 of 5 roles", "roles: count caption '4 of 5 roles'");
+  await page.click('#why li[data-right="Write"] summary');
+  await page.evaluate(() => (document.querySelector("#why").__marker = 1));
+  await page.uncheck("#hide-irrelevant-roles");
+  assert((await roleNames()).includes("Report Viewer") && (await roleNames()).length === 5, "roles: unticking shows the no-privilege role");
+  assert((await text("#roles-count")) === "5 roles", "roles: count caption '5 roles' when nothing is hidden");
+  assert(await page.evaluate(() => document.querySelector("#why").__marker === 1 && document.querySelector('#why li[data-right="Write"] details').open), "roles: toggling re-renders only the Roles table (Why kept)");
+  await page.check("#hide-irrelevant-roles");
+  assert((await roleNames()).length === 4, "roles: ticking hides it again");
+  await page.click('#why li[data-right="Write"] summary');
+}
 // Privilege names now come from EntityDefinitions(...)/Privileges; privileges list is paged (10 per page).
 assert((await page.evaluate(() => window.__calls)).includes("EntityDefinitions(LogicalName='account')?$select=Privileges"), "privilege names read from entity metadata");
 assert((await page.evaluate(() => window.__calls)).some((c) => c.startsWith("privileges?") && c.includes("$skiptoken=")), "privilege list follows @odata.nextLink");
@@ -522,6 +543,27 @@ await settle();
   assert(why.includes("Contact Reader via team Sales Readers: Local depth includes Basic: user owns the record"), "own record reached by Local depth via team in another BU");
   assert(why.includes("Deep depth includes Basic: user owns the record") && why.includes("Contact Appender: Local depth includes Basic"), "own record reached by Deep and by a direct role from another BU");
 }
+
+// Roles: a user whose roles all miss the table gets a one-line caption, not an empty table; the toggle survives a reload.
+await pickUser("eva", "Eva Nunes");
+await page.selectOption("#table", "account");
+await page.click("#btn-check");
+await page.waitForFunction(() => document.querySelector("#tab-check h2")?.textContent.includes("Eva Nunes on table Account"));
+await settle();
+assert(!(await page.$("#tab-check table.roles")) && (await text("#roles-body")).includes("None of the user's 2 roles grants a privilege on Account."), "roles: all-hidden caption instead of an empty table");
+assert((await text("#roles-count")) === "0 of 2 roles", "roles: count caption '0 of 2 roles'");
+await page.click("#btn-show-all-roles");
+assert(!(await page.$eval("#hide-irrelevant-roles", (b) => b.checked)) && (await page.$$("#tab-check table.roles tbody tr")).length === 2, "roles: 'Show all roles' unticks the toggle and lists both roles");
+await page.reload();
+await page.waitForFunction(() => document.querySelectorAll("#table option").length > 1);
+await pickUser("eva", "Eva Nunes");
+await page.selectOption("#table", "account");
+await page.click("#btn-check");
+await page.waitForFunction(() => document.querySelector("#tab-check h2")?.textContent.includes("Eva Nunes on table Account"));
+await settle();
+assert(!(await page.$eval("#hide-irrelevant-roles", (b) => b.checked)) && (await page.$$("#tab-check table.roles tbody tr")).length === 2, "roles: unticked toggle survives a reload");
+await page.check("#hide-irrelevant-roles");
+assert((await text("#roles-body")).includes("None of the user's 2 roles"), "roles: re-ticking hides them again");
 
 // ---- debug mode: the switch survives a reload, so start-up calls are in the log ----
 await checkDebugLog(page, assert, {

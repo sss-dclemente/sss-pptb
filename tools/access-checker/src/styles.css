@@ -61,3 +61,6 @@
 
 @media (max-width: 900px) { .inputs { grid-template-columns: 1fr 1fr; } }
 
+.card-head .roles-filter { margin-left: auto; display: inline-flex; flex-wrap: wrap; align-items: center; gap: var(--s-3); }
+.roles-filter label.check { display: inline-flex; align-items: center; gap: var(--s-1); font-size: var(--fs-caption); color: var(--fg-muted); }
+.roles-none { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-2); }

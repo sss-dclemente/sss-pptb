@@ -1,5 +1,6 @@
 import { mountDebug } from "../../_shared/debug-ui";
-import { $, append, badge, card, emptyState, foldAllButtons, h, keepFold, table, wireTabs, type BadgeKind } from "../../_shared/dom";
+import { $, append, badge, card, emptyState, foldAllButtons, h, keepFold, shownOf, table, wireTabs, type BadgeKind } from "../../_shared/dom";
+import { loadView, saveView } from "../../_shared/view-state";
 import { dataverse, getConnections, initTheme, inToolbox, notify, onConnectionChange, saveText } from "../../_shared/host";
 import { columnAccess } from "./access/columns";
 import { explain } from "./access/explain";
@@ -29,7 +30,7 @@ import {
   type DataverseLike,
 } from "./access/fetch";
 import { depthLabel, isSystemAdminRole, tablePrivilegeName } from "./access/privileges";
-import { RIGHTS, TEAM_TYPE_LABEL, type CheckData, type ColumnAccess, type Explanation, type RecordInfo, type ShareEntry, type TableInfo, type UserInfo } from "./access/types";
+import { RIGHTS, TEAM_TYPE_LABEL, type CheckData, type Depth, type ColumnAccess, type Explanation, type RecordInfo, type ShareEntry, type TableInfo, type UserInfo } from "./access/types";
 
 // ---------- state ----------
 const cache = new Cache();
@@ -49,6 +50,9 @@ let checkSeq = 0;
 let userSeq = 0;
 let recSeq = 0;
 let envName: string | null = null;
+/** Roles table: hide roles with no depth for any right on the checked table (per-viewer, persisted). */
+const VIEW = "access-checker";
+let hideIrrelevantRoles = loadView<boolean>(VIEW, "hideIrrelevantRoles", true) !== false;
 
 const api = (): DataverseLike | null => (dataverse() as unknown as DataverseLike | undefined) ?? null;
 const GUID = /^\{?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\}?$/i;
@@ -306,22 +310,7 @@ function renderCheck(): void {
       }),
   );
 
-  const roles = d.heldRoles.length
-    ? table(
-        ["Role", "Held", ...RIGHTS],
-        d.heldRoles.map((hr) => [
-          hr.role.name,
-          hr.viaTeam ? `via team ${hr.viaTeam.name} (${TEAM_TYPE_LABEL[hr.viaTeam.type] ?? "team"})${hr.role.isInherited ? "" : " · team privileges only"}` : "direct",
-          ...RIGHTS.map((r) => {
-            const prv = tablePrivilegeName(d.tablePrivileges, r, d.table.logicalName);
-            return depthLabel(prv ? (d.rolePrivileges[hr.role.id]?.[prv] ?? null) : null);
-          }),
-        ]),
-        undefined,
-        "roles",
-      )
-    : emptyState("No roles", "This user holds no security roles.");
-
+  const roles = d.heldRoles.length ? rolesView(d) : null;
   const own = x.ownership;
   const ownership = own
     ? h(
@@ -344,11 +333,65 @@ function renderCheck(): void {
     verdicts,
     x.notes.length ? h("div", { class: "warnings" }, h("ul", { class: "notes" }, ...x.notes.map((n) => h("li", {}, n)))) : null,
     card("Why", why, foldAllButtons(why, "details")),
-    card("Roles", roles),
+    roles ? card("Roles", roles.body, roles.extra) : card("Roles", emptyState("No roles", "This user holds no security roles.")),
     card("Ownership & business unit", ownership),
     card("Shares affecting this user", sharesForUser),
     x.hierarchy ? card("Hierarchy", h("p", { class: "caption", id: "hierarchy" }, x.hierarchy)) : null,
   );
+}
+
+/**
+ * Roles card body + header controls. The "hide roles with no privilege" toggle re-renders only this body, so the
+ * rest of the check (Why folds, scroll position) is left alone. A role held through a team counts like a direct one.
+ */
+function rolesView(d: CheckData): { body: HTMLElement; extra: HTMLElement } {
+  const prvs = RIGHTS.map((r) => tablePrivilegeName(d.tablePrivileges, r, d.table.logicalName));
+  const depthOf = (roleId: string, i: number): Depth | null => {
+    const prv = prvs[i];
+    return prv ? (d.rolePrivileges[roleId]?.[prv] ?? null) : null;
+  };
+  // System Administrator always counts: the verdict treats it as full access whatever its stored privileges say
+  const relevant = (hr: CheckData["heldRoles"][number]): boolean => isSystemAdminRole(hr.role) || RIGHTS.some((_, i) => depthOf(hr.role.id, i) != null);
+  const body = h("div", { id: "roles-body" });
+  const caption = h("span", { class: "count-caption", id: "roles-count" });
+  const box = h("input", { type: "checkbox", id: "hide-irrelevant-roles" });
+  box.checked = hideIrrelevantRoles;
+  const render = (): void => {
+    const all = d.heldRoles;
+    const shown = hideIrrelevantRoles ? all.filter(relevant) : all;
+    caption.textContent = shownOf(shown.length, all.length, all.length === 1 ? "role" : "roles");
+    if (!shown.length) {
+      const show = h("button", { class: "btn btn-ghost btn-sm", type: "button", id: "btn-show-all-roles" }, "Show all roles");
+      show.addEventListener("click", () => {
+        box.checked = false;
+        box.dispatchEvent(new Event("change")); // saves the toggle and re-renders
+      });
+      body.replaceChildren(
+        h("p", { class: "caption roles-none" }, `None of the user's ${all.length} ${all.length === 1 ? "role" : "roles"} grants a privilege on ${d.table.displayName}.`, show),
+      );
+      return;
+    }
+    body.replaceChildren(
+      table(
+        ["Role", "Held", ...RIGHTS],
+        shown.map((hr) => [
+          hr.role.name,
+          hr.viaTeam ? `via team ${hr.viaTeam.name} (${TEAM_TYPE_LABEL[hr.viaTeam.type] ?? "team"})${hr.role.isInherited ? "" : " · team privileges only"}` : "direct",
+          ...RIGHTS.map((_, i) => depthLabel(depthOf(hr.role.id, i))),
+        ]),
+        undefined,
+        "roles",
+      ),
+    );
+  };
+  box.addEventListener("change", () => {
+    hideIrrelevantRoles = box.checked;
+    saveView(VIEW, "hideIrrelevantRoles", hideIrrelevantRoles ? undefined : false);
+    render();
+  });
+  render();
+  const extra = h("span", { class: "roles-filter" }, h("label", { class: "check" }, box, "Hide roles with no privilege on this table"), caption);
+  return { body, extra };
 }
 
 // ---------- render: shares ----------
