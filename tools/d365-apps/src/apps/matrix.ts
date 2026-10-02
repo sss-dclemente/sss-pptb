@@ -1,6 +1,6 @@
 /** Packages per environment → app × environment matrix (plan §2), selection → install plan. */
 import { compareVersions } from "./api";
-import type { Cell, EnvPackages, Environment, Matrix, Package, PlannedInstall, Row } from "./types";
+import type { Cell, CellKind, EnvPackages, Environment, Matrix, Package, PlannedInstall, Row } from "./types";
 
 const BUSY = new Set(["installing", "installrequested", "installscheduled", "installretrying", "uninstalling", "uninstallrequested"]);
 const lower = (s: string) => s.toLowerCase();
@@ -62,18 +62,34 @@ export function buildMatrix(results: EnvPackages[], opts: { showNotInstalled: bo
   return { envs, rows, errors };
 }
 
-/** Cells "Select all updates" ticks: updates, except custom-upgrade packages (plan D8). Rows the filter hides are included only when `visible` allows them. */
-export function updateKeys(m: Matrix, visible: (uniqueName: string) => boolean = () => true): string[] {
+/** Cells "Select all updates" ticks: updates, except custom-upgrade packages (plan D8). Rows the filter hides and hidden environment columns are included only when `visible` allows them. */
+export function updateKeys(m: Matrix, visible: (uniqueName: string, envId: string) => boolean = () => true): string[] {
   const out: string[] = [];
-  for (const r of m.rows) if (visible(r.uniqueName)) for (const env of m.envs) if (r.cells.get(env.id)?.kind === "update" && !r.customHandleUpgrade) out.push(cellKey(env.id, r.uniqueName));
+  for (const r of m.rows) for (const env of m.envs) if (visible(r.uniqueName, env.id) && r.cells.get(env.id)?.kind === "update" && !r.customHandleUpgrade) out.push(cellKey(env.id, r.uniqueName));
   return out;
 }
 
-/** Cells "Select all failed" ticks: every failed install, for a retry. Rows the filter hides are included only when `visible` allows them. */
-export function failedKeys(m: Matrix, visible: (uniqueName: string) => boolean = () => true): string[] {
+/** Cells "Select all failed" ticks: every failed install, for a retry. Rows the filter hides and hidden environment columns are included only when `visible` allows them. */
+export function failedKeys(m: Matrix, visible: (uniqueName: string, envId: string) => boolean = () => true): string[] {
   const out: string[] = [];
-  for (const r of m.rows) if (visible(r.uniqueName)) for (const env of m.envs) if (r.cells.get(env.id)?.kind === "failed") out.push(cellKey(env.id, r.uniqueName));
+  for (const r of m.rows) for (const env of m.envs) if (visible(r.uniqueName, env.id) && r.cells.get(env.id)?.kind === "failed") out.push(cellKey(env.id, r.uniqueName));
   return out;
+}
+
+/** Cell kinds that mean "something is installed here" (installed, update, failed, in progress); "available" and "—" do not. */
+const HAS_APP = new Set<CellKind>(["current", "update", "failed", "busy"]);
+
+/** Environments with nothing installed in any row ("Hide empty environments"). Unreadable environments are never empty: their error header matters. */
+export function emptyEnvIds(m: Matrix): Set<string> {
+  const out = new Set<string>();
+  for (const env of m.envs) if (!m.errors.has(env.id) && !m.rows.some((r) => HAS_APP.has(r.cells.get(env.id)?.kind ?? "absent"))) out.add(env.id);
+  return out;
+}
+
+/** The environment columns the matrix shows, in column order: not hidden with ✕, and not empty while `hideEmpty`. */
+export function visibleEnvs(m: Matrix, hidden: ReadonlySet<string>, hideEmpty: boolean): Environment[] {
+  const empty = hideEmpty ? emptyEnvIds(m) : new Set<string>();
+  return m.envs.filter((e) => !hidden.has(e.id) && !empty.has(e.id));
 }
 
 /** Selection → installs, per environment in matrix column order, apps in row order. Cells without an action are skipped. */

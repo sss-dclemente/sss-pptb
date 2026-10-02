@@ -210,6 +210,23 @@ test("failedKeys ticks every failed install; a visibility filter narrows it", ()
   assert.deepEqual(plan.map((p) => `${p.env.id}:${p.uniqueName}:${p.action}`), ["dev:fs:retry"]);
 });
 
+test("emptyEnvIds / visibleEnvs: nothing installed (available only) is empty, unreadable never; ✕ and hideEmpty combine; select-all skips hidden columns", () => {
+  const rs = [
+    ...results(),
+    { env: env("fresh"), installed: [], available: [pkg("sales", "1.2", "None"), pkg("extra", "3.0", "None")], error: null, setupError: false },
+    { env: env("busy"), installed: [pkg("portal", "5.0", "Installing")], available: [], error: null, setupError: false },
+    { env: env("broken"), installed: [], available: [], error: "HTTP 500", setupError: false },
+  ];
+  const m = M.buildMatrix(rs, { showNotInstalled: true });
+  assert.deepEqual([...M.emptyEnvIds(m)], ["fresh"], "available cells do not count, in-progress does, errors never empty");
+  const ids = (list) => list.map((e) => e.id).join(",");
+  assert.equal(ids(M.visibleEnvs(m, new Set(), true)), "dev,prod,busy,broken");
+  assert.equal(ids(M.visibleEnvs(m, new Set(), false)), "dev,prod,fresh,busy,broken");
+  assert.equal(ids(M.visibleEnvs(m, new Set(["dev", "broken"]), true)), "prod,busy", "✕ hides any column, unreadable ones too");
+  assert.deepEqual(M.updateKeys(m, (_u, envId) => envId !== "dev"), [], "hidden column left out of Select all updates");
+  assert.deepEqual(M.failedKeys(m, (_u, envId) => envId === "dev"), [M.cellKey("dev", "fs")]);
+});
+
 // ---------- unused apps ----------
 
 const G = (n) => `00000000-0000-0000-0000-${String(n).padStart(12, "0")}`;

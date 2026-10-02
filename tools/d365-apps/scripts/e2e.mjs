@@ -2,6 +2,7 @@
 // Environments: Dev (Sandbox, the connection's), Prod (Production), Teams (no Dataverse: hidden).
 // Dev: sales 1.0 (catalog 1.2: update, Installed list paged), fs InstallFailed, custom 1.0 → 1.5 (customHandleUpgrade).
 // Prod: sales 1.2 (current), portal Installing, extra available only (install returns no operation id → state fallback).
+// Empty (nothing installed, extra available: still "empty"), Broken (Installed list fails: error column, never auto-hidden).
 // Run: npm run build && node scripts/e2e.mjs
 import { resolve } from "node:path";
 import { launchPage } from "../../_shared/e2e-loader.mjs";
@@ -16,6 +17,8 @@ const MOCK = `
     { id: 'env-dev', displayName: 'SSS Dev', type: 'Sandbox', state: 'Ready', dataverseId: 'org-dev', url: 'https://sss-dev.crm4.dynamics.com', geo: 'europe' },
     { id: 'env-prod', displayName: 'SSS Prod', type: 'Production', state: 'Ready', dataverseId: 'org-prod', url: 'https://sss.crm4.dynamics.com', geo: 'europe' },
     { id: 'env-teams', displayName: 'Teams Room', type: 'Teams', state: 'Ready', geo: 'europe' },
+    { id: 'env-empty', displayName: 'SSS Empty', type: 'Developer', state: 'Ready', dataverseId: 'org-empty', url: 'https://sss-empty.crm4.dynamics.com', geo: 'europe' },
+    { id: 'env-broken', displayName: 'SSS Broken', type: 'Sandbox', state: 'Ready', dataverseId: 'org-broken', url: 'https://sss-broken.crm4.dynamics.com', geo: 'europe' },
   ];
   const P = (uniqueName, version, state, extra = {}) => ({ uniqueName, localizedName: uniqueName.replace(/^msdyn_/, '').toUpperCase(), version, state, publisherName: 'Microsoft', ...extra });
   M.installed = {
@@ -25,6 +28,7 @@ const MOCK = `
   M.available = {
     'env-dev': [P('msdyn_sales', '1.2.0.0', 'None'), P('msdyn_custom', '1.5.0.0', 'None', { customHandleUpgrade: true }), P('msdyn_fs', '2.0.0.0', 'None')],
     'env-prod': [P('msdyn_sales', '1.2.0.0', 'None'), P('msdyn_extra', '7.0.0.0', 'None')],
+    'env-empty': [P('msdyn_extra', '7.0.0.0', 'None')],
   };
   const ops = {};
   const err = (msg) => { throw new Error('Power Platform request failed: ' + msg); };
@@ -68,6 +72,7 @@ const MOCK = `
         if ((m = path.match(/^environments[/]([^/]+)[/]applicationPackages[?]appInstallState=(Installed|NotInstalled)&api-version=2024-10-01/))) {
           const envId = decodeURIComponent(m[1]);
           if (envId === 'env-teams') err('mock: teams env has no Dataverse');
+          if (envId === 'env-broken') err('HTTP 500: Internal Server Error');
           const list = m[2] === 'Installed' ? (M.installed[envId] || []) : (M.available[envId] || []);
           if (M.pending && M.pending[envId] && m[2] === 'Installed') {
             const p = M.pending[envId];
@@ -170,7 +175,7 @@ assert((await page.$$eval("#grid tbody tr", (els) => els.length)) === 4, "paged 
 await page.click("#btn-envs");
 await page.waitForSelector(".envpick input[data-env]");
 const offered = await page.$$eval(".envpick input[data-env]", (els) => els.map((e) => e.dataset.env));
-assert(offered.length === 2 && !offered.includes("env-teams"), "picker hides environments without Dataverse: " + offered.join(","));
+assert(offered.length === 4 && !offered.includes("env-teams"), "picker hides environments without Dataverse: " + offered.join(","));
 await page.check('.envpick input[data-env="env-prod"]');
 await page.click("#dlg-ok");
 await page.waitForFunction(() => document.querySelectorAll("#grid th.col").length === 2);
@@ -295,6 +300,63 @@ const ucsv = await M(() => window.__mock.saved.at(-1));
 assert(ucsv.name.startsWith("d365-apps-unused-SSS_Dev-") && ucsv.content.includes("SSS Dev,TEAMSAPP,msdyn_teamsapp,3.1.0.0,Probably unused"), "report CSV: " + ucsv.content.split("\r\n")[1]);
 await page.click("#btn-unused-close");
 assert(await page.$eval("#unused", (e) => e.hidden), "Close hides the report");
+
+// ---- environment columns: Hide empty environments (default on), ✕ per column, Show all ----
+const colIds = () => page.$$eval("#grid th.col", (els) => els.map((e) => e.dataset.env).join(","));
+const calls = () => M(() => window.__mock.gets.length + window.__mock.posts.length);
+assert(await page.$eval("#hide-empty", (e) => e.checked), "Hide empty environments on by default");
+await page.click("#btn-envs");
+await page.waitForSelector(".envpick input[data-env]");
+await page.check('.envpick input[data-env="env-empty"]');
+await page.check('.envpick input[data-env="env-broken"]');
+await page.click("#dlg-ok");
+await page.waitForSelector('#grid th.col[data-env="env-broken"]');
+assert(await page.$eval("#show-available", (e) => e.checked), "(Show not installed is on: Empty has an available-only cell)");
+assert((await colIds()) === "env-broken,env-dev,env-prod", "empty environment hidden, unreadable one kept: " + (await colIds()));
+assert((await txt('#grid th.col[data-env="env-broken"]')).includes("500"), "unreadable environment shows its error header");
+assert((await txt("#counts")).includes("× 3 of 4 environments") && (await txt("#env-hidden")).startsWith("1 environment hidden"), "counts reflect shown columns: " + (await txt("#summary")));
+// a selection in a column that gets hidden: kept, counted as hidden, flagged in the plan
+await page.check(`${cell("env-dev", "msdyn_fs")} input`);
+let before = await calls();
+await page.click('#grid th.col[data-env="env-dev"] button[aria-label="Hide SSS Dev"]');
+assert((await colIds()) === "env-broken,env-prod" && (await calls()) === before, "✕ hides the column locally, no API call");
+assert((await txt("#counts")).includes("× 2 of 4 environments") && (await txt("#env-hidden")).startsWith("2 environments hidden"), "2 hidden: " + (await txt("#summary")));
+assert((await txt("#sel-count")) === "1 selected (1 hidden by filter)", "selection in a hidden column counted as hidden: " + (await txt("#sel-count")));
+await page.click("#btn-select-failed");
+assert((await txt("#sel-count")) === "1 selected (1 hidden by filter)", "Select all failed leaves out hidden columns");
+await page.click("#btn-preview");
+await page.waitForSelector("#plan");
+assert((await txt("#plan-hidden")).includes("1 install is in environment columns hidden from the matrix: SSS Dev") && (await txt("#plan")).includes("hidden column"), "plan flags installs in hidden columns: " + (await txt("#plan")));
+await page.click("#dlg-cancel");
+await page.waitForFunction(() => !document.querySelector("#dlg").open);
+// persisted across reload
+await page.reload();
+await page.waitForSelector('#grid th.col[data-env="env-broken"]');
+assert((await colIds()) === "env-broken,env-prod" && (await page.$eval("#hide-empty", (e) => e.checked)), "hidden columns and Hide empty persisted across reload: " + (await colIds()));
+assert(await M(() => JSON.parse(localStorage.getItem("sss-view:d365-apps")).hiddenEnvs.join(",") === "env-dev"), "hiddenEnvs saved in the view state");
+// every column hidden → empty state with Show all
+await page.click('button[aria-label="Hide SSS Prod"]');
+await page.click('button[aria-label="Hide SSS Broken"]');
+await page.waitForSelector("#matrix .empty-state");
+assert((await txt("#matrix .empty-state")).includes("All environments hidden"), "all columns hidden: empty state");
+before = await calls();
+await page.click("#matrix .empty-state button");
+await page.waitForSelector('#grid th.col[data-env="env-empty"]');
+assert((await colIds()) === "env-broken,env-dev,env-empty,env-prod" && (await calls()) === before, "Show all brings every column back without an API call");
+assert(!(await page.$eval("#hide-empty", (e) => e.checked)) && !(await page.$("#env-hidden")) && (await txt("#counts")).includes("× 4 environments"), "Show all unticks Hide empty environments; no hidden caption");
+await page.reload();
+await page.waitForSelector('#grid th.col[data-env="env-empty"]');
+assert((await colIds()) === "env-broken,env-dev,env-empty,env-prod", "Show all persisted across reload");
+await page.check("#hide-empty");
+await page.click('button[aria-label="Hide SSS Prod"]');
+await page.click("#btn-show-envs");
+assert((await colIds()) === "env-broken,env-dev,env-empty,env-prod", "summary Show all un-hides ✕ and empty columns");
+await page.check("#hide-empty");
+assert((await colIds()) === "env-broken,env-dev,env-prod", "Hide empty environments ticked again hides Empty only");
+// Clear filters leaves Hide empty environments alone (view preference, not a filter)
+await page.fill("#filter-text", "nothing-like-this");
+await page.click("#matrix .empty-state button");
+assert(await page.$eval("#hide-empty", (e) => e.checked), "Clear filters keeps Hide empty environments");
 
 // ---- debug log (shared check) ----
 await checkDebugLog(page, assert, {
