@@ -1,6 +1,6 @@
 # D365-APPS-PLAN — SSS D365 Apps Matrix
 
-Status: BUILT as 0.1.0 (`tools/d365-apps`), before the §5 probe ran. Every unverified shape below is parsed defensively and has a fallback. Run the probe with Debug log on and adjust `src/apps/api.ts` if a shape differs.
+Status: BUILT as 0.1.0 (`tools/d365-apps`), published to npm 2026-10-02 before the §5 probe ran; fixes go in 0.1.1. Every unverified shape below is parsed defensively and has a fallback. Run the probe with Debug log on and adjust `src/apps/api.ts` if a shape differs.
 
 One-liner: the Power Platform admin center's **Environment → Resources → Dynamics 365 apps** page, for many environments at once. Rows are apps, columns are environments, and each cell shows the installed version, an available update, or a failed install. Tick cells, preview, run. Installs are queued one at a time per environment, environments run in parallel, and status is polled live. No PPAC clicking.
 
