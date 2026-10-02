@@ -2,7 +2,7 @@ import { mountDebug } from "../../_shared/debug-ui";
 import { $, append, badge, emptyState, h, showDialog, type Child } from "../../_shared/dom";
 import { errText, isSetupError, listEnvironments, listPackages, type PpLike } from "./apps/api";
 import { matrixCsv, pacScript, resultsCsv } from "./apps/export";
-import { buildMatrix, cellKey, counts, isProduction, planInstalls, updateKeys } from "./apps/matrix";
+import { buildMatrix, cellKey, counts, failedKeys, isProduction, planInstalls, updateKeys } from "./apps/matrix";
 import { runInstalls, toRunItems } from "./apps/run";
 import type { Cell, EnvPackages, Environment, Matrix, PlannedInstall, RunItem } from "./apps/types";
 import { dataverse, getConnections, initTheme, inToolbox, notify, onConnectionChange, powerplatform, saveText, type LiveConnection } from "./host";
@@ -268,6 +268,7 @@ function render(): void {
   $<HTMLButtonElement>("#btn-envs").disabled = running || !envs.length;
   $<HTMLButtonElement>("#btn-export-csv").disabled = !matrix?.rows.length;
   $<HTMLButtonElement>("#btn-select-updates").disabled = running || !matrix;
+  $<HTMLButtonElement>("#btn-select-failed").disabled = running || !matrix || counts(matrix).failed === 0;
   if (!matrix) {
     wrap.replaceChildren(emptyState(envs.length ? "No environments loaded" : "Nothing loaded yet", envs.length ? "Pick environments (Environments…)." : "Connect in ToolBox with the Power Platform API enabled."));
     renderSelection();
@@ -418,6 +419,13 @@ function wire(): void {
   $("#filter-text").addEventListener("input", render);
   $("#only-updates").addEventListener("change", render);
   $("#show-available").addEventListener("change", () => matrix && rebuild());
+  $("#btn-select-failed").addEventListener("click", () => {
+    if (!matrix) return;
+    const q = $<HTMLInputElement>("#filter-text").value.toLowerCase();
+    const shown = new Set(matrix.rows.filter((r) => !q || `${r.name} ${r.uniqueName} ${r.publisher ?? ""}`.toLowerCase().includes(q)).map((r) => r.uniqueName));
+    for (const k of failedKeys(matrix, (u) => shown.has(u))) selected.add(k);
+    render();
+  });
   $("#btn-select-updates").addEventListener("click", () => {
     if (!matrix) return;
     for (const k of updateKeys(matrix)) selected.add(k);

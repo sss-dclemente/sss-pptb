@@ -69,6 +69,13 @@ export function updateKeys(m: Matrix): string[] {
   return out;
 }
 
+/** Cells "Select all failed" ticks: every failed install, for a retry. Rows the filter hides are included only when `visible` allows them. */
+export function failedKeys(m: Matrix, visible: (uniqueName: string) => boolean = () => true): string[] {
+  const out: string[] = [];
+  for (const r of m.rows) if (visible(r.uniqueName)) for (const env of m.envs) if (r.cells.get(env.id)?.kind === "failed") out.push(cellKey(env.id, r.uniqueName));
+  return out;
+}
+
 /** Selection → installs, per environment in matrix column order, apps in row order. Cells without an action are skipped. */
 export function planInstalls(m: Matrix, selected: Set<string>): PlannedInstall[] {
   const out: PlannedInstall[] = [];

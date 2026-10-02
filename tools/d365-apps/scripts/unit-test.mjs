@@ -200,3 +200,11 @@ test("runInstalls: an environment that refuses two installs in a row is not aske
   assert.match(items[2].message, /refused the previous 2 installs/);
   assert.match(items[0].message, /Usual causes/);
 });
+
+test("failedKeys ticks every failed install; a visibility filter narrows it", () => {
+  const m = M.buildMatrix(results(), { showNotInstalled: false });
+  assert.deepEqual(M.failedKeys(m), [M.cellKey("dev", "fs")]);
+  assert.deepEqual(M.failedKeys(m, (u) => u !== "fs"), []);
+  const plan = M.planInstalls(m, new Set(M.failedKeys(m)));
+  assert.deepEqual(plan.map((p) => `${p.env.id}:${p.uniqueName}:${p.action}`), ["dev:fs:retry"]);
+});

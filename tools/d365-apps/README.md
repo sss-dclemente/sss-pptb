@@ -13,6 +13,7 @@ Built by [Simple Smooth Safe](https://simplesmoothsafe.com).
   - `Installing` and similar: an operation is in progress; the cell can't be selected.
   - With **Show not installed**: apps available but installed in no picked environment.
   - Filter by name; **Only updates / failed** hides the rest.
+- **Select all failed**: ticks every failed install for a retry (rows hidden by the name filter are left out).
 - **Select all updates**: ticks every update, except packages flagged **custom upgrade**. Those handle their own upgrade; tick them by hand after reading their release notes.
 - **Preview → run**: the preview lists the installs per environment and warns about Production environments. The run does one install at a time per environment, with up to 3 environments in parallel. Each install is followed until it ends (an install can take an hour) and the result shows in the matrix and in the run table. **Stop waiting** stops following; installs already started keep running in the environment. Afterwards the environments are read again.
 - **Exports**:
