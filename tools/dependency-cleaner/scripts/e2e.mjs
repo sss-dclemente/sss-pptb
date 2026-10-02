@@ -154,6 +154,18 @@ const MOCK = `
   const M = window.__mock = { envs, members, forms, views, queries: [], executes: [], updates: [], log: [], saved: [], notes: [], rrc: 0, managedFlip: false, nextText: null, nextBinary: null, FORM_A_XML, VIEW_FETCH, VIEW_LAYOUT, ids: { FORM_A, FORM_B, VIEW, FORM_FS, CHART, A, E, SOL },
     listeners: [], extraReq: {}, attrFail: false, formsFail: false, throttleOnce: false, throttled: 0, writeDelay: 0, inflight: 0, maxInflight: 0, byIdsCalls: 0 };
   M.emit = (event) => { for (const cb of M.listeners) cb(null, { event }); };
+  // D2: many columns on account, msdyn_colNN owned by Field Service (they leave a shell), sss_colN yours (kept)
+  M.addMany = (msdyn, own) => {
+    const add = (name, i) => {
+      const id = g(7000 + i);
+      attrs.account.push({ LogicalName: name, MetadataId: id, RequiredLevel: { Value: 'None' }, IsCustomAttribute: true });
+      attrByName[name] = id;
+      catalog[id] = { type: 2, table: 'account', owners: name.startsWith('msdyn_') ? [SOL.fs] : [] };
+      members.push(row(id, 2, null, accRow.solutioncomponentid));
+    };
+    for (let i = 0; i < msdyn; i++) add('msdyn_col' + String(i).padStart(2, '0'), i);
+    for (let i = 0; i < own; i++) add('sss_col' + i, 500 + i);
+  };
   M.addExtra = () => { for (const [id, c] of Object.entries(extra)) { catalog[id] = c; members.push(row(id, c.type, null, accRow.solutioncomponentid)); } };
 
   const page = (q, target, rows) => {
@@ -369,6 +381,26 @@ const diff = await page.$eval('pre[aria-label="formxml diff Account"]', (e) => (
 assert(diff.del.includes('datafieldname="msdyn_workorderid"') && !diff.del.includes('datafieldname="name"'), "form diff shows the msdyn control removed, name kept");
 assert(await page.$('pre[aria-label="fetchxml diff Accounts with work orders"] .del'), "view fetchxml diff shown");
 
+// ---- D1: diff blocks are closed folds with line counts; expand / collapse all; open state survives a re-render ----
+const folds = () => page.$$eval("#ops details.diff-fold", (els) => els.map((d) => ({ open: d.open, summary: d.querySelector("summary").textContent, chev: d.querySelector("summary").classList.contains("chev"), del: d.querySelectorAll("pre .del").length, add: d.querySelectorAll("pre .add").length, label: d.querySelector("pre").getAttribute("aria-label") })));
+let fl = await folds();
+assert(fl.length === 3 && fl.every((f) => !f.open && f.chev), "D1: 3 diff folds (form + view fetch/layout), all closed by default: " + JSON.stringify(fl.map((f) => f.open)));
+const formFold = fl.find((f) => f.label === "formxml diff Account");
+assert(formFold && formFold.summary === `Show form XML diff (−${formFold.del} / +${formFold.add} lines)` && formFold.del > 0, "D1: summary counts the removed / added lines: " + formFold?.summary);
+assert(fl.some((f) => /^Show view FetchXML diff \(−[1-9]\d* \/ \+\d+ lines\)$/.test(f.summary)) && fl.some((f) => f.summary.startsWith("Show view LayoutXML diff")), "D1: view folds name FetchXML / LayoutXML: " + fl.map((f) => f.summary).join(" | "));
+assert(!(await page.isVisible('pre[aria-label="formxml diff Account"]')), "D1: closed fold hides the diff");
+await page.click("#ops-head .fold-all >> text=Expand all");
+assert((await folds()).every((f) => f.open), "D1: Expand all opens every diff");
+await page.click("#ops-head .fold-all >> text=Collapse all");
+assert((await folds()).every((f) => !f.open), "D1: Collapse all closes every diff");
+await page.click('#ops details.diff-fold:has(pre[aria-label="formxml diff Account"]) > summary');
+assert(await page.isVisible('pre[aria-label="formxml diff Account"]'), "D1: clicking the summary opens the diff");
+// a keep tick re-renders the operations list: the opened fold stays open, the others stay closed
+await page.check('input[aria-label="Keep =Quick Create"]');
+await page.uncheck('input[aria-label="Keep =Quick Create"]');
+fl = await folds();
+assert(fl.find((f) => f.label === "formxml diff Account").open && fl.filter((f) => f.open).length === 1, "D1: opened fold kept open after the ops re-render");
+
 // ---- backup gate ----
 assert(await page.isDisabled("#btn-confirm"), "confirm disabled before backup");
 await page.click("#btn-backup");
@@ -411,6 +443,10 @@ await page.evaluate((t) => { window.__mock.nextText = t; }, backup.content);
 await page.click("#btn-load-backup");
 await page.waitForSelector("#restore-ops li");
 const rops = await page.$$eval("#restore-ops > li .mono", (els) => els.map((e) => e.textContent));
+const rfolds = await page.$$eval("#restore-ops details.diff-fold", (els) => els.map((d) => d.open));
+assert(rfolds.length === 3 && rfolds.every((o) => !o) && (await page.$("#restore-ops-head .fold-all")), "D1: restore diffs closed by default, with Expand all / Collapse all");
+await page.click("#restore-ops-head .fold-all >> text=Expand all");
+assert((await page.$$eval("#restore-ops details.diff-fold", (els) => els.every((d) => d.open))) && (await page.$eval("#restore-ops pre.diff", (e) => e.querySelectorAll(".del, .add").length > 0)), "D1: restore Expand all opens the diffs");
 assert(rops[0] === "RemoveSolutionComponent Table account" && rops[1] === "AddSolutionComponent Table account" && rops.some((t) => t.startsWith("Update form Account")) && rops.some((t) => t.startsWith("Update view")) && rops.at(-1) === "PublishXml account", "restore plan: table back to all assets, XML back, publish: " + rops.join(" | "));
 await page.click("#btn-restore-apply");
 await page.waitForSelector("dialog[open]");
@@ -531,6 +567,63 @@ assert(keep.mainForm, "bug 1: shell keeps the customized System main form (rows 
 assert(!keep.fsForm && !keep.msdynCol && keep.ownCol, "B1: form owned by filtered FieldService and msdyn column leave; own-prefix column kept: " + JSON.stringify(keep));
 const b1ops = await opLabels();
 assert(b1ops.some((t) => t.startsWith("AddSolutionComponent Chart Accounts by Industry")) && b1ops.some((t) => t.startsWith("AddSolutionComponent Form =Quick Create")) && !b1ops.some((t) => t.includes("Work Order Summary")), "B1: re-add ops for kept chart and quick create form, none for the Field Service form");
+
+assert(!(await page.isChecked(".card.shell-card .shell-only")) && (await page.textContent(".card.shell-card .shell-count")) === "8 subcomponents shown", "D2: a short leaving list (8) opens with every row, Only leaving off");
+
+// ---- D2: shell leaving list: search, type filter, Only leaving, Keep / Drop all shown ----
+await fresh();
+await M(() => window.__mock.addMany(30, 6));
+await diagnoseNow();
+await selD(`2:${ids.A.woid}`, "shell");
+await previewNow();
+const SH = ".card.shell-card";
+const shown = () => page.$$eval(`${SH} .leaving label:not([hidden])`, (els) => els.map((e) => ({ name: e.querySelector(".mono").textContent, keep: e.querySelector("input").checked })));
+const shCount = () => page.textContent(`${SH} .shell-count`);
+const leaveBadge = () => page.textContent(`${SH} .card-head .badge`);
+const keepState = () => page.$$eval(`${SH} .leaving label`, (els) => Object.fromEntries(els.map((e) => [e.querySelector(".mono").textContent, e.querySelector("input").checked])));
+let rowsNow = await shown();
+assert(await page.isChecked(`${SH} .shell-only`), "D2: a long leaving list (42 > 30) opens on Only leaving");
+assert((await shCount()) === "32 of 42 subcomponents shown" && rowsNow.length === 32 && rowsNow.every((r) => !r.keep), "D2: Only leaving shows the 32 unticked rows: " + (await shCount()));
+assert((await leaveBadge()) === "32 leave", "D2: header badge counts the rows that leave");
+const typeOpts = await page.$$eval(`${SH} .shell-type option`, (els) => els.map((e) => e.textContent));
+assert(JSON.stringify(typeOpts) === JSON.stringify(["All types", "Column (39)", "View (1)", "Form (2)"]), "D2: type filter options derived from the rows: " + typeOpts.join(", "));
+await page.uncheck(`${SH} .shell-only`);
+assert((await shCount()) === "42 subcomponents shown", "D2: Only leaving off shows all 42");
+await page.selectOption(`${SH} .shell-type`, { label: "Form (2)" });
+rowsNow = await shown();
+assert((await shCount()) === "2 of 42 subcomponents shown" && rowsNow.map((r) => r.name).sort().join() === "=Quick Create,Account", "D2: type filter narrows to forms: " + rowsNow.map((r) => r.name).join());
+await page.selectOption(`${SH} .shell-type`, "");
+await page.fill(`${SH} .shell-search`, "sss_");
+rowsNow = await shown();
+assert((await shCount()) === "7 of 42 subcomponents shown" && rowsNow.every((r) => r.name.startsWith("sss_") && r.keep), "D2: search narrows to the 7 sss_ columns, all kept: " + (await shCount()));
+const beforeDrop = await keepState();
+await page.click(`${SH} button:text-is("Drop all shown")`);
+const afterDrop = await keepState();
+const changedRows = Object.keys(afterDrop).filter((k) => afterDrop[k] !== beforeDrop[k]);
+assert(changedRows.length === 7 && changedRows.every((k) => k.startsWith("sss_")) && afterDrop["Account"] && afterDrop["=Quick Create"] && afterDrop["Accounts with work orders"], "D2: Drop all shown unticks only the 7 shown rows; hidden forms / view stay ticked: " + changedRows.join());
+assert((await leaveBadge()) === "39 leave", "D2: badge follows Drop all shown: " + (await leaveBadge()));
+let d2ops = await opLabels();
+assert(!d2ops.some((t) => t.includes("sss_")) && d2ops.some((t) => t.startsWith("AddSolutionComponent Form Account")), "D2: dropped columns get no re-add; hidden kept form still re-added");
+await page.fill(`${SH} .shell-search`, "msdyn_col0");
+assert((await shCount()) === "10 of 42 subcomponents shown", "D2: search msdyn_col0 shows 10");
+await page.click(`${SH} button:text-is("Keep all shown")`);
+const afterKeep = await keepState();
+const kept = Object.keys(afterKeep).filter((k) => afterKeep[k] !== afterDrop[k]);
+assert(kept.length === 10 && kept.every((k) => k.startsWith("msdyn_col0")) && !afterKeep["msdyn_col10"] && !afterKeep["sss_col0"], "D2: Keep all shown ticks only the 10 shown rows: " + kept.join());
+d2ops = await opLabels();
+assert(d2ops.some((t) => t.startsWith("AddSolutionComponent Column msdyn_col05")) && !d2ops.some((t) => t.includes("msdyn_col15")), "D2: kept rows are re-added, hidden ones are not");
+// a tick does not re-filter: under Only leaving, a row just ticked stays in view
+await page.fill(`${SH} .shell-search`, "");
+await page.check(`${SH} .shell-only`);
+assert((await shCount()) === "29 of 42 subcomponents shown", "D2: Only leaving after the bulk changes: " + (await shCount()));
+await page.check('input[aria-label="Keep msdyn_col15"]');
+assert((await page.isVisible('input[aria-label="Keep msdyn_col15"]')) && (await shCount()) === "29 of 42 subcomponents shown", "D2: ticking a row under Only leaving keeps it shown until a filter changes");
+await page.fill(`${SH} .shell-search`, "zzz");
+assert((await page.isVisible(`${SH} .empty-state`)) && (await page.isHidden(`${SH} .leaving`)) && (await page.isDisabled(`${SH} button:text-is("Drop all shown")`)), "D2: no match → filtered empty state, bulk buttons disabled");
+await page.click(`${SH} .empty-state button`);
+assert((await shCount()) === "42 subcomponents shown" && (await page.inputValue(`${SH} .shell-search`)) === "" && !(await page.isChecked(`${SH} .shell-only`)) && (await page.isHidden(`${SH} .empty-state`)), "D2: Clear filters resets search, type and Only leaving");
+assert((await leaveBadge()) === "28 leave", "D2: filters never changed a tick: " + (await leaveBadge()));
+await page.screenshot({ path: resolve(OUT, "05-shell-filters.png"), fullPage: true });
 
 // ---- B2: shell on a column + remove on its table conflict; identical ops are deduped ----
 await fresh();

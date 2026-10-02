@@ -42,6 +42,11 @@
 .ops { display: flex; flex-direction: column; gap: var(--s-2); padding-left: var(--s-5); }
 .ops li { font-size: var(--fs-caption); }
 .ops .why { color: var(--fg-muted); }
+.ops-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-2); }
+.ops-head .fold-all { margin-left: auto; }
+details.diff-fold { margin-top: var(--s-1); }
+details.diff-fold > summary { cursor: pointer; width: fit-content; font-size: var(--fs-caption); color: var(--fg-muted); padding: 2px 0; }
+details.diff-fold > summary:hover { color: var(--fg-primary); }
 pre.diff { font-family: var(--font-mono); font-size: var(--fs-micro); background: var(--bg-subtle); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); padding: var(--s-2); overflow: auto; max-height: 280px; white-space: pre; margin-top: var(--s-1); }
 pre.diff .del { color: var(--status-bad-fg); background: var(--status-bad-bg); display: block; }
 pre.diff .add { color: var(--status-ok-fg); background: var(--status-ok-bg); display: block; }
@@ -50,6 +55,16 @@ pre.diff .ctx { display: block; }
 .leaving { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: var(--s-1) var(--s-3); font-size: var(--fs-caption); }
 .leaving label { display: flex; gap: var(--s-2); align-items: center; }
 .leaving input { accent-color: var(--accent); }
+.leaving-tools { display: flex; flex-wrap: wrap; gap: var(--s-2) var(--s-3); align-items: center; margin: var(--s-2) 0; }
+.leaving-tools label { display: inline-flex; gap: var(--s-1); align-items: center; font-size: var(--fs-caption); color: var(--fg-muted); }
+.leaving-tools input[type="text"] {
+  font: inherit; font-size: var(--fs-caption); color: var(--fg-primary); min-width: 180px; flex: 0 1 240px;
+  background: var(--bg-card); border: 1px solid var(--border-color); border-radius: var(--radius-sm); padding: var(--s-1) var(--s-2);
+}
+.leaving-tools input[type="text"]:focus-visible { outline: none; box-shadow: var(--shadow-teal); }
+.leaving-tools input[type="checkbox"] { accent-color: var(--accent); }
+.leaving-tools .spacer { flex: 1; }
+.shell-card .empty-state { padding: var(--s-4) var(--s-3); }
 .danger-banner { border-left: 3px solid var(--status-bad-fg); background: var(--status-bad-bg); color: var(--status-bad-fg); padding: var(--s-2) var(--s-3); border-radius: var(--radius-sm); font-weight: var(--fw-bold); }
 /* upgrade blockers */
 .toolbar .spacer { flex: 1; }

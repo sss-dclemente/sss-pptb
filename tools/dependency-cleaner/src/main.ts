@@ -1,5 +1,5 @@
 import { mountDebug } from "../../_shared/debug-ui";
-import { $, append, badge, emptyState, filteredEmpty, h, showDialog, wireTabs, type Child } from "../../_shared/dom";
+import { $, append, badge, emptyState, filteredEmpty, foldAllButtons, h, keepFold, showDialog, shownOf, wireTabs, type Child } from "../../_shared/dom";
 import { persistControls } from "../../_shared/view-state";
 import { backupFileName, buildBackup, parseBackup, planRestore, type Backup, type RestorePlan } from "./deps/backup";
 import { parseFilter } from "./deps/classify";
@@ -8,7 +8,7 @@ import { findingsCsv, findingsJson, safeFileName } from "./deps/export";
 import { fetchEnvironmentId, fetchSolutionManaged, fetchSolutions, MetaCache, type DataverseLike, type DependencyRow } from "./deps/fetch";
 import { readSolutionZip, refName, type OfflineResult } from "./deps/offline";
 import { CT, DEFAULT_FILTER, typeName, type Diagnosis, type Finding, type FixKind, type SolutionInfo } from "./deps/types";
-import { buildOps, executeOps, opLabel, prepare, xmlDiff, type Op, type OpResult, type Prepared } from "./deps/write";
+import { buildOps, executeOps, opLabel, prepare, xmlDiff, type Op, type OpResult, type Prepared, type ShellPlan } from "./deps/write";
 import { initUpgrade, upgradeOnConnections } from "./upgrade-ui";
 import { dataverse, getConnections, initTheme, inToolbox, notify, onConnectionChange, openText, pickBinary, saveText, type LiveConnection } from "./host";
 
@@ -38,6 +38,15 @@ let running = false;
 let applying = false;
 /** url: the primary connection the restore plan was compared against */
 let restore: { backup: Backup; plan: RestorePlan | null; url: string | null } | null = null;
+/** per shell root id: the leaving list's search, type filter and "Only leaving" toggle, kept across re-renders of one preview */
+interface ShellView {
+  q: string;
+  type: string;
+  only: boolean;
+}
+const shellViews = new Map<string, ShellView>();
+/** a leaving list longer than this opens on "Only leaving" */
+const ONLY_LEAVING_OVER = 30;
 
 const api = (): DataverseLike | undefined => dataverse() as unknown as DataverseLike | undefined;
 const primary = (): LiveConnection | undefined => conns.find((c) => c.target === "primary");
@@ -59,6 +68,7 @@ const clearPlan = (): void => {
   backupDone = false;
   previewError = null;
   planConn = null;
+  shellViews.clear();
 };
 const filter = (): string[] => {
   const f = parseFilter($<HTMLInputElement>("#filter").value);
@@ -277,13 +287,18 @@ function renderDiagnosis(): void {
 }
 
 // ---------- fix ----------
-function diffBlock(before: string, after: string, label: string): HTMLElement {
+/** A closed-by-default fold over one XML diff; `key` keeps it open across re-renders once the user opens it. */
+function diffBlock(before: string, after: string, label: string, what: string, key: string): HTMLElement {
+  const lines = xmlDiff(before, after);
   const pre = h("pre", { class: "diff", "aria-label": label });
-  for (const l of xmlDiff(before, after)) pre.append(h("span", { class: l.t === "-" ? "del" : l.t === "+" ? "add" : l.t === "…" ? "gap" : "ctx" }, l.t === "…" ? "…" : `${l.t} ${l.s}`));
-  return pre;
+  for (const l of lines) pre.append(h("span", { class: l.t === "-" ? "del" : l.t === "+" ? "add" : l.t === "…" ? "gap" : "ctx" }, l.t === "…" ? "…" : `${l.t} ${l.s}`));
+  const del = lines.filter((l) => l.t === "-").length;
+  const add = lines.filter((l) => l.t === "+").length;
+  return keepFold(h("details", { class: "diff-fold" }, h("summary", { class: "chev" }, `Show ${what} diff (−${del} / +${add} lines)`), pre), key);
 }
 
-function opItem(op: Op): HTMLElement {
+/** `scope` ("fix" / "restore") keeps the two tabs' diff folds apart when they show the same form or view. */
+function opItem(op: Op, scope: string): HTMLElement {
   const li = h("li", { class: "op", "data-kind": op.kind }, h("span", { class: "mono" }, opLabel(op)));
   if (op.kind === "remove" || op.kind === "add") li.append(" ", h("span", { class: "why" }, op.reason));
   if (op.kind === "update-form") {
@@ -293,7 +308,7 @@ function opItem(op: Op): HTMLElement {
       e.removed.length ? h("div", { class: "caption" }, `Removes: ${e.removed.join(", ")}`) : null,
       e.kept.length ? h("div", { class: "caption" }, `Kept: ${e.kept.map((k) => `${k.name} (${k.reason})`).join(", ")}`) : null,
       e.warnings.length ? h("div", { class: "warnings" }, e.warnings.join(" ")) : null,
-      diffBlock(e.form.formxml, e.after, `formxml diff ${e.form.name}`),
+      diffBlock(e.form.formxml, e.after, `formxml diff ${e.form.name}`, "form XML", `${scope}:diff:form:${e.form.id}`),
     );
   }
   if (op.kind === "update-view") {
@@ -302,11 +317,17 @@ function opItem(op: Op): HTMLElement {
       li,
       e.removed.length ? h("div", { class: "caption" }, `Removes: ${e.removed.join(", ")}`) : null,
       e.warnings.length ? h("div", { class: "warnings" }, e.warnings.join(" ")) : null,
-      diffBlock(e.view.fetchxml, e.after.fetchxml, `fetchxml diff ${e.view.name}`),
-      diffBlock(e.view.layoutxml, e.after.layoutxml, `layoutxml diff ${e.view.name}`),
+      diffBlock(e.view.fetchxml, e.after.fetchxml, `fetchxml diff ${e.view.name}`, "view FetchXML", `${scope}:diff:fetchxml:${e.view.id}`),
+      diffBlock(e.view.layoutxml, e.after.layoutxml, `layoutxml diff ${e.view.name}`, "view LayoutXML", `${scope}:diff:layoutxml:${e.view.id}`),
     );
   }
   return li;
+}
+
+/** Ops list heading with Expand all / Collapse all for its diff folds when it has at least `minDiffs` of them. */
+function opsHead(id: string, title: string, list: HTMLElement, minDiffs: number): HTMLElement {
+  const n = list.querySelectorAll("details.diff-fold").length;
+  return h("div", { class: "ops-head", id }, h("h3", {}, title), n >= minDiffs ? foldAllButtons(list, "details.diff-fold") : null);
 }
 
 function managedRefused(): boolean {
@@ -339,44 +360,128 @@ function renderFix(): void {
   if (isProd(primary())) banners.append(h("div", { class: "danger-banner" }, `This connection (${primary()!.conn.name}) looks like Production. Dependencies are fixed in dev.`));
   $("#prod-ack-wrap").hidden = !isProd(primary());
 
-  for (const sh of prepared.shells) {
-    const boxes = sh.leaving.map((l) => {
-      const cb = h("input", { type: "checkbox", "aria-label": `Keep ${l.component.name}` }) as HTMLInputElement;
-      cb.checked = l.keep;
-      cb.addEventListener("change", () => {
-        l.keep = cb.checked;
-        ops = buildOps(prepared!);
-        renderOps();
-      });
-      return h("label", { title: l.why }, cb, badge(typeName(l.component.type), "neutral"), h("span", { class: "mono" }, l.component.name ?? l.component.objectId), h("span", { class: "caption" }, l.why));
-    });
-    body.append(
-      h(
-        "div",
-        { class: "card" },
-        h("div", { class: "card-head" }, h("h3", {}, `Shell conversion: ${sh.root.name}`), badge(`${sh.leaving.filter((l) => !l.keep).length} leave`, "warn")),
-        h(
-          "div",
-          { class: "card-body" },
-          h("p", { class: "caption" }, "The table is removed and added back without subcomponents. Every subcomponent below leaves the solution unless ticked to re-add. Other developers may rely on them."),
-          sh.leaving.length ? h("div", { class: "leaving" }, ...boxes) : h("p", { class: "caption" }, "No subcomponent rows."),
-        ),
-      ),
-    );
-  }
+  for (const sh of prepared.shells) body.append(shellCard(sh));
   if (prepared.skipped.length)
     body.append(h("div", { class: "warnings" }, "Not changed: ", prepared.skipped.map((x) => `${x.name} (${x.reason})`).join("; ")));
   body.append(h("div", { id: "ops-wrap" }));
   renderOps();
 }
 
+/**
+ * One shell conversion: its subcomponents, ticked = re-added (kept), unticked = leaves the solution.
+ * Search, type and "Only leaving" decide which rows show; they never change a hidden row's tick.
+ * Rows are re-filtered when a filter changes, not when a tick changes, so a row just ticked stays in view.
+ */
+function shellCard(sh: ShellPlan): HTMLElement {
+  const total = sh.leaving.length;
+  let v = shellViews.get(sh.root.id);
+  if (!v) shellViews.set(sh.root.id, (v = { q: "", type: "", only: total > ONLY_LEAVING_OVER }));
+  const view = v;
+  const leaveBadge = badge("", "warn");
+  const syncBadge = () => (leaveBadge.textContent = `${sh.leaving.filter((l) => !l.keep).length} leave`);
+  syncBadge();
+  const changed = () => {
+    syncBadge();
+    ops = buildOps(prepared!);
+    renderOps();
+  };
+  const rows = sh.leaving.map((l) => {
+    const cb = h("input", { type: "checkbox", "aria-label": `Keep ${l.component.name}` }) as HTMLInputElement;
+    cb.checked = l.keep;
+    cb.addEventListener("change", () => {
+      l.keep = cb.checked;
+      changed();
+    });
+    const name = l.component.name ?? l.component.objectId;
+    const el = h("label", { title: l.why, "data-type": String(l.component.type) }, cb, badge(typeName(l.component.type), "neutral"), h("span", { class: "mono" }, name), h("span", { class: "caption" }, l.why));
+    return { l, cb, el, name: `${name} ${l.component.objectId}`.toLowerCase() };
+  });
+  const head = h("div", { class: "card-head" }, h("h3", {}, `Shell conversion: ${sh.root.name}`), leaveBadge);
+  const intro = h("p", { class: "caption" }, "The table is removed and added back without subcomponents. Every subcomponent below leaves the solution unless ticked to re-add. Other developers may rely on them.");
+  if (!total) return h("div", { class: "card shell-card" }, head, h("div", { class: "card-body" }, intro, h("p", { class: "caption" }, "No subcomponent rows.")));
+
+  const search = h("input", { type: "text", class: "shell-search", placeholder: "Search name", "aria-label": `Search subcomponents of ${sh.root.name}` }) as HTMLInputElement;
+  search.value = view.q;
+  const types = [...new Set(sh.leaving.map((l) => l.component.type))].sort((a, b) => a - b);
+  const typeSel = h(
+    "select",
+    { class: "shell-type", "aria-label": `Subcomponent type of ${sh.root.name}` },
+    h("option", { value: "" }, "All types"),
+    ...types.map((t) => h("option", { value: String(t) }, `${typeName(t)} (${sh.leaving.filter((l) => l.component.type === t).length})`)),
+  ) as HTMLSelectElement;
+  typeSel.value = types.some((t) => String(t) === view.type) ? view.type : "";
+  const only = h("input", { type: "checkbox", class: "shell-only" }) as HTMLInputElement;
+  only.checked = view.only;
+  const caption = h("span", { class: "count-caption shell-count", "aria-live": "polite" });
+  const bulk = (label: string, keep: boolean, title: string) => {
+    const b = h("button", { class: "btn btn-ghost btn-sm", type: "button", title }, label);
+    b.addEventListener("click", () => {
+      let n = 0;
+      for (const r of rows)
+        if (!r.el.hidden && r.l.keep !== keep) {
+          r.l.keep = r.cb.checked = keep;
+          n++;
+        }
+      if (n) changed();
+    });
+    return b;
+  };
+  const keepAll = bulk("Keep all shown", true, "Tick every subcomponent shown: each is added back to the solution");
+  const dropAll = bulk("Drop all shown", false, "Untick every subcomponent shown: each leaves the solution");
+  const grid = h("div", { class: "leaving" }, ...rows.map((r) => r.el));
+  const empty = filteredEmpty("No subcomponents match", "The search, type or “Only leaving” hide every subcomponent of this table.", () => {
+    view.q = search.value = "";
+    view.type = typeSel.value = "";
+    view.only = only.checked = false;
+    apply();
+  });
+  const apply = () => {
+    const q = view.q.trim().toLowerCase();
+    let shown = 0;
+    for (const r of rows) {
+      const show = (!view.only || !r.l.keep) && (!view.type || String(r.l.component.type) === view.type) && (!q || r.name.includes(q));
+      r.el.hidden = !show;
+      if (show) shown++;
+    }
+    caption.textContent = `${shownOf(shown, total, "subcomponents")} shown`;
+    grid.hidden = !shown;
+    empty.hidden = !!shown;
+    keepAll.disabled = dropAll.disabled = !shown;
+  };
+  search.addEventListener("input", () => {
+    view.q = search.value;
+    apply();
+  });
+  typeSel.addEventListener("change", () => {
+    view.type = typeSel.value;
+    apply();
+  });
+  only.addEventListener("change", () => {
+    view.only = only.checked;
+    apply();
+  });
+  apply();
+  return h(
+    "div",
+    { class: "card shell-card", "data-root": sh.root.id },
+    head,
+    h(
+      "div",
+      { class: "card-body" },
+      intro,
+      h("div", { class: "leaving-tools" }, search, typeSel, h("label", { class: "check", title: "Show only the unticked subcomponents, the ones that leave the solution" }, only, " Only leaving"), caption, h("span", { class: "spacer" }), keepAll, dropAll),
+      grid,
+      empty,
+    ),
+  );
+}
+
 function renderOps(): void {
   const wrap = document.getElementById("ops-wrap");
   if (!wrap) return;
-  wrap.replaceChildren(
-    h("h3", {}, `${ops.length} operation${ops.length === 1 ? "" : "s"} on ${diagnosis?.solution.uniqueName ?? ""}`),
-    ops.length ? h("ol", { class: "ops", id: "ops" }, ...ops.map(opItem)) : emptyState("No operations", "The selected fixes change nothing."),
-  );
+  const title = `${ops.length} operation${ops.length === 1 ? "" : "s"} on ${diagnosis?.solution.uniqueName ?? ""}`;
+  const list = h("ol", { class: "ops", id: "ops" }, ...ops.map((op) => opItem(op, "fix")));
+  wrap.replaceChildren(opsHead("ops-head", title, list, 1), ops.length ? list : emptyState("No operations", "The selected fixes change nothing."));
   updateConfirm();
 }
 
@@ -535,7 +640,12 @@ function renderRestore(error?: string): void {
   if (!restore.plan) return;
   for (const n of restore.plan.notes) body.append(h("div", { class: "warnings" }, n));
   if (isProd(primary())) body.append(h("div", { class: "danger-banner" }, `This connection (${primary()!.conn.name}) looks like Production.`));
-  body.append(restore.plan.ops.length ? h("ol", { class: "ops", id: "restore-ops" }, ...restore.plan.ops.map(opItem)) : emptyState("Nothing to restore", "The environment already matches the backup."));
+  if (!restore.plan.ops.length) {
+    body.append(emptyState("Nothing to restore", "The environment already matches the backup."));
+    return;
+  }
+  const list = h("ol", { class: "ops", id: "restore-ops" }, ...restore.plan.ops.map((op) => opItem(op, "restore")));
+  body.append(opsHead("restore-ops-head", `${restore.plan.ops.length} operation${restore.plan.ops.length === 1 ? "" : "s"} to restore`, list, 2), list);
 }
 
 async function applyRestore(): Promise<void> {
