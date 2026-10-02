@@ -70,6 +70,13 @@ export function keepFold<T extends HTMLDetailsElement>(el: T, key: string, defau
     if (!foldMemory.has(key) && el.open === defaultOpen) return;
     foldMemory.set(key, el.open);
   });
+  // toggle fires asynchronously: a re-render right after the user's click would read the old state, so the click
+  // itself records the coming state (not for controls inside the summary, which don't fold the card)
+  el.querySelector(":scope > summary")?.addEventListener("click", (e) => {
+    const t = e.target as Element | null;
+    if (e.defaultPrevented || t?.closest("input, button, select, textarea, a, label")) return;
+    foldMemory.set(key, !el.open);
+  });
   return el;
 }
 
