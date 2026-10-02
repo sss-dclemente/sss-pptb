@@ -206,7 +206,15 @@ const solHFiles = (version, rules) => ({
 const solH1 = await zip(solHFiles("1.0.0.0", [[RULE_A, "sss_ribbonno"], [RULE_B, "sss_ribbonyes"]]));
 const solH2 = await zip(solHFiles("1.1.0.0", [[RULE_A, "sss_ribbonno"]]));
 
-const files = { "SolA_1_0_0_0.zip": solA1, "SolA_1_1_0_0_managed.zip": solA2, "SolB_2_0_0_0_managed.zip": solB, "SolC_1_0_0_0_managed.zip": solC, "SolD.zip": solD, "SolE.zip": solE, "SolF.zip": solF, "SolF_copy.zip": solF, "SolG.zip": solG, "SolH_1_0.zip": solH1, "SolH_1_1.zip": solH2 };
+// only a root component's behavior differs: with "hide root rows" on, compare must not claim "No differences"
+const solIFiles = (behavior) => ({
+  "solution.xml": solutionXml({ name: "SolI", version: "1.0.0.0", managed: 1, roots: [{ type: 1, schemaName: "sss_only", behavior }] }),
+  "customizations.xml": customizationsXml({ entities: entity("sss_only", "Only", [["sss_name", "nvarchar"]]) }),
+});
+const solI1 = await zip(solIFiles(0));
+const solI2 = await zip(solIFiles(2));
+
+const files = { "SolA_1_0_0_0.zip": solA1, "SolA_1_1_0_0_managed.zip": solA2, "SolB_2_0_0_0_managed.zip": solB, "SolC_1_0_0_0_managed.zip": solC, "SolD.zip": solD, "SolE.zip": solE, "SolF.zip": solF, "SolF_copy.zip": solF, "SolG.zip": solG, "SolH_1_0.zip": solH1, "SolH_1_1.zip": solH2, "SolI_1.zip": solI1, "SolI_2.zip": solI2 };
 for (const [n, b] of Object.entries(files)) writeFileSync(resolve(OUT, n), b);
 
 const { page, assert, finish } = await launchPage(import.meta.url, { width: 1280, height: 900 });
@@ -230,6 +238,8 @@ await page.screenshot({ path: resolve(OUT, "01-inventory-light.png") });
 
 // compare A1 -> A2
 await page.click('.tab[data-tab="compare"]');
+assert((await page.getAttribute('.tab[data-tab="compare"]', "aria-selected")) === "true" && (await page.getAttribute('.tab[data-tab="inventory"]', "aria-selected")) === "false", "tabs: aria-selected follows the active tab");
+assert((await page.getAttribute('.tab[data-tab="compare"]', "aria-controls")) === "tab-compare", "tabs: aria-controls points at the panel");
 assert((await page.$eval("#cmp-a", (e) => e.selectedIndex)) === 0 && (await page.$eval("#cmp-b", (e) => e.selectedIndex)) === 1, "compare defaults A=first, B=second");
 await page.selectOption("#cmp-a", { index: 0 });
 await page.selectOption("#cmp-b", { index: 1 });
@@ -286,6 +296,28 @@ await page.screenshot({ path: resolve(OUT, "05-order-cycle.png") });
 await page.evaluate(() => document.documentElement.setAttribute("data-theme", "dark"));
 await page.click('.tab[data-tab="inventory"]');
 await page.screenshot({ path: resolve(OUT, "06-inventory-dark.png") });
+
+// fold state survives re-render (tab switch, select change); expand / collapse all
+const invFold = (title) => page.$eval(`#inv-body details.card:has(h3:text-is("${title}"))`, (d) => d.open).catch(() => null);
+const invFolds = () => page.$$eval("#inv-body details.card", (els) => els.map((d) => d.open));
+assert((await invFold("Tables")) === true && (await invFold("Plugin steps")) === false, "fold defaults: Tables open, Plugin steps closed");
+await page.click('#inv-body details.card:has(h3:text-is("Tables")) > summary');
+await page.click('#inv-body details.card:has(h3:text-is("Plugin steps")) > summary');
+await page.click('.tab[data-tab="compare"]');
+await page.click('.tab[data-tab="inventory"]');
+assert((await invFold("Tables")) === false && (await invFold("Plugin steps")) === true, "fold state kept after tab switch re-render");
+await page.selectOption("#inv-select", { index: 1 });
+await page.selectOption("#inv-select", { index: 0 });
+assert((await invFold("Tables")) === false && (await invFold("Plugin steps")) === true, "fold state kept after select change re-render");
+await page.click('#tab-inventory .fold-all button:text-is("Expand all")');
+assert((await invFolds()).every(Boolean), "inventory: Expand all opens every card");
+await page.click('#tab-inventory .fold-all button:text-is("Collapse all")');
+assert((await invFolds()).every((o) => !o), "inventory: Collapse all closes every card");
+await page.click('.tab[data-tab="risk"]');
+await page.click('.tab[data-tab="inventory"]');
+assert((await invFolds()).every((o) => !o), "inventory: Collapse all remembered after re-render");
+// back to defaults for the rest of the run
+await page.click('#inv-body details.card:has(h3:text-is("Tables")) > summary');
 
 // export (browser fallback = download)
 const [dl] = await Promise.all([page.waitForEvent("download"), page.click("#inv-export")]);
@@ -397,6 +429,14 @@ await page.click('.tab[data-tab="compare"]');
 await page.selectOption("#cmp-a", { index: 0 });
 await page.selectOption("#cmp-b", { index: 1 });
 const procRows = await page.$$eval("#cmp-body tr", (els) => els.map((e) => e.textContent));
+const cmpFolds = () => page.$$eval("#cmp-body details.card", (els) => els.map((d) => d.open));
+await page.click('#tab-compare .fold-all button:text-is("Collapse all")');
+assert((await cmpFolds()).length > 0 && (await cmpFolds()).every((o) => !o), "compare: Collapse all closes every category: " + (await cmpFolds()).length);
+await page.click("#cmp-hide-root");
+await page.click("#cmp-hide-root");
+assert((await cmpFolds()).every((o) => !o), "compare: collapsed categories stay closed after hide-root re-render");
+await page.click('#tab-compare .fold-all button:text-is("Expand all")');
+assert((await cmpFolds()).every(Boolean), "compare: Expand all opens every category");
 assert(procRows.some((t) => t.startsWith("removed") && t.includes("Validate") && t.includes("sss_ribbonyes")), "same-named business rule on another table reported as removed: " + procRows.filter((t) => t.includes("Validate")).join(" | "));
 
 // compare export: filename carries both names; respects "hide root" filter
@@ -409,6 +449,31 @@ await page.click("#cmp-hide-root");
 const [dlc2] = await Promise.all([page.waitForEvent("download"), page.click("#cmp-export")]);
 const diffJson2 = JSON.parse(readFileSync(await dlc2.path(), "utf8"));
 assert(diffJson2.entries.some((e) => e.category === "Root component"), "compare export includes root rows when filter off");
+const chipText = () => page.$$eval("#cmp-body .card .chips .badge", (els) => els.map((e) => e.textContent).join(" "));
+const rootRows = diffJson2.entries.filter((e) => e.category === "Root component");
+const all = (c) => diffJson2.entries.filter((e) => e.change === c).length;
+assert((await chipText()) === `+${all("added")} ~${all("changed")} -${all("removed")}`, "compare header counts include root rows when shown: " + (await chipText()));
+await page.click("#cmp-hide-root");
+assert((await chipText()) === `+${diffJson.counts.added} ~${diffJson.counts.changed} -${diffJson.counts.removed}` && diffJson.counts.added + diffJson.counts.changed + diffJson.counts.removed === diffJson.entries.length, "compare header counts = filtered entries = export counts: " + (await chipText()));
+assert((await page.textContent("#cmp-body .count-caption")) === `${rootRows.length} root-component rows hidden`, "compare caption names hidden root rows");
+
+// hide-root setting persists across reopen; only-root differences are not "No differences"
+await page.click("#cmp-hide-root");
+await page.reload();
+assert(!(await page.$eval("#cmp-hide-root", (e) => e.checked)), "hide-root unchecked state restored after reload");
+await page.click('.tab[data-tab="compare"]');
+await page.click("#cmp-hide-root");
+await addOne("SolI_1.zip", 1);
+await addOne("SolI_2.zip", 2);
+await page.click('.tab[data-tab="compare"]');
+let cmpI = await page.textContent("#cmp-body");
+assert(!cmpI.includes("No differences") && cmpI.includes("Only root-component differences") && cmpI.includes("1 root-component difference is hidden"), "only root differences: filtered empty state, not 'No differences'");
+assert((await chipText()) === "+0 ~0 -0" && (await page.textContent("#cmp-body .count-caption")) === "1 root-component row hidden", "only root differences: header counts filtered + caption");
+await page.click('#cmp-body .empty-state button:text-is("Clear filters")');
+assert(!(await page.$eval("#cmp-hide-root", (e) => e.checked)), "Clear filters unticks hide-root");
+cmpI = await page.textContent("#cmp-body");
+assert(cmpI.includes("Root component") && cmpI.includes("sss_only") && (await chipText()) === "+0 ~1 -0" && !(await page.$("#cmp-body .count-caption")), "Clear filters shows the root-component row");
+await page.click("#cmp-hide-root"); // back to the default
 
 // ---- debug mode (standalone: no host, the log still records the switch and saves as a download) ----
 await checkDebugLog(page, assert, {

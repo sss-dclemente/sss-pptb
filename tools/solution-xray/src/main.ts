@@ -1,7 +1,8 @@
 import { mountDebug } from "../../_shared/debug-ui";
-import { $, badge, card, emptyState, foldCard, h, table, wireTabs } from "../../_shared/dom";
+import { $, badge, card, emptyState, filteredEmpty, foldAllButtons, foldCard, h, table, wireTabs } from "../../_shared/dom";
+import { persistControls } from "../../_shared/view-state";
 import { filesFromDrop, initTheme, inToolbox, notify, pickZips, saveText } from "./host";
-import { diffSolutions, type SolutionDiff } from "./xray/diff";
+import { diffSolutions, type DiffEntry, type SolutionDiff } from "./xray/diff";
 import { buildInventory, managedLabel } from "./xray/inventory";
 import { computeInstallOrder, latestByName } from "./xray/order";
 import { parseSolutionZip } from "./xray/parse";
@@ -109,6 +110,8 @@ function renderInventory(): void {
           ["Type", "#Count"],
           inv.rootComponentsByType.map((r) => [`${r.typeName} (${r.type})`, String(r.count)]),
         ),
+        false,
+        { key: "inv:root-by-type" },
       ),
     );
   }
@@ -125,6 +128,7 @@ function renderInventory(): void {
             )
           : h("p", { class: "caption" }, "Present in customizations.xml; not itemised by this tool."),
         g.key === "entities",
+        { key: `inv:${g.key}` },
       ),
     );
   }
@@ -142,6 +146,8 @@ function renderInventory(): void {
             `${d.dependent.typeName}: ${d.dependent.displayName ?? d.dependent.schemaName ?? d.dependent.id ?? "?"}${d.dependent.parentSchemaName ? ` (${d.dependent.parentSchemaName})` : ""}`,
           ]),
         ),
+        false,
+        { key: "inv:missing-deps" },
       ),
     );
   }
@@ -155,6 +161,14 @@ function currentDiff(): SolutionDiff | null {
   return diffSolutions(a, b);
 }
 
+/** Rows the screen (and the export) shows: "Hide root-component rows" applies to the list, the counts and the file. */
+function visibleDiff(d: SolutionDiff): { hideRoot: boolean; entries: DiffEntry[]; hiddenRoot: number; counts: SolutionDiff["counts"] } {
+  const hideRoot = $<HTMLInputElement>("#cmp-hide-root").checked;
+  const entries = hideRoot ? d.entries.filter((e) => e.category !== "Root component") : d.entries;
+  const count = (c: DiffEntry["change"]) => entries.filter((e) => e.change === c).length;
+  return { hideRoot, entries, hiddenRoot: d.entries.length - entries.length, counts: { added: count("added"), removed: count("removed"), changed: count("changed") } };
+}
+
 function renderCompare(): void {
   const body = $("#cmp-body");
   body.replaceChildren();
@@ -164,8 +178,8 @@ function renderCompare(): void {
   }
   const d = currentDiff();
   if (!d) return;
-  const hideRoot = $<HTMLInputElement>("#cmp-hide-root").checked;
-  const entries = hideRoot ? d.entries.filter((e) => e.category !== "Root component") : d.entries;
+  const { entries, hiddenRoot, counts } = visibleDiff(d);
+  const hiddenNote = hiddenRoot ? `${hiddenRoot} root-component ${hiddenRoot === 1 ? "row" : "rows"} hidden` : null;
 
   const versionBadge =
     d.versionOrder === "upgrade" ? badge("upgrade", "ok") : d.versionOrder === "same" ? badge("same version", "warn") : d.versionOrder === "downgrade" ? badge("downgrade", "bad") : badge("version n/a", "neutral");
@@ -180,13 +194,21 @@ function renderCompare(): void {
         h("div", {}, h("dt", {}, "B"), h("dd", {}, `${d.b.name} ${d.b.version} (${d.b.managed ? "managed" : "unmanaged"})`)),
         h("div", {}, h("dt", {}, "Same unique name"), h("dd", {}, d.sameSolution ? "yes" : "no")),
         h("div", {}, h("dt", {}, "Version"), h("dd", {}, versionBadge)),
-        h("div", {}, h("dt", {}, "Changes"), h("dd", {}, h("div", { class: "chips" }, badge(`+${d.counts.added}`, "ok"), badge(`~${d.counts.changed}`, "warn"), badge(`-${d.counts.removed}`, "bad")))),
+        h("div", {}, h("dt", {}, "Changes"), h("dd", {}, h("div", { class: "chips" }, badge(`+${counts.added}`, "ok"), badge(`~${counts.changed}`, "warn"), badge(`-${counts.removed}`, "bad"), hiddenNote && h("span", { class: "count-caption" }, hiddenNote)))),
       ),
     ),
   );
 
   if (!entries.length) {
-    body.append(emptyState("No differences", "Both solutions expose the same components."));
+    body.append(
+      hiddenRoot
+        ? filteredEmpty("Only root-component differences", `${hiddenRoot} root-component ${hiddenRoot === 1 ? "difference is" : "differences are"} hidden.`, () => {
+            const hide = $<HTMLInputElement>("#cmp-hide-root");
+            hide.checked = false;
+            hide.dispatchEvent(new Event("change")); // saves the setting and re-renders
+          })
+        : emptyState("No differences", "Both solutions expose the same components."),
+    );
     return;
   }
 
@@ -203,6 +225,7 @@ function renderCompare(): void {
           (i) => `diff-${list[i].change}`,
         ),
         true,
+        { key: `cmp:${cat}` },
       ),
     );
   }
@@ -314,6 +337,7 @@ function renderOrder(): void {
           )
         : h("p", { class: "caption" }, "No dependencies detected between the loaded solutions; any order works."),
       true,
+      { key: "order:edges" },
     ),
   );
 
@@ -328,6 +352,7 @@ function renderOrder(): void {
           )
         : h("p", { class: "caption" }, "None. All declared dependencies are satisfied by loaded or built-in solutions."),
       o.external.length > 0,
+      { key: "order:external" },
     ),
   );
 }
@@ -362,6 +387,10 @@ async function exportJson(name: string, payload: unknown): Promise<void> {
 }
 
 function wire(): void {
+  persistControls("solution-xray", ["cmp-hide-root"]);
+  // Expand / collapse all next to the export button (fold state is kept per card across re-renders)
+  $("#inv-export").before(foldAllButtons(() => document.getElementById("inv-body"), "details.card"));
+  $("#cmp-export").before(foldAllButtons(() => document.getElementById("cmp-body"), "details.card"));
   $("#btn-add").addEventListener("click", async () => addFiles(await pickZips(true)));
   $("#btn-clear").addEventListener("click", () => {
     solutions.length = 0;
@@ -388,15 +417,8 @@ function wire(): void {
     const d = currentDiff();
     if (!d) return;
     // Export what the screen shows: the "hide root-component rows" filter applies to the file too.
-    const hideRoot = $<HTMLInputElement>("#cmp-hide-root").checked;
-    const entries = hideRoot ? d.entries.filter((e) => e.category !== "Root component") : d.entries;
-    const count = (c: string) => entries.filter((e) => e.change === c).length;
-    void exportJson(`${d.a.name}-${d.a.version}_vs_${d.b.name}-${d.b.version}.diff.json`, {
-      ...d,
-      filter: { hideRootComponents: hideRoot },
-      entries,
-      counts: { added: count("added"), removed: count("removed"), changed: count("changed") },
-    });
+    const { hideRoot, entries, counts } = visibleDiff(d);
+    void exportJson(`${d.a.name}-${d.a.version}_vs_${d.b.name}-${d.b.version}.diff.json`, { ...d, filter: { hideRootComponents: hideRoot }, entries, counts });
   });
   $("#risk-export").addEventListener("click", () => {
     const s = selected("#risk-select");
