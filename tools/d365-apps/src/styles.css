@@ -37,7 +37,9 @@ table.matrix th.col .col-hide { font-size: var(--fs-caption); }
 table.matrix th.col .env { display: block; font-size: var(--fs-caption); text-transform: none; letter-spacing: 0; color: var(--fg-primary); }
 table.matrix th.col .col-error { display: block; text-transform: none; letter-spacing: 0; font-weight: normal; color: var(--status-bad-fg); white-space: normal; }
 table.matrix td.name { white-space: nowrap; }
-table.matrix td.name .uname { display: block; font-family: var(--font-mono); font-size: var(--fs-micro); color: var(--fg-muted); }
+/* long names: one line with an ellipsis (full text in title), so the sticky App column keeps a bounded width */
+table.matrix td.name .app-name { display: inline-block; max-width: 280px; overflow: hidden; text-overflow: ellipsis; vertical-align: bottom; }
+table.matrix td.name .uname { display: block; max-width: 280px; overflow: hidden; text-overflow: ellipsis; font-family: var(--font-mono); font-size: var(--fs-micro); color: var(--fg-muted); }
 table.matrix td.cell { font-size: var(--fs-caption); }
 table.matrix td.cell label { display: inline-flex; gap: var(--s-1); align-items: center; cursor: pointer; }
 table.matrix td.cell .ver { font-family: var(--font-mono); color: var(--fg-primary); }
@@ -83,8 +85,12 @@ button.badge-toggle:disabled { cursor: default; opacity: 0.7; }
 .envpick .list { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: var(--s-1) var(--s-3); font-size: var(--fs-caption); }
 .envpick .list label { display: flex; gap: var(--s-2); align-items: center; }
 .envpick input { accent-color: var(--accent); }
+.envpick #envpick-count { margin-left: auto; }
+.plan-head { display: flex; align-items: center; gap: var(--s-2); }
+.plan-head .fold-all { margin-left: auto; flex: none; }
 .plan-env { margin-bottom: var(--s-3); }
-.plan-env h4 { display: flex; gap: var(--s-2); align-items: center; font-size: var(--fs-caption); }
+.plan-env > summary { display: flex; gap: var(--s-2); align-items: center; cursor: pointer; font-size: var(--fs-caption); }
+.plan-env > summary .plan-env-title { font-weight: var(--fw-bold); color: var(--fg-primary); }
 .plan-env ol { padding-left: var(--s-5); font-size: var(--fs-caption); }
 
 dialog {

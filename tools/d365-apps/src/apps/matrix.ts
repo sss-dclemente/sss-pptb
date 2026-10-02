@@ -107,6 +107,28 @@ export function planInstalls(m: Matrix, selected: Set<string>): PlannedInstall[]
 
 export const isProduction = (e: Environment): boolean => /production/i.test(e.type);
 
+/** Usual environment types, in the order the picker offers them; any other type reported follows, A–Z. */
+const TYPE_ORDER = ["production", "sandbox", "developer", "trial", "default"];
+
+/** The environment types present in `envs` (as the API spells them, once each, case-insensitive), for the picker's type filter. */
+export function envTypes(envs: readonly Environment[]): string[] {
+  const seen = new Map<string, string>();
+  for (const e of envs) {
+    const t = e.type.trim();
+    if (t && !seen.has(t.toLowerCase())) seen.set(t.toLowerCase(), t);
+  }
+  const rank = (k: string) => (TYPE_ORDER.includes(k) ? TYPE_ORDER.indexOf(k) : TYPE_ORDER.length);
+  return [...seen].sort(([a], [b]) => rank(a) - rank(b) || a.localeCompare(b)).map(([, t]) => t);
+}
+
+/** Picker filter: the text in name, type or URL (case-insensitive) and the type ("" = all). */
+export const envMatches = (e: Environment, query: string, type: string): boolean =>
+  (!type || e.type.trim().toLowerCase() === type.toLowerCase()) && (!query.trim() || `${e.name} ${e.type} ${e.url ?? ""}`.toLowerCase().includes(query.trim().toLowerCase()));
+
+/** Install preview: environment groups fold closed past this many; Production (and installs in a hidden column) always open. */
+export const PLAN_FOLD_OVER = 5;
+export const planGroupOpen = (env: Environment, groups: number, hiddenColumn = false): boolean => groups <= PLAN_FOLD_OVER || isProduction(env) || hiddenColumn;
+
 /** The summary badges that filter rows by state: update available, failed install, install in progress. */
 export type StateKind = Extract<CellKind, "update" | "failed" | "busy">;
 export const STATE_KINDS: readonly StateKind[] = ["update", "failed", "busy"];

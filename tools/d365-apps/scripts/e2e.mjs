@@ -20,6 +20,7 @@ const MOCK = `
     { id: 'env-empty', displayName: 'SSS Empty', type: 'Developer', state: 'Ready', dataverseId: 'org-empty', url: 'https://sss-empty.crm4.dynamics.com', geo: 'europe' },
     { id: 'env-broken', displayName: 'SSS Broken', type: 'Sandbox', state: 'Ready', dataverseId: 'org-broken', url: 'https://sss-broken.crm4.dynamics.com', geo: 'europe' },
   ];
+  M.envs = envs; // the tests add environments later (many-environment preview)
   const P = (uniqueName, version, state, extra = {}) => ({ uniqueName, localizedName: uniqueName.replace(/^msdyn_/, '').toUpperCase(), version, state, publisherName: 'Microsoft', ...extra });
   M.installed = {
     'env-dev': [P('msdyn_sales', '1.0.0.0', 'Installed'), P('msdyn_fs', '2.0.0.0', 'InstallFailed', { lastError: { message: 'Dependency msdyn_anchor missing' } }), P('msdyn_custom', '1.0.0.0', 'Installed', { customHandleUpgrade: true }), P('msdyn_teamsapp', '3.1.0.0', 'Installed')],
@@ -172,23 +173,41 @@ assert(gets0.some((g) => g.includes("$skiptoken=2")), "Installed list followed @
 assert((await page.$$eval("#grid tbody tr", (els) => els.length)) === 4, "paged Dev list: 4 installed apps shown");
 
 // ---- environment picker: Teams (no Dataverse) is not offered; pick Dev + Prod ----
+const txt = async (sel) => (await page.textContent(sel)) ?? "";
 await page.click("#btn-envs");
 await page.waitForSelector(".envpick input[data-env]");
 const offered = await page.$$eval(".envpick input[data-env]", (els) => els.map((e) => e.dataset.env));
 assert(offered.length === 4 && !offered.includes("env-teams"), "picker hides environments without Dataverse: " + offered.join(","));
+// ticked count (live), type filter (present types only) combined with the text filter; Tick shown = visible only
+const pickShown = () => page.$$eval(".envpick label:not([hidden]) input[data-env]", (els) => els.map((e) => e.dataset.env).join(","));
+assert((await txt("#envpick-count")) === "1 of 4 ticked", "picker: ticked count: " + (await txt("#envpick-count")));
+assert((await page.$$eval("#envpick-type option", (els) => els.map((o) => o.value).join(","))) === ",Production,Sandbox,Developer", "type filter offers the present types only, usual order");
+await page.selectOption("#envpick-type", "Sandbox");
+assert((await pickShown()) === "env-broken,env-dev" && (await txt("#envpick-count")) === "1 of 4 ticked · 2 of 4 shown", "type filter: Sandbox only: " + (await pickShown()) + " / " + (await txt("#envpick-count")));
+await page.fill(".envpick input[type=search]", "broken");
+assert((await pickShown()) === "env-broken", "type and text filters combine");
+await page.fill(".envpick input[type=search]", "");
+await page.click(".envpick button:has-text('Tick shown')");
+assert((await txt("#envpick-count")).startsWith("2 of 4 ticked") && !(await page.isChecked('.envpick input[data-env="env-prod"]')) && !(await page.isChecked('.envpick input[data-env="env-empty"]')), "Tick shown ticks the shown (Sandbox) environments only: " + (await txt("#envpick-count")));
+await page.click(".envpick button:has-text('Untick all')");
+assert((await txt("#envpick-count")).startsWith("0 of 4 ticked"), "Untick all: count follows");
+await page.selectOption("#envpick-type", "");
+assert((await pickShown()).split(",").length === 4 && (await txt("#envpick-count")) === "0 of 4 ticked", "All types: every environment shown again");
+await page.check('.envpick input[data-env="env-dev"]');
 await page.check('.envpick input[data-env="env-prod"]');
+assert((await txt("#envpick-count")) === "2 of 4 ticked", "ticking a box updates the count live");
 await page.click("#dlg-ok");
 await page.waitForFunction(() => document.querySelectorAll("#grid th.col").length === 2);
 assert(await M(() => JSON.parse(localStorage.getItem("sss-d365-apps:envs")).join(",") === "env-dev,env-prod"), "selection remembered");
 
 // ---- cells ----
-const txt = async (sel) => (await page.textContent(sel)) ?? "";
 assert(/1\.0\.0\.0\s*→\s*1\.2\.0\.0/.test(await txt(cell("env-dev", "msdyn_sales"))), "Dev sales: update derived from the NotInstalled catalog (1.0 → 1.2)");
 assert((await page.$eval(cell("env-prod", "msdyn_sales"), (e) => e.className)).includes("k-current"), "Prod sales 1.2: current, no action");
 assert((await txt(cell("env-dev", "msdyn_fs"))).includes("Dependency msdyn_anchor missing"), "Dev fs: failed with the last error");
 assert((await txt(cell("env-prod", "msdyn_portal"))).includes("Installing"), "Prod portal: in progress, no checkbox");
 assert(!(await page.$(`${cell("env-prod", "msdyn_portal")} input`)), "busy cell is not selectable");
 assert((await txt('tr[data-app="msdyn_custom"]')).includes("custom upgrade"), "custom upgrade package flagged");
+assert((await page.getAttribute(`${cell("env-dev", "msdyn_sales")} input`, "aria-label")) === "Update SALES in SSS Dev" && (await page.getAttribute(`${cell("env-dev", "msdyn_fs")} input`, "aria-label")) === "Retry FS in SSS Dev", "cell checkbox label: action, app name and environment name (not the GUID)");
 assert((await txt("#counts")).includes("5 apps × 2 environments") && (await txt("#summary")).includes("2 updates") && (await txt("#summary")).includes("1 failed"), "summary counts: " + (await txt("#summary")));
 
 // ---- filter: shown rows, count caption, select-all respects it, hidden count, persisted, sticky App column ----
@@ -288,6 +307,8 @@ await page.click("#btn-preview");
 await page.waitForSelector("#plan");
 const plan = await txt("#plan");
 assert(plan.includes("1 Production environment") && plan.includes("Retry FS") && plan.includes("Install EXTRA"), "preview: Production warning and per-environment list");
+const planFolds = () => page.$$eval("#plan details.plan-env", (els) => els.map((d) => `${d.querySelector("summary").textContent}:${d.open}`).join("|"));
+assert((await planFolds()) === "SSS Dev · 2 installsSandbox:true|SSS Prod · 1 installProduction:true" && !(await page.$("#plan .fold-all")), "preview: one open fold per environment (≤ 5), summary 'name · N installs': " + (await planFolds()));
 assert((await page.$eval("#dlg-ok", (b) => b.className)).includes("btn-danger") && (await txt("#dlg-ok")) === "Run 3 installs", "confirm is the danger button when Production is in the plan");
 await page.click("#dlg-ok");
 await page.waitForSelector("#run-table");
@@ -458,6 +479,57 @@ assert((await colIds()) === "env-broken,env-dev,env-prod", "Hide empty environme
 await page.fill("#filter-text", "nothing-like-this");
 await page.click("#matrix .empty-state button");
 assert(await page.$eval("#hide-empty", (e) => e.checked), "Clear filters keeps Hide empty environments");
+
+// ---- many environments: preview folds (closed past 5, Production and hidden columns open); long app names ----
+await page.uncheck("#hide-empty");
+await M(() => {
+  const m = window.__mock;
+  const add = (id, displayName, type) => {
+    m.envs.push({ id, displayName, type, state: 'Ready', dataverseId: 'org-' + id, url: 'https://' + id + '.crm4.dynamics.com', geo: 'europe' });
+    m.available[id] = [{ uniqueName: 'msdyn_extra', localizedName: 'EXTRA', version: '7.0.0.0', state: 'None', publisherName: 'Microsoft' }];
+  };
+  add('env-t1', 'SSS Trial', 'Trial');
+  add('env-s2', 'SSS Sandbox 2', 'Sandbox');
+  add('env-d1', 'SSS Default', 'Default');
+  add('env-p2', 'SSS Prod 2', 'Production');
+  m.installed['env-dev'].push({ uniqueName: 'msdyn_long', localizedName: 'A very long Dynamics 365 application name that keeps going well past any sensible column width', version: '1.0.0.0', state: 'Installed', publisherName: 'Microsoft' });
+  m.emit("connection:updated");
+});
+await page.waitForSelector('#grid tr[data-app="msdyn_long"]');
+const long = await page.$eval('#grid tr[data-app="msdyn_long"] td.name', (td) => {
+  const n = td.querySelector(".app-name");
+  const next = td.nextElementSibling.getBoundingClientRect();
+  return { title: n.title, cut: n.scrollWidth > n.clientWidth, w: n.getBoundingClientRect().width, h: n.getBoundingClientRect().height, to: getComputedStyle(n).textOverflow, td: td.getBoundingClientRect().right, next: next.left, pos: getComputedStyle(td).position };
+});
+assert(long.title.startsWith("A very long Dynamics 365") && long.cut && long.to === "ellipsis" && long.w <= 281 && long.h < 24, "long app name: one line cut with an ellipsis, full name in title: " + JSON.stringify(long));
+assert(long.pos === "sticky" && long.td <= long.next + 1, "long name: App column stays sticky and does not run into the first environment column: " + JSON.stringify(long));
+await page.click("#btn-envs");
+await page.waitForSelector(".envpick input[data-env]");
+assert((await page.$$eval("#envpick-type option", (els) => els.map((o) => o.textContent).join(","))) === "All types,Production,Sandbox,Developer,Trial,Default", "type filter: Production / Sandbox / Developer / Trial / Default");
+await page.selectOption("#envpick-type", "Production");
+await page.click(".envpick button:has-text('Tick shown')");
+await page.selectOption("#envpick-type", "Trial");
+await page.click(".envpick button:has-text('Tick shown')");
+await page.selectOption("#envpick-type", "");
+for (const id of ["env-s2", "env-d1", "env-empty"]) await page.check(`.envpick input[data-env="${id}"]`);
+assert((await txt("#envpick-count")).startsWith("8 of 8 ticked"), "every environment ticked: " + (await txt("#envpick-count")));
+await page.click("#dlg-ok");
+await page.waitForSelector('#grid th.col[data-env="env-p2"]');
+for (const id of ["env-empty", "env-t1", "env-s2", "env-d1", "env-p2"]) await page.check(`${cell(id, "msdyn_extra")} input`);
+await page.check(`${cell("env-dev", "msdyn_fs")} input`);
+await page.click('button[aria-label="Hide SSS Sandbox 2"]');
+await page.click("#btn-preview");
+await page.waitForSelector("#plan");
+const openFolds = () => page.$$eval("#plan details.plan-env", (els) => els.filter((d) => d.open).map((d) => d.dataset.env).sort().join(","));
+assert((await page.$$eval("#plan details.plan-env", (els) => els.length)) === 6 && (await openFolds()) === "env-p2,env-s2", "6 environments: folds closed except Production and the hidden column: " + (await openFolds()));
+assert((await txt('#plan details[data-env="env-p2"] > summary')).startsWith("SSS Prod 2 · 1 install") && (await txt("#plan-hidden")).includes("SSS Sandbox 2"), "summary and the hidden-column warning kept");
+await page.click('#plan details[data-env="env-t1"] > summary');
+assert((await openFolds()).includes("env-t1"), "a closed environment unfolds from its summary");
+await page.click("#plan .fold-all button:first-child");
+assert((await openFolds()).split(",").length === 6, "Expand all opens every environment");
+await page.click("#dlg-cancel");
+await page.waitForFunction(() => !document.querySelector("#dlg").open);
+await page.click("#btn-clear-sel");
 
 // ---- debug log (shared check) ----
 await checkDebugLog(page, assert, {

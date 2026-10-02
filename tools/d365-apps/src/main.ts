@@ -1,9 +1,9 @@
 import { mountDebug } from "../../_shared/debug-ui";
-import { $, append, badge, emptyState, filteredEmpty, h, showDialog, shownOf, type BadgeKind, type Child } from "../../_shared/dom";
+import { $, append, badge, emptyState, filteredEmpty, foldAllButtons, h, showDialog, shownOf, type BadgeKind, type Child } from "../../_shared/dom";
 import { loadView, persistControls, saveView } from "../../_shared/view-state";
 import { errText, isSetupError, listEnvironments, listPackages, type PpLike } from "./apps/api";
 import { matrixCsv, pacScript, resultsCsv } from "./apps/export";
-import { buildMatrix, cellKey, counts, emptyEnvIds, failedKeys, isProduction, planInstalls, rowHasState, STATE_KINDS, updateKeys, visibleEnvs, type StateKind } from "./apps/matrix";
+import { buildMatrix, cellKey, counts, emptyEnvIds, envMatches, envTypes, failedKeys, isProduction, PLAN_FOLD_OVER, planGroupOpen, planInstalls, rowHasState, STATE_KINDS, updateKeys, visibleEnvs, type StateKind } from "./apps/matrix";
 import { runInstalls, runProblems, toRunItems } from "./apps/run";
 import type { DvLike } from "./apps/unused";
 import type { Cell, EnvPackages, Environment, Matrix, PlannedInstall, Row, RunItem } from "./apps/types";
@@ -228,17 +228,37 @@ async function pickEnvironments(): Promise<void> {
     return { e, cb, label };
   });
   const list = h("div", { class: "list" }, ...boxes.map((b) => b.label));
-  filter.addEventListener("input", () => {
-    const q = filter.value.toLowerCase();
-    for (const b of boxes) b.label.hidden = !!q && !`${b.e.name} ${b.e.type} ${b.e.url ?? ""}`.toLowerCase().includes(q);
-  });
+  // type filter: only the types present, and only when there is more than one to choose from
+  const types = envTypes(envs);
+  const type = h("select", { id: "envpick-type", "aria-label": "Environment type" }, h("option", { value: "" }, "All types"), ...types.map((t) => h("option", { value: t }, t))) as HTMLSelectElement;
+  type.hidden = types.length < 2;
+  const count = h("span", { class: "count-caption", id: "envpick-count", "aria-live": "polite" });
+  const update = () => {
+    const shown = boxes.filter((b) => !b.label.hidden).length;
+    const ticked = boxes.filter((b) => b.cb.checked).length;
+    count.textContent = `${ticked} of ${boxes.length} ticked${shown < boxes.length ? ` · ${shownOf(shown, boxes.length, "shown")}` : ""}`;
+  };
+  const applyFilter = () => {
+    for (const b of boxes) b.label.hidden = !envMatches(b.e, filter.value, type.value);
+    update();
+  };
+  filter.addEventListener("input", applyFilter);
+  type.addEventListener("change", applyFilter);
+  list.addEventListener("change", update);
   const all = h("button", { class: "btn btn-ghost btn-sm", type: "button" }, "Tick shown");
-  all.addEventListener("click", () => boxes.filter((b) => !b.label.hidden).forEach((b) => (b.cb.checked = true)));
+  all.addEventListener("click", () => {
+    boxes.filter((b) => !b.label.hidden).forEach((b) => (b.cb.checked = true));
+    update();
+  });
   const none = h("button", { class: "btn btn-ghost btn-sm", type: "button" }, "Untick all");
-  none.addEventListener("click", () => boxes.forEach((b) => (b.cb.checked = false)));
+  none.addEventListener("click", () => {
+    boxes.forEach((b) => (b.cb.checked = false));
+    update();
+  });
+  update();
   const ok = await showDialog({
     title: "Environments",
-    body: h("div", { class: "envpick" }, h("div", { class: "toolbar" }, filter, all, none), h("p", { class: "caption" }, `${envs.length} environments with a Dataverse database. Each ticked one is a column; reading it costs two calls.`), list),
+    body: h("div", { class: "envpick" }, h("div", { class: "toolbar" }, filter, type, all, none, count), h("p", { class: "caption" }, `${envs.length} environments with a Dataverse database. Each ticked one is a column; reading it costs two calls.`), list),
     okLabel: "Load",
   });
   if (!ok) return;
@@ -262,7 +282,9 @@ function renderConn(): void {
 
 const ACTION_LABEL = { update: "Update", retry: "Retry", install: "Install" } as const;
 
-function cellNode(envId: string, uniqueName: string, c: Cell): HTMLElement {
+function cellNode(env: Environment, r: Row, c: Cell): HTMLElement {
+  const envId = env.id;
+  const uniqueName = r.uniqueName;
   const k = cellKey(envId, uniqueName);
   const live = runNoteEnvs.has(envId) ? run.find((i) => i.env.id === envId && i.uniqueName.toLowerCase() === uniqueName.toLowerCase() && (running || i.status !== "succeeded")) : undefined;
   const td = h("td", { class: `cell k-${c.kind}${selected.has(k) ? " is-selected" : ""}`, "data-cell": k });
@@ -288,7 +310,7 @@ function cellNode(envId: string, uniqueName: string, c: Cell): HTMLElement {
       main = "—";
   }
   if (c.action && !running) {
-    const cb = h("input", { type: "checkbox", "aria-label": `${ACTION_LABEL[c.action]} ${uniqueName} in ${envId}` }) as HTMLInputElement;
+    const cb = h("input", { type: "checkbox", "aria-label": `${ACTION_LABEL[c.action]} ${r.name} in ${env.name}` }) as HTMLInputElement;
     cb.checked = selected.has(k);
     cb.addEventListener("change", () => {
       if (cb.checked) selected.add(k);
@@ -432,8 +454,9 @@ function render(): void {
     h(
       "tr",
       { "data-app": r.uniqueName },
-      h("td", { class: "name sticky-col" }, h("span", {}, r.name), r.customHandleUpgrade ? " " : null, r.customHandleUpgrade ? badge("custom upgrade", "warn") : null, h("span", { class: "uname" }, r.uniqueName)),
-      ...cols.map((e) => cellNode(e.id, r.uniqueName, r.cells.get(e.id)!)),
+      // long names: one line cut with an ellipsis (the sticky column keeps a bounded width), the full text on hover
+      h("td", { class: "name sticky-col" }, h("span", { class: "app-name", title: r.name }, r.name), r.customHandleUpgrade ? " " : null, r.customHandleUpgrade ? badge("custom upgrade", "warn") : null, h("span", { class: "uname", title: r.uniqueName }, r.uniqueName)),
+      ...cols.map((e) => cellNode(e, r, r.cells.get(e.id)!)),
     ),
   );
   wrap.replaceChildren(
@@ -487,15 +510,23 @@ function planNode(plan: PlannedInstall[], shownCols: Set<string>): HTMLElement {
       ? h("div", { class: "warnings", id: "plan-hidden" }, `${offscreen.length} install${offscreen.length === 1 ? " is" : "s are"} in environment columns hidden from the matrix: ${[...new Set(offscreen.map((p) => p.env.name))].join(", ")}. They are part of this run; clear the selection or Show all to check them.`)
       : null,
     custom.length ? h("div", { class: "warnings" }, `Custom upgrade packages: ${[...new Set(custom.map((p) => p.name))].join(", ")}. The app handles its own upgrade; read its release notes first.`) : null,
-    h("p", { class: "caption" }, `One install at a time per environment, up to ${Math.min(3, byEnv.size)} environments in parallel. Each install is followed until it finishes; that can take an hour.`),
-    ...[...byEnv.values()].map((list) =>
-      h(
-        "div",
-        { class: "plan-env" },
-        h("h4", {}, list[0].env.name, badge(list[0].env.type || "?", isProduction(list[0].env) ? "bad" : "neutral"), shownCols.has(list[0].env.id) ? null : badge("hidden column", "warn")),
-        h("ol", {}, ...list.map((p) => h("li", {}, `${ACTION_LABEL[p.action]} ${p.name} (${p.uniqueName})`, p.action === "update" ? ` ${p.from ?? "?"} → ${p.to ?? "?"}` : p.to ? ` ${p.to}` : ""))),
-      ),
+    h(
+      "div",
+      { class: "plan-head" },
+      h("p", { class: "caption" }, `One install at a time per environment, up to ${Math.min(3, byEnv.size)} environments in parallel. Each install is followed until it finishes; that can take an hour.`),
+      byEnv.size > PLAN_FOLD_OVER ? foldAllButtons(() => document.querySelector("#plan"), "details.plan-env") : null,
     ),
+    // one fold per environment: past PLAN_FOLD_OVER they start closed, except Production and installs in a hidden column
+    ...[...byEnv.values()].map((list) => {
+      const env = list[0].env;
+      const hiddenCol = !shownCols.has(env.id);
+      return h(
+        "details",
+        { class: "plan-env", "data-env": env.id, open: planGroupOpen(env, byEnv.size, hiddenCol) },
+        h("summary", { class: "chev" }, h("span", { class: "plan-env-title" }, `${env.name} · ${list.length} install${list.length === 1 ? "" : "s"}`), badge(env.type || "?", isProduction(env) ? "bad" : "neutral"), hiddenCol ? badge("hidden column", "warn") : null),
+        h("ol", {}, ...list.map((p) => h("li", {}, `${ACTION_LABEL[p.action]} ${p.name} (${p.uniqueName})`, p.action === "update" ? ` ${p.from ?? "?"} → ${p.to ?? "?"}` : p.to ? ` ${p.to}` : ""))),
+      );
+    }),
   );
 }
 

@@ -395,3 +395,26 @@ test("analyzeUnused: history filter refused → unfiltered read; history unreada
   assert.equal(b.packages.find((p) => p.pkg.uniqueName === "Gamification").verdict, "not-found");
   assert.equal(b.packages.find((p) => p.pkg.uniqueName === "msdyn_Sales").mappedBy, "anchor");
 });
+
+test("envTypes: present types once each, usual ones first in a fixed order, others A–Z", () => {
+  const list = [env("a", "Sandbox"), env("b", "Teams"), env("c", "Production"), env("d", "sandbox"), env("e", ""), env("f", "Developer"), env("g", "Default"), env("h", "Custom")];
+  assert.deepEqual(M.envTypes(list), ["Production", "Sandbox", "Developer", "Default", "Custom", "Teams"]);
+  assert.deepEqual(M.envTypes([]), []);
+});
+
+test("envMatches: text (name, type, URL) and type filter combine", () => {
+  const e = env("dev", "Sandbox");
+  assert.ok(M.envMatches(e, "", ""));
+  assert.ok(M.envMatches(e, " DEV ", "sandbox"), "trimmed, case-insensitive; type compared case-insensitively");
+  assert.ok(M.envMatches(e, "crm4", ""), "URL matches");
+  assert.ok(!M.envMatches(e, "dev", "Production"), "type filter excludes");
+  assert.ok(!M.envMatches(e, "prod", "Sandbox"), "text filter excludes");
+});
+
+test("planGroupOpen: open up to PLAN_FOLD_OVER groups; past it only Production and hidden-column groups", () => {
+  assert.equal(M.PLAN_FOLD_OVER, 5);
+  assert.ok(M.planGroupOpen(env("a"), 5));
+  assert.ok(!M.planGroupOpen(env("a"), 6));
+  assert.ok(M.planGroupOpen(env("p", "Production"), 6));
+  assert.ok(M.planGroupOpen(env("a"), 6, true));
+});
