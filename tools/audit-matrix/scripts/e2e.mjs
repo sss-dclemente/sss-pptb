@@ -19,6 +19,7 @@
 import { copyFileSync, mkdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { launchPage } from "../../_shared/e2e-loader.mjs";
+import { checkDebugLog } from "../../_shared/e2e-debug.mjs";
 
 const TOOL = new URL("..", import.meta.url).pathname.replace(/\/$/, "");
 const OUT = resolve(TOOL, "scripts/.e2e-out");
@@ -451,6 +452,29 @@ await runVariant("int", async (p) => {
   const ownInts = await ownershipLabels(p);
   assert(JSON.stringify(ownInts) === JSON.stringify(ownStrings), "OwnershipType as a flags integer yields the same labels as the string form: " + ownInts.join(","));
   assert(new Set(ownInts).size === 4 && !ownInts.includes("none"), "the integer form is decoded, not labelled “none” across the board: " + ownInts.join(","));
+});
+
+// ---- debug mode: the switch survives a reload, so start-up calls are in the log ----
+await checkDebugLog(page, assert, {
+  tool: "audit-matrix",
+  act: async () => {
+    await page.reload();
+    await page.waitForSelector("#debug-toggle");
+    assert(await page.$eval("#debug-toggle", (e) => e.checked), "audit-matrix: debug mode remembered across a reload");
+    await page.waitForTimeout(500);
+  },
+  readSaved: async (click) => {
+    const n = await page.evaluate(() => window.__mock.saved.length);
+    await click();
+    await page.waitForFunction((k) => window.__mock.saved.length > k, n);
+    const f = await page.evaluate(() => window.__mock.saved.at(-1));
+    assert(/^audit-matrix-debug-.*\.txt$/.test(f.name), "audit-matrix: debug log file name " + f.name);
+    return f.content;
+  },
+  expect: [
+    [/\[call\] #\d+ toolboxAPI\.connections\.getActiveConnection/, "records start-up host calls"],
+    [/\[call\] #\d+ dataverseAPI\./, "records Dataverse calls"],
+  ],
 });
 
 await finish();

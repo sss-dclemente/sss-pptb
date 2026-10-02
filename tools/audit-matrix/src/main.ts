@@ -1,3 +1,4 @@
+import { mountDebug } from "../../_shared/debug-ui";
 import { $, badge, card, emptyState, h, showDialog, table as domTable, wireTabs } from "../../_shared/dom";
 import { dataverse, getConnections, initTheme, inToolbox, notify, onConnectionChange, openText, saveText } from "../../_shared/host";
 import { matrixCsv, planCsv, planScript, safeFileName } from "./audit/export";
@@ -553,4 +554,5 @@ async function main(): Promise<void> {
   await refresh();
 }
 
+mountDebug(document.querySelector("footer"), "audit-matrix");
 void main();

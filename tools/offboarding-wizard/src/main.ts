@@ -1,3 +1,4 @@
+import { mountDebug } from "../../_shared/debug-ui";
 import { $, badge, card, emptyState, h, showDialog, table, wireTabs } from "../../_shared/dom";
 import { dataverse, getConnections, initTheme, inToolbox, notify, onConnectionChange, saveText } from "../../_shared/host";
 import { applyPlan, DEFAULT_WRITE_CONCURRENCY } from "./offboard/apply";
@@ -627,4 +628,5 @@ async function main(): Promise<void> {
   await loadTables();
 }
 
+mountDebug(document.querySelector("footer"), "offboarding-wizard");
 void main();
