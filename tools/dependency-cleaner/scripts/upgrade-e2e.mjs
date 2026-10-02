@@ -21,7 +21,7 @@ const MOCK = `
     P1d: g(401), P1t: g(402), P2: g(403), APP1d: g(501), APP1t: g(502), APP2: g(503), D1: g(601), WRJS: g(602), SM: g(701),
   };
   let seq = 5000;
-  const row = (objectid, componenttype, behavior, root) => ({ solutioncomponentid: g(seq++), objectid, componenttype, rootcomponentbehavior: behavior, _rootsolutioncomponentid_value: root });
+  const row = (objectid, componenttype, behavior, root) => ({ solutioncomponentid: g(seq++), objectid, componenttype, rootcomponentbehavior: behavior, rootsolutioncomponentid: root });
   // Dev SssCore: table with all assets + explicit form rows + the app
   const dE1 = row(ID.E1, 1, 0, null);
   const devMembers = [dE1, row(ID.F1, 60, null, dE1.solutioncomponentid), row(ID.F2, 60, null, dE1.solutioncomponentid), row(ID.APP1d, 80, null, null)];
@@ -101,6 +101,7 @@ const MOCK = `
   function answer(q, target) {
     const E = envs[target];
     let m;
+    if (q.includes('_rootsolutioncomponentid_value')) throw new Error("Dataverse queryData failed: 0x80060888: Could not find a property named '_rootsolutioncomponentid_value' on type 'Microsoft.Dynamics.CRM.solutioncomponent'.");
     if ((m = q.match(/^RetrieveDependenciesForDelete[(]ObjectId=([^,]+),ComponentType=(\\d+)[)]$/))) {
       if (target !== 'secondary') throw new Error('mock: RetrieveDependenciesForDelete must run on the target');
       if (!isGuid(m[1])) throw new Error('mock: ObjectId must be an unquoted guid, got ' + m[1]);
