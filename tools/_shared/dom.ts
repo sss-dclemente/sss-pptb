@@ -30,7 +30,7 @@ export function h<K extends keyof HTMLElementTagNameMap>(
 }
 
 export type BadgeKind = "" | "ok" | "warn" | "bad" | "neutral";
-export const badge = (text: string, kind: BadgeKind = ""): HTMLElement => h("span", { class: `badge${kind ? ` badge-${kind}` : ""}` }, text);
+export const badge = (text: string, kind: BadgeKind = "", title?: string): HTMLElement => h("span", { class: `badge${kind ? ` badge-${kind}` : ""}`, title }, text);
 
 export const emptyState = (title: string, hint: string): HTMLElement => h("div", { class: "empty-state" }, h("strong", {}, title), hint);
 

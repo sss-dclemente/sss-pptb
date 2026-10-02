@@ -194,7 +194,7 @@ summary.chev::before {
 }
 details.card[open] > summary .card-head::before,
 details[open] > summary.chev::before { transform: rotate(45deg); }
-summary.chev { list-style: none; }
+summary.chev { list-style: none; cursor: pointer; }
 summary.chev::-webkit-details-marker { display: none; }
 details.card > summary:hover .card-head::before,
 summary.chev:hover::before { border-color: var(--accent); }
