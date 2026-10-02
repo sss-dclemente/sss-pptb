@@ -256,6 +256,9 @@ assert(body.includes("sss_shared") && body.includes("SssApps"), "sss_shared surv
 const rt = await page.textContent("#ub-runtime");
 assert(rt.includes("sss_/js/nav.js") && rt.includes("Ops Hub") && rt.includes("Site map"), "runtime breaks: JS navigateTo and site map name the deleted pages: " + rt);
 
+// E2E_SHOTS=1 refreshes the README screenshot of this screen (docs/img/upgrade-blockers.png)
+if (process.env.E2E_SHOTS) await page.screenshot({ path: resolve(TOOL, "docs/img/upgrade-blockers.png"), fullPage: false });
+
 // ---- D8: layers behind a keyed fold, open only for the membership fallback; report-only blockers labelled ----
 const layerFolds = () => page.$$eval("#ub-body .finding", (els) => Object.fromEntries(els.map((e) => {
   const d = e.querySelector(":scope > details.layers-fold");
