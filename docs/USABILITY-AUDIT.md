@@ -161,4 +161,14 @@ Done (per-tool High items, second round):
 - Offboarding Wizard: O3 Failed / All results, failures first; O4 long errors fold and wrap.
 - Audit Matrix: M2 "Load columns for N visible tables" + relabelled column filters; M3 Origin filter via IsCustomEntity.
 
-Open: Medium and Low items in §3.
+Done (Medium items, third round):
+
+- Solution XRay: X3 Inventory search, X4 full risk evidence with +N more, X5 labelled field diffs, X6 per-table column lists.
+- EnvVar Matrix: E4 value clamp with more/less, E5 matrix-only controls hidden in Consolidate, E6 foldable consolidate cards, E7 Missing vs Not deployed filters.
+- Access Checker: A4 verdict chips focus a right, A5 Shares search/filter, A6 Column security search/filter, A7 foldable Check cards.
+- Dependency Cleaner: D3 find + type filters, D4 Offline present-in-target, D5 foldable upgrade sections, D6 Show all errors, D7 owning solutions inline.
+- D365 Apps: P4 status badges as filters, P5 foldable run section with Only problems / Dismiss, P6 one-line cell notes, P7 Unused report kept, filterable, notes folded.
+- Offboarding Wizard: O6 empty categories hidden, O8 preview grouped with Skipped fold and no 25 cap.
+- Audit Matrix: M6 Only changeable, M7 expanded rows kept across refresh/apply, M8 expander button + focus restore, M9 grouped plan / preview / results.
+
+Open: Low items in §3.
