@@ -88,12 +88,19 @@ function assetOps(cat: CategoryResult, successor: UserInfo): PlannedOp[] {
   }));
 }
 
+/** Dataverse refuses to change membership of a business unit's default team, so it is never planned. */
+const isDefaultTeam = (it: InventoryItem): boolean => it.data?.isDefault === true;
+
 function teamOps(cat: CategoryResult, leaverId: string, successor: UserInfo, o: PlanOptions, skipped: string[]): PlannedOp[] {
   const ops: PlannedOp[] = [];
   for (const it of cat.items) {
     const type = Number((it.data?.teamtype as number | undefined) ?? 0);
     if (type >= 2) {
       skipped.push(`Team "${it.label}": membership is managed in Entra ID and cannot be changed through Dataverse.`);
+      continue;
+    }
+    if (isDefaultTeam(it)) {
+      skipped.push(`Team "${it.label}": business unit default team — membership is managed by Dataverse and follows the user's business unit.`);
       continue;
     }
     if (o.teamAdd && o.successorHeld?.teamIds.has(it.id)) {
@@ -317,9 +324,10 @@ export function estimateCounts(inv: Inventory, o: Pick<PlanOptions, "categories"
   }
   for (const c of inv.categories) {
     if (!o.categories.has(c.key) || !c.writable) continue;
-    // Entra group teams are always skipped when the plan is built, so they must not be counted here
-    // either: an estimate that disagrees with the preview is worse than no estimate.
-    const items = c.key === "teams" ? c.items.filter((it) => Number((it.data?.teamtype as number | undefined) ?? 0) < 2).length : c.items.length;
+    // Entra group teams and business unit default teams are always skipped when the plan is built, so
+    // they must not be counted here either: an estimate that disagrees with the preview is worse than none.
+    const items =
+      c.key === "teams" ? c.items.filter((it) => Number((it.data?.teamtype as number | undefined) ?? 0) < 2 && !isDefaultTeam(it)).length : c.items.length;
     const mult =
       c.key === "roles"
         ? (o.roleCopy ? 1 : 0) + (o.roleRemove ? 1 : 0)

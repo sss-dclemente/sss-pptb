@@ -4,7 +4,8 @@
 //   - 3 accounts + 2 contacts (two scanned tables; a third table "sss_locked" rejects the owner filter)
 //   - 1 active modern flow + 1 draft classic workflow, plus an activation copy the OData filter excludes
 //   - 1 personal view, 1 personal chart, 1 owned queue, 1 queue membership
-//   - 1 owner team ("Sales EU") and 1 Entra group team (skipped by the planner)
+//   - 1 owner team ("Sales EU"), 1 Entra group team and the business unit default team ("Sales");
+//     the last two are skipped by the planner
 //   - 3 security roles, 1 field security profile, 1 connection reference, 1 connection, 1 direct report
 // Successor: Bruno Costa. One account (ACC_3) always fails its update so a failed row surfaces.
 //
@@ -40,7 +41,7 @@ const MOCK = `
   const ACC = (n) => 'e0000000-0000-0000-0000-00000000000' + n;
   const CON = (n) => 'e1000000-0000-0000-0000-00000000000' + n;
   const BIG = (n) => 'e2000000-0000-0000-0000-' + String(n).padStart(12, '0');
-  const T_EU = 'd0000000-0000-0000-0000-000000000001', T_AAD = 'd0000000-0000-0000-0000-000000000002';
+  const T_EU = 'd0000000-0000-0000-0000-000000000001', T_AAD = 'd0000000-0000-0000-0000-000000000002', T_DEF = 'd0000000-0000-0000-0000-000000000003';
   // The leaver's roles live in Sales; the same roles exist once more in Ops sharing a root role id.
   // The root ids deliberately start with a digit: a $filter on them must not parse as a number.
   const R_SALES = 'c0000000-0000-0000-0000-000000000001', R_BASIC = 'c0000000-0000-0000-0000-000000000002';
@@ -54,7 +55,7 @@ const MOCK = `
   const QUEUE_OWNED = '40000000-0000-0000-0000-000000000001', QUEUE_MEMBER = '40000000-0000-0000-0000-000000000002';
   const CONNREF = '50000000-0000-0000-0000-000000000001', CONN = '60000000-0000-0000-0000-000000000001';
   const ORG = '70000000-0000-0000-0000-000000000001';
-  window.__ids = { ANA, BRUNO, T_EU, T_AAD, R_SALES, R_BASIC, R_LOCAL, R_SALES_OPS, R_BASIC_OPS, FSP, FLOW_MODERN, VIEW, CHART, QUEUE_OWNED, CONNREF, CONN, DANI, ACC3: ACC(3) };
+  window.__ids = { ANA, BRUNO, T_EU, T_AAD, T_DEF, R_SALES, R_BASIC, R_LOCAL, R_SALES_OPS, R_BASIC_OPS, FSP, FLOW_MODERN, VIEW, CHART, QUEUE_OWNED, CONNREF, CONN, DANI, ACC3: ACC(3) };
 
   const user = (id, name, mgr, bu, extra) => Object.assign({
     systemuserid: id, fullname: name, domainname: name.split(' ')[0].toLowerCase() + '@sss.test',
@@ -75,7 +76,12 @@ const MOCK = `
     systemusers: { key: 'systemuserid', rows: users },
     businessunits: { key: 'businessunitid', rows: [{ businessunitid: BU_SALES, name: 'Sales' }, { businessunitid: BU_OPS, name: 'Operations' }] },
     organizations: { key: 'organizationid', rows: [{ organizationid: ORG, name: 'SSS Dev', sharetopreviousowneronassign: !OTHER_BU }] },
-    teams: { key: 'teamid', rows: [{ teamid: T_EU, name: 'Sales EU', teamtype: 0, _businessunitid_value: BU_SALES }, { teamid: T_AAD, name: 'Entra Sales', teamtype: 2, _businessunitid_value: BU_SALES }] },
+    teams: { key: 'teamid', rows: [
+      { teamid: T_EU, name: 'Sales EU', teamtype: 0, isdefault: false, _businessunitid_value: BU_SALES },
+      { teamid: T_AAD, name: 'Entra Sales', teamtype: 2, isdefault: false, _businessunitid_value: BU_SALES },
+      // Every user belongs to their business unit's default team; Dataverse refuses to remove them from it.
+      { teamid: T_DEF, name: 'Sales', teamtype: 0, isdefault: true, _businessunitid_value: BU_SALES },
+    ] },
     roles: { key: 'roleid', rows: [
       { roleid: R_SALES, name: 'Sales Person', _businessunitid_value: BU_SALES, _parentrootroleid_value: ROOT_SALES },
       { roleid: R_BASIC, name: 'Basic User', _businessunitid_value: BU_SALES, _parentrootroleid_value: ROOT_BASIC },
@@ -100,7 +106,7 @@ const MOCK = `
   // In the other-business-unit variant the successor already holds the Ops copy of "Basic User", the
   // field security profile and the owner team: each of those must be skipped rather than planned.
   const expand = {
-    teammembership_association: Object.assign({ [ANA]: [sets.teams.rows[0], sets.teams.rows[1]] }, OTHER_BU ? { [BRUNO]: [sets.teams.rows[0]] } : {}),
+    teammembership_association: Object.assign({ [ANA]: [sets.teams.rows[0], sets.teams.rows[1], sets.teams.rows[2]] }, OTHER_BU ? { [BRUNO]: [sets.teams.rows[0]] } : {}),
     systemuserroles_association: Object.assign({ [ANA]: sets.roles.rows.slice(0, 3) }, OTHER_BU ? { [BRUNO]: [sets.roles.rows[4]] } : {}),
     systemuserprofiles_association: Object.assign({ [ANA]: [{ fieldsecurityprofileid: FSP, name: 'Margin Readers' }] }, OTHER_BU ? { [BRUNO]: [{ fieldsecurityprofileid: FSP, name: 'Margin Readers' }] } : {}),
     queuemembership_association: { [ANA]: [{ queueid: QUEUE_MEMBER, name: 'Support triage' }] },
@@ -233,6 +239,25 @@ assert(inv.includes("SharePoint (Ana)") && inv.includes("re-authenticate"), "con
 assert(inv.includes("Ana SharePoint connection") && inv.includes("does not re-authenticate it"), "connection listed with its sign-in caveat");
 assert(inv.includes("Dani Lopes"), "direct report listed");
 assert(inv.includes("Not scanned yet"), "records category starts unscanned");
+assert(inv.includes("business unit default team — membership managed by Dataverse"), "business unit default team listed and flagged, not hidden");
+
+// ---- inventory folds: flagged categories open, state kept across re-renders ----
+const isOpen = (cat) => page.$eval(`#inventory-cards details[data-cat='${cat}']`, (d) => d.open);
+const head = (cat) => page.textContent(`#inventory-cards details[data-cat='${cat}'] summary`);
+assert((await isOpen("workflows")) && (await head("workflows")).includes("1 flagged"), "a category with a flagged item starts open with an “n flagged” badge");
+assert((await isOpen("teams")) && (await head("teams")).includes("3 flagged"), "team memberships open: owner, Entra and default teams all flagged");
+assert(!(await isOpen("userqueries")) && !(await head("userqueries")).includes("flagged"), "a category with nothing flagged starts closed, no badge");
+assert(!(await isOpen("records")), "records card closed before a scan");
+await page.click("#inventory-cards details[data-cat='userqueries'] summary .label");
+assert(await isOpen("userqueries"), "user opens the personal views card");
+await page.fill("#scan-filter", "acc");
+await page.waitForTimeout(400);
+await page.fill("#scan-filter", "");
+await page.check("#scan-show-failed");
+await page.uncheck("#scan-show-failed");
+assert((await isOpen("userqueries")) && (await isOpen("teams")), "opened cards stay open after typing in the scan filter and toggling the checkbox (re-render)");
+const showFailedLabel = await page.$eval("#scan-show-failed", (e) => e.closest("label").textContent.trim());
+assert(showFailedLabel === "show tables that could not be scanned" && !(await page.isChecked("#scan-show-failed")), "checkbox labelled for what it does, off by default: " + showFailedLabel);
 
 // ---- records scan ----
 await page.click("#btn-scan");
@@ -244,10 +269,33 @@ const note = await text("#scan-note");
 assert(note.includes("3 of 3 tables scanned") && note.includes("2 with records") && note.includes("1 not scanned"), "scan summary: " + note);
 const scanRows = await page.$$eval("table.scan tbody tr", (r) => r.map((x) => x.textContent.replace(/\s+/g, " ").trim()));
 assert(scanRows.length === 2 && scanRows[0].includes("Account") && scanRows[0].includes("3") && scanRows[1].includes("Contact"), "scan rows sorted by count");
-await page.uncheck("#scan-hide-empty");
+assert((await isOpen("records")) && (await isOpen("userqueries")) && (await isOpen("teams")), "after the scan the records card opens and the cards the user opened stay open");
+// records card "Filter tables": narrows the rows shown, keeps focus, says when ticked rows are hidden
+assert((await text("#scan-rows-count")) === "2 tables", "records card count caption unfiltered");
+await page.fill("#scan-rows-filter", "contact");
+await page.waitForFunction(() => document.querySelectorAll("table.scan tbody tr").length === 1);
+assert((await text("table.scan")).includes("Contact") && !(await text("table.scan")).includes("Account"), "records card filter narrows the table rows");
+const filteredCount = await text("#scan-rows-count");
+assert(filteredCount.startsWith("1 of 2 tables") && filteredCount.includes("1 ticked table hidden by the filter stays in the plan"), "filtered caption: " + filteredCount);
+assert(await page.$eval("#scan-rows-filter", (e) => e === document.activeElement), "filter input keeps focus while typing");
+assert(await isOpen("userqueries"), "opened card stays open after typing in the records filter");
+await page.fill("#scan-rows-filter", "zzz");
+await page.waitForFunction(() => document.querySelector("#inventory-cards")?.textContent.includes("No tables match"));
+await page.click("#inventory-cards .empty-state button:has-text('Clear filters')");
+await page.waitForFunction(() => document.querySelectorAll("table.scan tbody tr").length === 2);
+assert((await page.inputValue("#scan-rows-filter")) === "", "Clear filters empties the records filter");
+await page.check("#scan-show-failed");
 await page.waitForFunction(() => document.querySelectorAll("table.scan tbody tr").length === 3);
 assert((await text("table.scan")).includes("not scanned: owner filter not supported"), "failing table listed as not scanned, run not broken");
+assert((await isOpen("records")) && (await isOpen("userqueries")), "folds survive the show-failed re-render after the scan");
 await shot("inventory");
+// expand all / collapse all above the inventory cards
+const allOpen = () => page.$$eval("#inventory-cards details.card", (d) => d.map((x) => x.open));
+await page.click("#tab-inventory .fold-all button:has-text('Collapse all')");
+assert((await allOpen()).every((o) => !o), "Collapse all closes every inventory card");
+await page.click("#tab-inventory .fold-all button:has-text('Expand all')");
+const opened = await allOpen();
+assert(opened.length === 12 && opened.every((o) => o), "Expand all opens every inventory card");
 
 // ---- 3. plan ----
 await tab("plan");
@@ -275,6 +323,7 @@ assert(dlg.includes("Records") && dlg.includes("Flows & classic processes") && d
 assert(dlg.includes('update account(') && dlg.includes('"ownerid@odata.bind":"/systemusers('), "preview shows the exact owner update call");
 assert(dlg.includes("associate systemuser(") && dlg.includes("systemuserroles_association"), "preview shows the role associate call");
 assert(dlg.includes("Entra ID and cannot be changed"), "Entra team skip explained in the preview");
+assert(dlg.includes('Team "Sales": business unit default team') && !dlg.includes(`team(${await page.evaluate(() => window.__ids.T_DEF)})`), "business unit default team skipped with its reason, never planned");
 assert(dlg.includes("connection behind them still belongs to the leaver"), "connection reference warning in the preview");
 assert(dlg.includes('"share to previous owner on assign" enabled') && dlg.includes("shared back to the leaver with full rights"), "share-back warning when the organization row has the setting on");
 assert(dlg.includes("deactivates any workflow or business rule currently active on it"), "record moves warn that active workflows and business rules are deactivated");
@@ -314,6 +363,7 @@ assert(has({ op: "associate", entity: "systemuser", id: ids.BRUNO, relationship:
 assert(has({ op: "associate", entity: "team", id: ids.T_EU, relationship: "teammembership_association", relatedEntity: "systemuser", relatedId: ids.BRUNO }), "successor added to the owner team");
 assert(has({ op: "disassociate", entity: "team", id: ids.T_EU, relationship: "teammembership_association", relatedId: ids.ANA }), "leaver removed from the owner team");
 assert(!writes.some((w) => w.id === ids.T_AAD), "Entra group team never touched");
+assert(!writes.some((w) => w.id === ids.T_DEF), "business unit default team never touched (Dataverse would refuse the removal)");
 assert(!writes.some((w) => w.entity === "systemuser" && w.id === ids.ANA && w.op === "update"), "the leaver's own user row is never updated (no disable, no licence)");
 
 // ---- failed row ----

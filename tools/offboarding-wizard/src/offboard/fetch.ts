@@ -374,21 +374,25 @@ async function queueMemberships(api: DataverseLike, leaverId: string): Promise<I
 }
 
 async function teamMemberships(api: DataverseLike, leaverId: string): Promise<InventoryItem[]> {
-  const r = await api.queryData(`systemusers?$select=systemuserid&$filter=systemuserid eq ${leaverId}&$expand=teammembership_association($select=teamid,name,teamtype,_businessunitid_value)`);
+  const r = await api.queryData(`systemusers?$select=systemuserid&$filter=systemuserid eq ${leaverId}&$expand=teammembership_association($select=teamid,name,teamtype,isdefault,_businessunitid_value)`);
   return ((r.value[0]?.teammembership_association as Row[] | undefined) ?? []).map((t) => {
     const type = num(t.teamtype) ?? 0;
+    // Every user is a member of their business unit's default team, and Dataverse refuses to remove
+    // them from it: membership follows the user's business unit. Listed, never planned (plan.ts).
+    const isDefault = t.isdefault === true;
     return {
       entity: "team",
       id: id(t.teamid),
       label: s(t.name) ?? id(t.teamid),
-      meta: type === 0 ? "owner team" : type === 1 ? "access team" : type === 2 ? "Entra security group team" : "Entra office group team",
-      flag:
-        type === 0
+      meta: isDefault ? "business unit default team" : type === 0 ? "owner team" : type === 1 ? "access team" : type === 2 ? "Entra security group team" : "Entra office group team",
+      flag: isDefault
+        ? "business unit default team — membership managed by Dataverse"
+        : type === 0
           ? "owner team: records owned by the team stay with the team"
           : type >= 2
             ? "membership comes from Entra and cannot be changed here"
             : null,
-      data: { teamtype: type },
+      data: { teamtype: type, isDefault },
     };
   });
 }

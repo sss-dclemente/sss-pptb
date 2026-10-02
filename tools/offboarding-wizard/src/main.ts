@@ -1,5 +1,5 @@
 import { mountDebug } from "../../_shared/debug-ui";
-import { $, badge, card, emptyState, h, showDialog, table, wireTabs } from "../../_shared/dom";
+import { $, badge, card, emptyState, filteredEmpty, foldAllButtons, h, keepFold, shownOf, showDialog, table, wireTabs } from "../../_shared/dom";
 import { dataverse, getConnections, initTheme, inToolbox, notify, onConnectionChange, saveText } from "../../_shared/host";
 import { applyPlan, DEFAULT_WRITE_CONCURRENCY } from "./offboard/apply";
 import { inventoryCsv, inventoryJson, resultsCsv, resultsJson, safeFileName } from "./offboard/export";
@@ -46,6 +46,8 @@ let envName: string | null = null;
 let control: PoolControl | null = null;
 
 const selectedCats = new Set<CategoryKey>();
+/** "Filter tables" inside the records card: narrows the rows shown, never what is scanned or planned. */
+let scanRowFilter = "";
 const selectedTables = new Set<string>();
 const opts = { roleCopy: true, roleRemove: false, profileCopy: true, profileRemove: false, teamRemove: true, teamAdd: false, recordCap: DEFAULT_RECORD_CAP };
 const SCAN_CONCURRENCY = 6;
@@ -156,6 +158,7 @@ async function pickLeaver(u: UserInfo): Promise<void> {
   if (!a) return;
   selectedCats.clear();
   selectedTables.clear();
+  scanRowFilter = "";
   inventory = null;
   lastPlan = null;
   lastResults = null;
@@ -238,8 +241,11 @@ async function runScan(): Promise<void> {
   await notify("Scan finished", `${scan.rows.length} table(s) with records, ${scan.failed.length} not scanned`, scan.failed.length ? "warning" : "success");
 }
 
-const foldHead = (cb: HTMLElement, label: string, hint: string, count: Node): HTMLElement =>
-  h("summary", {}, h("div", { class: "card-head" }, cb, h("span", { class: "label" }, label), h("span", { class: "caption" }, hint), h("span", { class: "count" }, count)));
+const foldHead = (cb: HTMLElement, label: string, hint: string, ...count: Node[]): HTMLElement =>
+  h("summary", {}, h("div", { class: "card-head" }, cb, h("span", { class: "label" }, label), h("span", { class: "caption" }, hint), h("span", { class: "count" }, ...count)));
+
+/** Inventory folds keep their open/closed state across re-renders, per leaver (see keepFold). */
+const invFold = (el: HTMLDetailsElement, key: string, defaultOpen: boolean): HTMLDetailsElement => keepFold(el, `inv:${leaver?.user.id ?? ""}:${key}`, defaultOpen);
 
 function categoryCard(c: CategoryResult): HTMLElement {
   const cb = check({ "aria-label": `Include ${c.label}`, "data-cat": c.key }, selectedCats.has(c.key), !c.writable || !c.items.length || !!c.error, (v) => {
@@ -252,7 +258,11 @@ function categoryCard(c: CategoryResult): HTMLElement {
     : c.items.length
       ? table(["Name", "Detail", "Note"], c.items.map((i) => [i.label, h("span", { class: "caption" }, i.meta), i.flag ? h("span", { class: "flag" }, i.flag) : ""]), undefined, `detail-table cat-${c.key}`)
       : h("p", { class: "caption" }, "Nothing held in this category.");
-  return h("details", { class: "card", "data-cat": c.key }, foldHead(cb, c.label, c.hint, c.error ? badge("error", "bad") : badge(String(c.items.length), "neutral")), h("div", { class: "card-body" }, body));
+  // A flag is a consequence the user must see before planning (e.g. an active flow that breaks), so a
+  // category holding any flagged item starts open and says how many in its header.
+  const flagged = c.error ? 0 : c.items.filter((i) => i.flag).length;
+  const head = foldHead(cb, c.label, c.hint, ...(flagged ? [badge(`${flagged} flagged`, "warn")] : []), c.error ? badge("error", "bad") : badge(String(c.items.length), "neutral"));
+  return invFold(h("details", { class: "card", "data-cat": c.key }, head, h("div", { class: "card-body" }, body)), c.key, flagged > 0 || !!c.error);
 }
 
 function scanRow(r: NonNullable<Inventory["scan"]>["rows"][number]): (Node | string)[] {
@@ -277,24 +287,65 @@ function recordsCard(): HTMLElement {
     updatePlanSummary();
   });
   const total = scan?.rows.reduce((n, r) => n + (r.count ?? 0), 0) ?? 0;
-  const rows = scan ? ($<HTMLInputElement>("#scan-hide-empty").checked ? scan.rows : [...scan.rows, ...scan.failed]) : [];
   const body = !scan
     ? h("p", { class: "caption" }, "Not scanned yet. Use “Scan owned records” above.")
     : h(
         "div",
         {},
         h("p", { class: "scan-note", id: "scan-note" }, `${scan.scanned} of ${scan.requested} tables scanned${scan.cancelled ? " (cancelled)" : ""} · ${scan.rows.length} with records · ${scan.failed.length} not scanned`),
-        rows.length ? table(["", "Table", "#Records", "Note"], rows.map(scanRow), undefined, "scan") : emptyState("No records owned", "The leaver owns no records in the scanned tables."),
+        scanRowsView(scan),
       );
   const count = badge(scan ? `${total} in ${scan.rows.length} tables` : "not scanned", scan?.rows.length ? "warn" : "neutral");
-  return h("details", { class: "card", "data-cat": "records", open: !!scan?.rows.length }, foldHead(cb, "Records owned per table", "one count request per owned table", count), h("div", { class: "card-body" }, body));
+  return invFold(
+    h("details", { class: "card", "data-cat": "records" }, foldHead(cb, "Records owned per table", "one count request per owned table", count), h("div", { class: "card-body" }, body)),
+    "records",
+    !!scan?.rows.length,
+  );
+}
+
+/**
+ * The scanned-table list with its own "Filter tables" box. Typing re-renders only the rows, so the
+ * input keeps focus. The filter is view-only: a ticked table it hides is still planned, and says so.
+ */
+function scanRowsView(scan: NonNullable<Inventory["scan"]>): HTMLElement {
+  const all = $<HTMLInputElement>("#scan-show-failed").checked ? [...scan.rows, ...scan.failed] : scan.rows;
+  const input = h("input", { type: "search", id: "scan-rows-filter", placeholder: "Filter tables", "aria-label": "Filter scanned tables" });
+  input.value = scanRowFilter;
+  const caption = h("span", { class: "count-caption", id: "scan-rows-count" });
+  const list = h("div", {});
+  const draw = (): void => {
+    const f = scanRowFilter.trim().toLowerCase();
+    const rows = f ? all.filter((r) => r.table.logicalName.includes(f) || r.table.displayName.toLowerCase().includes(f)) : all;
+    const hiddenTicked = f ? scan.rows.filter((r) => selectedTables.has(r.table.logicalName) && !rows.includes(r)).length : 0;
+    caption.textContent = shownOf(rows.length, all.length, "tables") + (hiddenTicked ? ` · ${hiddenTicked} ticked ${hiddenTicked === 1 ? "table hidden by the filter stays" : "tables hidden by the filter stay"} in the plan` : "");
+    list.replaceChildren(
+      rows.length
+        ? table(["", "Table", "#Records", "Note"], rows.map(scanRow), undefined, "scan")
+        : f
+          ? filteredEmpty("No tables match", `Nothing in this scan matches “${scanRowFilter.trim()}”.`, () => {
+              scanRowFilter = "";
+              input.value = "";
+              draw();
+            })
+          : emptyState("No records owned", "The leaver owns no records in the scanned tables."),
+    );
+  };
+  input.addEventListener("input", () => {
+    scanRowFilter = input.value;
+    draw();
+  });
+  draw();
+  return h("div", { class: "stack scan-rows" }, all.length ? h("div", { class: "row" }, input, caption) : null, list);
 }
 
 function renderInventory(): void {
   const panel = $("#inventory-body");
   panel.replaceChildren();
   if (!inventory) return void panel.append(emptyState("No leaver selected", "Pick the leaver on the first tab."));
-  panel.append(h("div", { class: "stack", id: "inventory-cards" }, recordsCard(), ...inventory.categories.map(categoryCard)));
+  panel.append(
+    h("div", { class: "row fold-row" }, foldAllButtons(() => document.getElementById("inventory-cards"), "details.card")),
+    h("div", { class: "stack", id: "inventory-cards" }, recordsCard(), ...inventory.categories.map(categoryCard)),
+  );
 }
 
 // ---------- 3. plan & apply ----------
@@ -603,8 +654,8 @@ function wire(): void {
   $("#leaver-form .field").replaceChildren(h("label", { for: "leaver-q" }, "Leaver"), userPicker("leaver", (u) => void pickLeaver(u)));
   $("#leaver-form").addEventListener("submit", (e) => e.preventDefault());
   $("#btn-scan").addEventListener("click", () => void runScan());
-  $("#scan-filter").addEventListener("input", debounce(() => renderInventory(), 250));
-  $("#scan-hide-empty").addEventListener("change", () => renderInventory());
+  // #scan-filter only narrows which tables the next scan requests (read in runScan): nothing to re-render.
+  $("#scan-show-failed").addEventListener("change", () => renderInventory());
   $("#btn-cancel").addEventListener("click", () => {
     if (control) control.cancelled = true;
   });
