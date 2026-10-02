@@ -1,0 +1,45 @@
+{
+  "name": "@simplesmoothsafe/pptb-offboarding-wizard",
+  "version": "0.1.0",
+  "displayName": "SSS Offboarding Wizard",
+  "description": "A user is leaving: inventory everything they hold — records per table, flows, personal views and charts, queues, teams, roles, connection references, direct reports — pick a successor, preview the reassignment and apply it in one audited run.",
+  "main": "index.html",
+  "icon": "icon.svg",
+  "license": "MIT",
+  "keywords": ["powerplatform", "dataverse", "toolbox", "pptb", "offboarding", "ownership", "reassign", "security-roles", "users"],
+  "author": "Simple Smooth Safe",
+  "contributors": [
+    { "name": "Duarte Clemente", "url": "https://simplesmoothsafe.com" }
+  ],
+  "homepage": "https://simplesmoothsafe.com",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sss-dclemente/sss-pptb.git",
+    "directory": "tools/offboarding-wizard"
+  },
+  "configurations": {
+    "repository": "https://github.com/sss-dclemente/sss-pptb",
+    "website": "https://simplesmoothsafe.com",
+    "readmeUrl": "https://raw.githubusercontent.com/sss-dclemente/sss-pptb/main/tools/offboarding-wizard/README.md"
+  },
+  "features": {
+    "multiConnection": "none",
+    "connectionRequirement": "required",
+    "minAPI": "1.2.0"
+  },
+  "engines": { "node": ">=18.0.0" },
+  "scripts": {
+    "build": "tsc --noEmit && vite build && node scripts/check-dist.mjs",
+    "dev-watch": "vite build --mode development --watch",
+    "typecheck": "tsc --noEmit",
+    "validate": "node node_modules/@pptb/validate/dist/cli.js",
+    "e2e": "node scripts/e2e.mjs"
+  },
+  "devDependencies": {
+    "@pptb/types": "^1.2.5",
+    "@pptb/validate": "^1.0.2",
+    "typescript": "^5.6.0",
+    "vite": "^5.4.0"
+  },
+  "files": ["dist"]
+}
