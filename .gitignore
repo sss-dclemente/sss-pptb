@@ -3,3 +3,8 @@ dist/
 *.tsbuildinfo
 .DS_Store
 npm-shrinkwrap.json
+
+# Social media campaigns and assets (keep tool docs/screenshots in tools/)
+/campaign-*/
+/social-media/
+/social-assets/
