@@ -1,0 +1,37 @@
+name: Bug report
+description: Something in a tool is broken or wrong
+title: "[Bug] "
+labels: [bug, triage]
+body:
+  - type: dropdown
+    id: tool
+    attributes:
+      label: Tool
+      options:
+        - SSS Solution XRay
+        - SSS EnvVar & ConnRef Matrix
+        - SSS Access Checker
+        - SSS Dependency Cleaner
+        - SSS D365 Apps Matrix
+        - SSS Offboarding Wizard
+        - SSS Audit Config Matrix
+        - Other / not sure
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Tool version
+      placeholder: e.g. 1.5.0
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: Steps, what you expected, what you got.
+    validations:
+      required: true
+  - type: textarea
+    id: log
+    attributes:
+      label: Debug log
+      description: Turn on the Debug log switch in the tool footer, reproduce, save the .txt and drag it here.

@@ -1,0 +1,33 @@
+name: Feature request
+description: Idea or improvement for a tool, or a new tool
+title: "[Feature] "
+labels: [enhancement, triage]
+body:
+  - type: dropdown
+    id: tool
+    attributes:
+      label: Tool
+      options:
+        - SSS Solution XRay
+        - SSS EnvVar & ConnRef Matrix
+        - SSS Access Checker
+        - SSS Dependency Cleaner
+        - SSS D365 Apps Matrix
+        - SSS Offboarding Wizard
+        - SSS Audit Config Matrix
+        - New tool
+        - Other / not sure
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What are you trying to do, and what gets in the way?
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: Idea
+      description: How you would like it to work.

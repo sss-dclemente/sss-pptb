@@ -1,0 +1,81 @@
+# Sorts each new issue: makes sure the labels exist, adds `triage`, a type label
+# (bug / enhancement) and a `tool:<folder>` label from the issue form's Tool field,
+# or from keywords in the title and body for blank issues.
+name: Issue triage
+
+on:
+  issues:
+    types: [opened, edited, reopened]
+
+permissions:
+  issues: write
+
+concurrency:
+  group: issue-triage-${{ github.event.issue.number }}
+  cancel-in-progress: false
+
+jobs:
+  label:
+    if: ${{ !contains(github.event.issue.labels.*.name, 'digest') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const TOOLS = [
+              { label: 'tool:solution-xray',      name: 'SSS Solution XRay',           keys: [/solution[- ]?xray/i, /\bxray\b/i] },
+              { label: 'tool:envvar-matrix',      name: 'SSS EnvVar & ConnRef Matrix', keys: [/envvar/i, /env(ironment)? var/i, /conn ?ref/i, /connection reference/i, /deploymentsettings/i] },
+              { label: 'tool:access-checker',     name: 'SSS Access Checker',          keys: [/access[- ]checker/i] },
+              { label: 'tool:dependency-cleaner', name: 'SSS Dependency Cleaner',      keys: [/dependency[- ]cleaner/i, /upgrade blocker/i, /msdyn_/i] },
+              { label: 'tool:d365-apps',          name: 'SSS D365 Apps Matrix',        keys: [/d365[- ]apps/i, /unused apps/i] },
+              { label: 'tool:offboarding-wizard', name: 'SSS Offboarding Wizard',      keys: [/offboarding/i] },
+              { label: 'tool:audit-matrix',       name: 'SSS Audit Config Matrix',     keys: [/audit[- ](config|matrix)/i] },
+            ];
+            const LABELS = [
+              { name: 'triage',      color: 'fbca04', description: 'New, not sorted by a maintainer yet' },
+              { name: 'bug',         color: 'd73a4a', description: 'Something is broken' },
+              { name: 'enhancement', color: 'a2eeef', description: 'Feature request or improvement' },
+              { name: 'digest',      color: 'ededed', description: 'Weekly issue digest' },
+              ...TOOLS.map(t => ({ name: t.label, color: '0e8a8a', description: t.name })),
+            ];
+
+            const { owner, repo } = context.repo;
+            const issue = context.payload.issue;
+            if (issue.pull_request) return;
+
+            const existing = new Set(
+              (await github.paginate(github.rest.issues.listLabelsForRepo, { owner, repo, per_page: 100 }))
+                .map(l => l.name)
+            );
+            for (const l of LABELS) {
+              if (!existing.has(l.name)) await github.rest.issues.createLabel({ owner, repo, ...l });
+            }
+
+            const current = new Set(issue.labels.map(l => l.name));
+            const add = [];
+            const title = issue.title || '';
+            const body = issue.body || '';
+
+            // Only a brand-new issue gets `triage`; an edit must not undo a maintainer's sorting.
+            if (context.payload.action === 'opened') add.push('triage');
+
+            if (!current.has('bug') && !current.has('enhancement')) {
+              if (/^\s*\[bug\]/i.test(title)) add.push('bug');
+              else if (/^\s*\[feature\]/i.test(title)) add.push('enhancement');
+            }
+
+            // Issue forms render the dropdown as "### Tool\n\n<option>".
+            const formTool = (body.match(/^###\s*Tool\s*\n+\s*(.+?)\s*$/m) || [])[1];
+            let tools = TOOLS.filter(t => t.name === formTool);
+            if (!tools.length && !formTool) {
+              const text = `${title}\n${body}`;
+              tools = TOOLS.filter(t => t.keys.some(k => k.test(text)));
+            }
+            const hasTool = [...current].some(n => n.startsWith('tool:'));
+            if (!hasTool) add.push(...tools.map(t => t.label));
+
+            const labels = add.filter(n => !current.has(n));
+            if (labels.length) {
+              await github.rest.issues.addLabels({ owner, repo, issue_number: issue.number, labels });
+            }
+            core.info(`#${issue.number}: added [${labels.join(', ')}]`);
