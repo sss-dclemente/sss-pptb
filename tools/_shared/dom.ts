@@ -80,7 +80,8 @@ export interface FoldOptions {
   extra?: Child;
 }
 
-export function foldCard(title: string, count: number, body: Node, open = false, o: FoldOptions = {}): HTMLElement {
+/** `count` is the header badge: a number, or text such as "3 of 41" while a filter hides rows. */
+export function foldCard(title: string, count: number | string, body: Node, open = false, o: FoldOptions = {}): HTMLElement {
   const el = h(
     "details",
     { class: "card", open },
