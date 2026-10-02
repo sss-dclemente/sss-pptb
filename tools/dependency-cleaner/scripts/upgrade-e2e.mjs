@@ -93,6 +93,8 @@ const MOCK = `
       },
     },
   };
+  // D5: n more JS files in the target that navigate to the deleted Orders page → n more runtime breaks
+  M.addJs = (n) => { for (let i = 0; i < n; i++) envs.secondary.webresources[g(800 + i)] = { webresourceid: g(800 + i), name: 'sss_/js/extra' + i + '.js', content: B64("Xrm.Navigation.navigateTo({ pageType: 'custom', name: 'sss_pageorders_a1b2c' });") }; };
   const idsIn = (q, field) => [...q.matchAll(new RegExp(field + ' eq ([0-9a-f-]{36})', 'g'))].map((m) => m[1]);
   const isGuid = (s) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(s);
   const sel = (q) => (q.match(/[$]select=([^&]+)/)?.[1] ?? '').split(',');
@@ -104,6 +106,7 @@ const MOCK = `
     if (q.includes('_rootsolutioncomponentid_value')) throw new Error("Dataverse queryData failed: 0x80060888: Could not find a property named '_rootsolutioncomponentid_value' on type 'Microsoft.Dynamics.CRM.solutioncomponent'.");
     if ((m = q.match(/^RetrieveDependenciesForDelete[(]ObjectId=([^,]+),ComponentType=(\\d+)[)]$/))) {
       if (target !== 'secondary') throw new Error('mock: RetrieveDependenciesForDelete must run on the target');
+      if (M.rddFail) throw new Error('mock: dependency check unavailable');
       if (!isGuid(m[1])) throw new Error('mock: ObjectId must be an unquoted guid, got ' + m[1]);
       return { EntityCollection: (E.dependents[m[1]] ?? []).map(([id, t, p]) => ({ dependentcomponentobjectid: id, dependentcomponenttype: t, dependentcomponentparentid: p, dependencytype: 2 })) };
     }
@@ -248,7 +251,12 @@ assert(rt.includes("sss_/js/nav.js") && rt.includes("Ops Hub") && rt.includes("S
 // ---- fold cards: keyed, expand / collapse all ----
 const foldState = () => page.$$eval("#ub-body details.card[data-fold-key]", (els) => Object.fromEntries(els.map((e) => [e.dataset.foldKey, e.open])));
 let folds = await foldState();
-assert(JSON.stringify(Object.keys(folds)) === '["ub:resolved","ub:survives","ub:deleted"]' && Object.values(folds).every((o) => !o), "S3: Resolved / Survives / Deleted fold cards keyed, closed by default: " + JSON.stringify(folds));
+assert(JSON.stringify(Object.keys(folds)) === '["ub:dev","ub:release","ub:target","ub:runtime","ub:resolved","ub:survives","ub:deleted"]', "D5: Dev / Release / Target / Runtime breaks are keyed fold cards before Resolved / Survives / Deleted: " + JSON.stringify(folds));
+assert(!folds["ub:resolved"] && !folds["ub:survives"] && !folds["ub:deleted"], "S3: Resolved / Survives / Deleted fold cards keyed, closed by default: " + JSON.stringify(folds));
+assert(folds["ub:dev"] && folds["ub:release"] && folds["ub:target"] && folds["ub:runtime"], "D5: Dev / Release / Target and a short Runtime breaks list (2 ≤ 10) open by default: " + JSON.stringify(folds));
+const sectionHeads = await page.$$eval("#ub-body details.card[data-fold-key] > summary .card-head", (els) => els.map((e) => e.querySelector("h3").textContent + "=" + e.querySelector(".count .badge").textContent));
+assert(sectionHeads.slice(0, 4).join(" | ") === "Fix in Dev (SssCore)=1 | Release first=1 | Target unmanaged (SSS Test)=1 | Runtime breaks=2", "D5: section titles with count badges: " + sectionHeads.join(" | "));
+assert((await page.$eval("#ub-body", (b) => b.firstElementChild?.id)) === "ub-folds-head", "D5: Expand all / Collapse all sits above the first section");
 assert(!!(await page.$("#ub-folds-head .fold-all")), "S2: expand / collapse all shown next to ≥2 fold cards");
 await page.click("#ub-folds-head .fold-all button:has-text('Expand all')");
 folds = await foldState();
@@ -256,7 +264,10 @@ assert(Object.values(folds).every((o) => o), "S2: Expand all opens every fold ca
 await page.click("#ub-folds-head .fold-all button:has-text('Collapse all')");
 folds = await foldState();
 assert(Object.values(folds).every((o) => !o), "S2: Collapse all closes every fold card");
+assert(!(await page.isVisible("#ub-dev .finding")) && !(await page.isVisible("#ub-runtime ul.plain")), "D5: Collapse all folds the Dev section and the runtime breaks too");
 await page.click("#ub-body details.card[data-fold-key='ub:deleted'] > summary");
+await page.click("#ub-dev > summary");
+assert(await page.isVisible("#ub-dev .finding select"), "D5: clicking the Dev header opens it again");
 
 // ---- export ----
 await page.click("#ub-export-md");
@@ -314,5 +325,21 @@ await page.waitForFunction(() => document.querySelectorAll("#ub-solution option[
 assert(!(await page.isChecked("#ub-scan")), "S4: #ub-scan unticked is restored after reload");
 await page.click('.tab[data-tab="upgrade"]');
 await page.check("#ub-scan");
+
+// ---- D5: a long Runtime breaks list starts folded; D6: every failed check behind "Show all N" ----
+await M(() => { window.__mock.addJs(11); window.__mock.rddFail = true; });
+await page.evaluate(() => document.querySelector("#ub-summary").replaceChildren());
+await page.click("#ub-run");
+await page.waitForSelector("#ub-counts", { timeout: 15000 });
+assert((await page.textContent("#ub-counts")).includes("13 runtime breaks"), "D5: 13 runtime breaks: " + (await page.textContent("#ub-counts")));
+const rtFold = await page.$eval("#ub-runtime", (d) => ({ open: d.open, key: d.dataset.foldKey, n: d.querySelectorAll("ul.plain li").length, badge: d.querySelector("summary .count .badge").textContent }));
+assert(rtFold.key === "ub:runtime" && !rtFold.open && rtFold.n === 13 && rtFold.badge === "13", "D5: more than 10 runtime breaks → the fold starts closed, rows inside: " + JSON.stringify(rtFold));
+await page.click("#ub-folds-head .fold-all button:has-text('Expand all')");
+assert(await page.isVisible("#ub-runtime ul.plain"), "D5: Expand all opens the runtime breaks");
+const ubErr = await page.$eval("#ub-summary .error-list", (e) => ({ text: e.firstChild.textContent, summary: e.querySelector("details > summary")?.textContent, chev: e.querySelector("details > summary")?.classList.contains("chev"), open: e.querySelector("details")?.open, n: e.querySelectorAll("details li").length }));
+assert(ubErr.text.startsWith("RetrieveDependenciesForDelete failed for 5 component(s): ") && ubErr.text.split("mock: dependency check unavailable").length - 1 === 3 && ubErr.text.endsWith("; …"), "D6: the first 3 failed checks inline: " + ubErr.text);
+assert(ubErr.summary === "Show all 5" && ubErr.chev && !ubErr.open && ubErr.n === 5, "D6: “Show all 5” fold (chevron, closed) lists every failed check: " + JSON.stringify(ubErr));
+await page.click("#ub-summary .error-list details > summary");
+assert(await page.isVisible("#ub-summary .error-list details li >> nth=4"), "D6: opening “Show all 5” shows the fifth failure");
 
 await finish();

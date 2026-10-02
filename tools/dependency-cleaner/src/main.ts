@@ -1,14 +1,15 @@
 import { mountDebug } from "../../_shared/debug-ui";
 import { $, append, badge, emptyState, filteredEmpty, foldAllButtons, h, keepFold, showDialog, shownOf, wireTabs, type Child } from "../../_shared/dom";
-import { persistControls } from "../../_shared/view-state";
+import { persistControls, type PersistedControls } from "../../_shared/view-state";
 import { backupFileName, buildBackup, parseBackup, planRestore, type Backup, type RestorePlan } from "./deps/backup";
 import { parseFilter } from "./deps/classify";
 import { Cancelled, diagnose, reqKey } from "./deps/diagnose";
 import { findingsCsv, findingsJson, safeFileName } from "./deps/export";
 import { fetchEnvironmentId, fetchSolutionManaged, fetchSolutions, MetaCache, type DataverseLike, type DependencyRow } from "./deps/fetch";
-import { readSolutionZip, refName, type OfflineResult } from "./deps/offline";
+import { readSolutionZip, refName, type OfflineGroup, type OfflineResult } from "./deps/offline";
 import { CT, DEFAULT_FILTER, typeName, type Diagnosis, type Finding, type FixKind, type SolutionInfo } from "./deps/types";
 import { buildOps, executeOps, opLabel, prepare, xmlDiff, type Op, type OpResult, type Prepared, type ShellPlan } from "./deps/write";
+import { errorList } from "./error-list";
 import { initUpgrade, upgradeOnConnections } from "./upgrade-ui";
 import { dataverse, getConnections, initTheme, inToolbox, notify, onConnectionChange, openText, pickBinary, saveText, type LiveConnection } from "./host";
 
@@ -45,6 +46,14 @@ interface ShellView {
   only: boolean;
 }
 const shellViews = new Map<string, ShellView>();
+/** the zip read on the Offline tab */
+let offline: OfflineResult | null = null;
+/** the diagnosis / zip the type selects were filled from */
+let diagTypesOf: Diagnosis | null = null;
+let offlineTypesOf: OfflineResult | null = null;
+/** Diagnose / Offline find + type, saved per viewer; Clear resets these and not the "Show present in target" toggles */
+let diagCtl: PersistedControls;
+let offCtl: PersistedControls;
 /** a leaving list longer than this opens on "Only leaving" */
 const ONLY_LEAVING_OVER = 30;
 
@@ -81,10 +90,37 @@ function setStatus(msg: string | null): void {
   el.textContent = msg ?? "";
 }
 
-function connChip(c: LiveConnection, label: string): HTMLElement {
+/**
+ * A chip that reveals `detail` on a line of its own (`line`, placed by the caller) when clicked; `title` keeps the hover.
+ * aria-expanded / aria-controls tell assistive tech what the click shows.
+ */
+let revealSeq = 0;
+/** keys of the revealed lines, so a re-render (find, type filter, toggle) keeps them open */
+const revealed = new Set<string>();
+function revealChip(chip: HTMLButtonElement, line: HTMLElement, key?: string): HTMLButtonElement {
+  line.id ||= `reveal-${++revealSeq}`;
+  const sync = (open: boolean) => {
+    line.hidden = !open;
+    chip.setAttribute("aria-expanded", String(open));
+  };
+  sync(!!key && revealed.has(key));
+  chip.setAttribute("aria-controls", line.id);
+  chip.addEventListener("click", () => {
+    const open = line.hidden;
+    sync(open);
+    if (!key) return;
+    if (open) revealed.add(key);
+    else revealed.delete(key);
+  });
+  return chip;
+}
+
+function connChip(c: LiveConnection, label: string): HTMLElement[] {
   const dot = h("span", { class: "dot" });
   if (c.conn.environmentColor) dot.style.background = c.conn.environmentColor;
-  return h("span", { class: "connchip", title: c.conn.url }, dot, h("span", { class: "env" }, c.conn.name), h("span", { class: "kind" }, `${label} · ${c.conn.environment}`));
+  const line = h("span", { class: "conn-url mono" }, c.conn.url);
+  const chip = h("button", { type: "button", class: "connchip", title: c.conn.url }, dot, h("span", { class: "env" }, c.conn.name), h("span", { class: "kind" }, `${label} · ${c.conn.environment}`));
+  return [revealChip(chip, line), line];
 }
 
 function solutionLink(): string {
@@ -118,8 +154,8 @@ async function loadConnections(): Promise<void> {
   wrap.replaceChildren();
   const p = primary();
   const s = secondary();
-  if (p) wrap.append(connChip(p, "dev"));
-  if (s) wrap.append(connChip(s, "target"));
+  if (p) wrap.append(...connChip(p, "dev"));
+  if (s) wrap.append(...connChip(s, "target"));
   if (!p) wrap.append(h("span", { class: "caption" }, inToolbox() ? "No connection. Pick a primary (dev) connection in ToolBox." : "Standalone: Offline tab only."));
   const a = api();
   solutions = [];
@@ -204,9 +240,15 @@ async function runDiagnosis(solutionId?: string): Promise<void> {
   renderDiagnosis();
 }
 
-function requiredChip(r: Finding["required"][number]): HTMLElement {
+/** The chip, and (when Dataverse named any) the line it reveals with every managed solution that contains the component. */
+function requiredChip(f: Finding, r: Finding["required"][number]): { chip: HTMLElement; line: HTMLElement | null } {
   const safe = !!r.solution && !!targetSolutions?.has(r.solution.uniqueName.toLowerCase());
-  return h("span", { class: `req${safe ? " is-safe" : ""}`, title: r.solutions.join(", ") }, h("span", { class: "sol" }, r.solution?.uniqueName ?? "unknown solution"), `${typeName(r.type)} ${r.name}`, safe ? " · in target" : "");
+  const cls = `req${safe ? " is-safe" : ""}`;
+  const content: Child[] = [h("span", { class: "sol" }, r.solution?.uniqueName ?? "unknown solution"), `${typeName(r.type)} ${r.name}`, safe ? " · in target" : ""];
+  if (!r.solutions.length) return { chip: h("span", { class: cls }, ...content), line: null };
+  const line = h("div", { class: "req-line caption" }, `${typeName(r.type)} ${r.name} is in ${r.solutions.length} managed solution${r.solutions.length === 1 ? "" : "s"}: `, h("span", { class: "mono" }, r.solutions.join(", ")));
+  const chip = h("button", { type: "button", class: cls, title: r.solutions.join(", ") }, ...content);
+  return { chip: revealChip(chip, line, `${f.key}>${r.type}:${r.id}`), line };
 }
 
 function findingCard(f: Finding): HTMLElement {
@@ -219,6 +261,7 @@ function findingCard(f: Finding): HTMLElement {
     renderSelCount();
   });
   const report = f.fixes.find((x) => x.kind === "report");
+  const chips = f.required.map((r) => requiredChip(f, r));
   return h(
     "li",
     { class: `finding${f.status === "safe" ? " is-safe" : ""}`, "data-key": f.key },
@@ -233,7 +276,8 @@ function findingCard(f: Finding): HTMLElement {
       sel,
     ),
     h("div", { class: "cause" }, f.cause),
-    h("div", { class: "chips" }, ...f.required.map(requiredChip)),
+    h("div", { class: "chips" }, ...chips.map((c) => c.chip)),
+    ...chips.map((c) => c.line),
     report?.link ? h("div", { class: "caption" }, report.note ?? "", " ", h("a", { href: report.link, target: "_blank", rel: "noopener" }, "Open solution in maker portal")) : null,
   );
 }
@@ -243,21 +287,45 @@ function renderSelCount(): void {
   $<HTMLButtonElement>("#btn-to-fix").disabled = selections.size === 0;
 }
 
+/** Type `<select>` options from the rows shown ("Form (3)"); re-applies the saved choice once it is offered. */
+function fillTypes(sel: HTMLSelectElement, types: number[], ctl: PersistedControls): void {
+  const counts = new Map<number, number>();
+  for (const t of types) counts.set(t, (counts.get(t) ?? 0) + 1);
+  sel.replaceChildren(h("option", { value: "" }, "All types"), ...[...counts].sort((a, b) => a[0] - b[0]).map(([t, n]) => h("option", { value: String(t) }, `${typeName(t)} (${n})`)));
+  ctl.restore();
+}
+
+/** Search text of a finding: dependent name and table, required components, their tables and owning solutions. */
+const findText = (f: Finding): string =>
+  [f.dependent.name, f.dependent.table, f.dependent.rootTable, ...f.required.flatMap((r) => [r.name, r.table, r.solution?.uniqueName, r.solution?.friendlyName])]
+    .filter(Boolean)
+    .join("\n")
+    .toLowerCase();
+
 function renderDiagnosis(): void {
   const list = $("#findings");
   const sum = $("#diag-summary");
   list.replaceChildren();
   sum.replaceChildren();
   $("#diag-actions").hidden = !diagnosis;
+  $("#diag-tools").hidden = !diagnosis?.findings.length;
   for (const id of ["#btn-export-json", "#btn-export-csv"]) $(id).toggleAttribute("disabled", !diagnosis);
   if (!diagnosis) {
     list.append(emptyState("No diagnosis yet", primary() ? "Pick an unmanaged solution and run Diagnose." : "Connect a dev environment in ToolBox, or use the Offline tab."));
     return;
   }
   const d = diagnosis;
+  if (diagTypesOf !== d) {
+    fillTypes($<HTMLSelectElement>("#diag-type"), d.findings.map((f) => f.dependent.type), diagCtl);
+    diagTypesOf = d;
+  }
   const blockers = d.findings.filter((f) => f.status === "blocker");
   const safe = d.findings.length - blockers.length;
   const showSafe = $<HTMLInputElement>("#show-safe").checked;
+  const q = $<HTMLInputElement>("#diag-find").value.trim().toLowerCase();
+  const type = $<HTMLSelectElement>("#diag-type").value;
+  const matching = d.findings.filter((f) => (!type || String(f.dependent.type) === type) && (!q || findText(f).includes(q)));
+  const shown = matching.filter((f) => showSafe || f.status === "blocker");
   sum.append(
     h(
       "div",
@@ -267,20 +335,25 @@ function renderDiagnosis(): void {
       badge(`${blockers.length} blocker${blockers.length === 1 ? "" : "s"}`, blockers.length ? "bad" : "ok"),
       d.target ? badge(`${safe} present in target`, "ok") : h("span", { class: "caption" }, "No target connection: every dependency matching the filter counts."),
       d.errors.length ? badge(`${d.errors.length} lookups failed`, "warn") : null,
+      d.findings.length ? h("span", { class: "count-caption", id: "diag-shown", "aria-live": "polite" }, `${shownOf(shown.length, d.findings.length, "findings")} shown`) : null,
     ),
   );
   for (const w of d.warnings ?? []) sum.append(h("div", { class: "warnings" }, w));
-  if (d.errors.length) sum.append(h("div", { class: "warnings" }, `RetrieveRequiredComponents failed for ${d.errors.length} component(s): ${d.errors.slice(0, 3).map((e) => `${e.component} (${e.error})`).join("; ")}`));
-  const shown = d.findings.filter((f) => showSafe || f.status === "blocker");
+  if (d.errors.length) sum.append(errorList(`RetrieveRequiredComponents failed for ${d.errors.length} component(s)`, d.errors, "diag:errors"));
   if (!shown.length) {
     list.append(
-      d.findings.length
-        ? filteredEmpty("No blocking dependencies", "Everything found is present in the target. Tick “Show present in target” to see it.", () => {
-            const safeBox = $<HTMLInputElement>("#show-safe");
-            safeBox.checked = true;
-            safeBox.dispatchEvent(new Event("change")); // saves the toggle and re-renders
-          }, "Show present in target")
-        : emptyState("No blocking dependencies", "Nothing in this solution depends on the filtered solutions."),
+      !d.findings.length
+        ? emptyState("No blocking dependencies", "Nothing in this solution depends on the filtered solutions.")
+        : !matching.length
+          ? filteredEmpty("No findings match", `The search or type filter hides all ${d.findings.length} findings. The diagnosis is kept: clearing shows them again.`, () => {
+              diagCtl.reset();
+              renderDiagnosis();
+            })
+          : filteredEmpty("No blocking dependencies", `Everything ${q || type ? "that matches " : ""}found is present in the target. Tick “Show present in target” to see it.`, () => {
+              const safeBox = $<HTMLInputElement>("#show-safe");
+              safeBox.checked = true;
+              safeBox.dispatchEvent(new Event("change")); // saves the toggle and re-renders
+            }, "Show present in target"),
     );
   } else list.append(h("ul", { class: "findings" }, ...shown.map(findingCard)));
   renderSelCount();
@@ -686,29 +759,77 @@ async function applyRestore(): Promise<void> {
 
 // ---------- offline ----------
 async function openZip(name: string, data: Uint8Array): Promise<void> {
-  const out = $("#offline-body");
   try {
-    renderOffline(await readSolutionZip(name, data, filter(), targetSolutions));
+    offline = await readSolutionZip(name, data, filter(), targetSolutions);
+    renderOffline();
   } catch (e) {
-    out.replaceChildren(h("div", { class: "danger-banner" }, (e as Error).message));
+    offline = null;
+    renderOffline((e as Error).message);
   }
 }
 
-function renderOffline(r: OfflineResult): void {
+const offlineText = (g: OfflineGroup): string =>
+  [refName(g.dependent), g.dependent.parentSchemaName, ...g.required.flatMap((x) => [refName(x), x.parentSchemaName, x.solution])]
+    .filter(Boolean)
+    .join("\n")
+    .toLowerCase();
+
+function renderOffline(error?: string): void {
+  const head = $("#offline-head");
+  const out = $("#offline-list");
+  head.replaceChildren();
+  out.replaceChildren();
+  $("#off-tools").hidden = !offline?.groups.length;
+  if (error) head.append(h("div", { class: "danger-banner" }, error));
+  if (!offline) return;
+  const r = offline;
+  if (offlineTypesOf !== r) {
+    fillTypes($<HTMLSelectElement>("#off-type"), r.groups.map((g) => g.dependent.type), offCtl);
+    offlineTypesOf = r;
+  }
   const blockers = r.groups.filter((g) => g.status === "blocker").length;
+  const q = $<HTMLInputElement>("#off-find").value.trim().toLowerCase();
+  const type = $<HTMLSelectElement>("#off-type").value;
+  const showSafe = $<HTMLInputElement>("#off-show-safe").checked;
+  const matching = r.groups.filter((g) => (!type || String(g.dependent.type) === type) && (!q || offlineText(g).includes(q)));
+  const shown = matching.filter((g) => showSafe || g.status === "blocker");
   const refLabel = (x: { typeName: string; schemaName: string | null; displayName: string | null; id: string | null; parentSchemaName: string | null }) =>
     `${x.typeName} ${refName(x as Parameters<typeof refName>[0])}${x.parentSchemaName ? ` (${x.parentSchemaName})` : ""}`;
-  const cards: Child[] = r.groups.map((g) =>
+  const cards: Child[] = shown.map((g) =>
     h(
       "li",
-      { class: `finding${g.status === "safe" ? " is-safe" : ""}` },
+      { class: `finding${g.status === "safe" ? " is-safe" : ""}`, "data-key": g.key },
       h("div", { class: "head" }, badge(g.dependent.typeName, "neutral"), h("span", { class: "name mono" }, refName(g.dependent)), g.dependent.parentSchemaName ? h("span", { class: "caption" }, g.dependent.parentSchemaName) : null, badge(g.status === "blocker" ? "blocker" : "present in target", g.status === "blocker" ? "bad" : "ok")),
       h("div", { class: "chips" }, ...g.required.map((x) => h("span", { class: `req${x.safe ? " is-safe" : ""}` }, h("span", { class: "sol" }, x.solution ?? "unknown solution"), refLabel(x)))),
     ),
   );
-  $("#offline-body").replaceChildren(
-    h("div", { class: "summary", id: "offline-summary" }, h("strong", {}, `${r.uniqueName} ${r.version}`), r.managed ? badge("managed", "neutral") : badge("unmanaged", "neutral"), `${r.total} missing dependencies in solution.xml ·`, badge(`${r.groups.length} dependents in scope`, "neutral"), badge(`${blockers} blocking`, blockers ? "bad" : "ok")),
-    r.groups.length ? h("ul", { class: "findings" }, ...cards) : emptyState("No missing dependencies in scope", `Filter: ${filter().join(", ")}`),
+  head.append(
+    h(
+      "div",
+      { class: "summary", id: "offline-summary" },
+      h("strong", {}, `${r.uniqueName} ${r.version}`),
+      r.managed ? badge("managed", "neutral") : badge("unmanaged", "neutral"),
+      `${r.total} missing dependencies in solution.xml ·`,
+      badge(`${r.groups.length} dependents in scope`, "neutral"),
+      badge(`${blockers} blocking`, blockers ? "bad" : "ok"),
+      r.groups.length ? h("span", { class: "count-caption", id: "offline-shown", "aria-live": "polite" }, `${shownOf(shown.length, r.groups.length, "dependents")} shown`) : null,
+    ),
+  );
+  out.append(
+    shown.length
+      ? h("ul", { class: "findings" }, ...cards)
+      : !r.groups.length
+        ? emptyState("No missing dependencies in scope", `Filter: ${filter().join(", ")}`)
+        : !matching.length
+          ? filteredEmpty("No dependents match", `The search or type filter hides all ${r.groups.length} dependents.`, () => {
+              offCtl.reset();
+              renderOffline();
+            })
+          : filteredEmpty("No blocking dependencies", `Every dependent ${q || type ? "that matches " : ""}is present in the target. Tick “Show present in target” to see it.`, () => {
+              const safeBox = $<HTMLInputElement>("#off-show-safe");
+              safeBox.checked = true;
+              safeBox.dispatchEvent(new Event("change")); // saves the toggle and re-renders
+            }, "Show present in target"),
   );
 }
 
@@ -737,13 +858,20 @@ async function exportFile(name: string, content: string, mime: string): Promise<
 }
 
 function wire(): void {
-  persistControls("dependency-cleaner", ["show-safe", "ub-scan"]);
+  persistControls("dependency-cleaner", ["show-safe", "ub-scan", "off-show-safe"]);
+  diagCtl = persistControls("dependency-cleaner", ["diag-find", "diag-type"]);
+  offCtl = persistControls("dependency-cleaner", ["off-find", "off-type"]);
   wireTabs(() => undefined);
   $("#btn-run").addEventListener("click", () => void runDiagnosis());
   $("#btn-cancel").addEventListener("click", () => {
     cancelFlag = true;
   });
   $("#show-safe").addEventListener("change", renderDiagnosis);
+  $("#diag-find").addEventListener("input", renderDiagnosis);
+  $("#diag-type").addEventListener("change", renderDiagnosis);
+  $("#off-find").addEventListener("input", () => renderOffline());
+  $("#off-type").addEventListener("change", () => renderOffline());
+  $("#off-show-safe").addEventListener("change", () => renderOffline());
   $("#btn-to-fix").addEventListener("click", () => void toFix());
   $("#btn-backup").addEventListener("click", () => void downloadBackup());
   $("#prod-ack").addEventListener("change", updateConfirm);
