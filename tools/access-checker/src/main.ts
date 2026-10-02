@@ -1,5 +1,5 @@
 import { mountDebug } from "../../_shared/debug-ui";
-import { $, append, badge, card, emptyState, filteredEmpty, foldAllButtons, foldCard, h, keepFold, shownOf, table, wireTabs, type BadgeKind } from "../../_shared/dom";
+import { $, append, badge, card, emptyState, filteredEmpty, foldAllButtons, foldCard, h, keepFold, shownOf, table, wireTabs, type BadgeKind, type Child } from "../../_shared/dom";
 import { loadView, saveView } from "../../_shared/view-state";
 import { dataverse, getConnections, initTheme, inToolbox, notify, onConnectionChange, saveText } from "../../_shared/host";
 import { columnAccess } from "./access/columns";
@@ -29,8 +29,8 @@ import {
   searchUsers,
   type DataverseLike,
 } from "./access/fetch";
-import { depthLabel, isSystemAdminRole, tablePrivilegeName } from "./access/privileges";
-import { RIGHTS, TEAM_TYPE_LABEL, type CheckData, type Right, type Depth, type ColumnAccess, type Explanation, type RecordInfo, type ShareEntry, type TableInfo, type UserInfo } from "./access/types";
+import { depthHint, depthInfo, depthLabel, isSystemAdminRole, tablePrivilegeName } from "./access/privileges";
+import { RIGHTS, TEAM_TYPE_LABEL, type CheckData, type Right, type Depth, type ColumnAccess, type Explanation, type PrivilegePath, type RecordInfo, type RightVerdict, type ShareEntry, type TableInfo, type TeamInfo, type UserInfo } from "./access/types";
 
 // ---------- state ----------
 const cache = new Cache();
@@ -294,8 +294,13 @@ function renderCheck(): void {
     ...x.verdicts.map((v) => {
       const platform = v.platform;
       const cls = `verdict is-${platform === "yes" ? "yes" : platform === "no" ? "no" : "na"}`;
-      const main = platform === "n/a" && v.applicable ? badge(v.computed === "yes" ? "granted*" : "denied*", kindOf(v.computed)) : badge(platform === "yes" ? "granted" : platform === "no" ? "denied" : "n/a", kindOf(platform));
-      const depth = x.mode === "table" ? h("span", { class: "depth" }, depthLabel(v.platformDepth ?? v.bestDepth)) : v.agrees === false ? h("span", { class: "depth" }, "tool disagrees") : null;
+      const main = verdictBadge(v, x.mode);
+      const depth =
+        x.mode === "table"
+          ? depthEl(v.platformDepth ?? v.bestDepth, "depth")
+          : v.agrees === false
+            ? h("span", { class: "depth", title: "The tool's explanation differs from the platform verdict: trust the platform" }, "tool disagrees")
+            : null;
       if (!v.applicable) return h("div", { class: cls, "data-right": v.right }, h("span", { class: "right" }, v.right), main, depth);
       const b = h(
         "button",
@@ -330,12 +335,10 @@ function renderCheck(): void {
           h(
             "div",
             { class: "detail" },
-            v.paths.length
-              ? h("ul", {}, ...v.paths.map((p) => h("li", { class: `path ${p.reaches === false ? "is-miss" : "is-ok"}` }, `${p.role.name}${p.viaTeam ? ` via team ${p.viaTeam.name}` : " (direct)"} · ${depthLabel(p.depth)}${x.mode === "record" ? ` · ${p.reason}` : ""}`)))
-              : h("p", { class: "caption" }, `No role grants ${d.tablePrivileges[v.right] ?? tablePrivilegeName(d.tablePrivileges, v.right, d.table.logicalName) ?? v.right}.`),
+            whyPaths(v, x.mode, `No role grants ${d.tablePrivileges[v.right] ?? tablePrivilegeName(d.tablePrivileges, v.right, d.table.logicalName) ?? v.right}.`),
             v.sharePaths.length ? h("ul", {}, ...v.sharePaths.map((s) => h("li", { class: `path ${v.sharesEffective ? "is-ok" : "is-miss"}` }, `Share: ${s}${v.sharesEffective ? "" : " (no effect: the user holds no role with this privilege)"}`))) : null,
             v.hierarchyHint ? h("p", { class: "caption" }, v.hierarchyHint) : null,
-            x.mode === "table" && v.platformDepth != null ? h("p", { class: "caption" }, `Platform effective depth: ${depthLabel(v.platformDepth)}`) : null,
+            x.mode === "table" && v.platformDepth != null ? h("p", { class: "caption" }, "Platform effective depth: ", depthEl(v.platformDepth)) : null,
           ),
         );
         return h("li", { "data-right": v.right }, keepFold(row, `${foldScope}:${v.right}`, denied || v.agrees === false));
@@ -353,7 +356,7 @@ function renderCheck(): void {
         h("dt", {}, "User BU"), h("dd", {}, own.userBu?.name ?? "—"),
         h("dt", {}, "Relation"), h("dd", { id: "relation" }, own.relation),
       )
-    : h("dl", { class: "kv" }, h("dt", {}, "User BU"), h("dd", {}, d.userBu?.name ?? "—"), h("dt", {}, "Teams"), h("dd", {}, d.teams.length ? d.teams.map((t) => t.name).join(", ") : "none"));
+    : h("dl", { class: "kv" }, h("dt", {}, "User BU"), h("dd", {}, d.userBu?.name ?? "—"), h("dt", {}, "Teams"), h("dd", {}, teamNames(d.teams)));
 
   const sharesForUser = x.sharesForUser.length
     ? table(["Via", "Rights"], x.sharesForUser.map((s) => [s.via, h("span", { class: "chips" }, ...s.entry.rights.map((r) => badge(r, "ok")))]))
@@ -363,7 +366,7 @@ function renderCheck(): void {
     panel,
     h("h2", {}, title),
     verdicts,
-    x.notes.length ? h("div", { class: "warnings" }, h("ul", { class: "notes" }, ...x.notes.map((n) => h("li", {}, n)))) : null,
+    notesBanner(x.notes),
     card("Why", why, foldAllButtons(why, "details")),
     roles ? fold("Roles", null, roles.body, true, "roles", roles.extra) : fold("Roles", 0, emptyState("No roles", "This user holds no security roles."), true, "roles"),
     fold("Ownership & business unit", null, ownership, true, "ownership"),
@@ -373,6 +376,75 @@ function renderCheck(): void {
 }
 
 const whyId = (r: Right): string => `why-${r}`;
+
+/** Depth name with its meaning as a tooltip ("—" reads "None: …"). */
+const depthEl = (d: Depth | null, cls?: string): HTMLElement => h("span", { class: cls, title: depthHint(d) }, depthLabel(d));
+
+/** Verdict chip badge. A starred verdict is the tool's own result, shown when the platform's is unavailable. */
+function verdictBadge(v: RightVerdict, mode: Explanation["mode"]): HTMLElement {
+  if (!v.applicable) return withTitle(badge("n/a", "neutral"), "Not applicable: organization-owned tables have no Assign or Share");
+  if (v.platform === "n/a") {
+    const word = v.computed === "yes" ? "granted" : "denied";
+    return withTitle(badge(`${word}*`, kindOf(v.computed)), `${word}*: platform verdict unavailable; this is the tool's computed result`);
+  }
+  const src = mode === "record" ? "RetrievePrincipalAccess" : "RetrieveUserPrivilegeByPrivilegeName";
+  return withTitle(badge(v.platform === "yes" ? "granted" : "denied", kindOf(v.platform)), `Platform verdict (${src})`);
+}
+const withTitle = <T extends HTMLElement>(el: T, title: string): T => {
+  el.title = title;
+  return el;
+};
+
+/**
+ * Why-row privilege paths. With one path and no share, the row's summary already is that path's sentence: only
+ * what it leaves out (the depth, and whether the role is held directly or through a team) is shown again.
+ */
+function whyPaths(v: RightVerdict, mode: Explanation["mode"], none: string): HTMLElement {
+  const held = (p: PrivilegePath): string => (p.viaTeam ? `held via team ${p.viaTeam.name} (${TEAM_TYPE_LABEL[p.viaTeam.type] ?? "team"})` : "held directly");
+  const [only] = v.paths;
+  if (v.paths.length === 1 && !v.sharePaths.length && v.summary.includes(only.role.name))
+    return h("p", { class: "caption path-meta" }, depthEl(only.depth), " depth · ", held(only));
+  if (!v.paths.length) return h("p", { class: "caption" }, none);
+  return h(
+    "ul",
+    {},
+    ...v.paths.map((p) =>
+      h("li", { class: `path ${p.reaches === false ? "is-miss" : "is-ok"}` }, `${p.role.name}${p.viaTeam ? ` via team ${p.viaTeam.name}` : " (direct)"} · `, depthEl(p.depth), mode === "record" ? ` · ${p.reason}` : ""),
+    ),
+  );
+}
+
+/** Teams in the user details: the first few, then a "+N more" button that reveals the rest in place. */
+const TEAMS_SHOWN = 5;
+function teamNames(teams: TeamInfo[]): HTMLElement {
+  const names = teams.map((t) => t.name);
+  const el = h("span", { id: "teams" }, names.length ? names.slice(0, TEAMS_SHOWN).join(", ") : "none");
+  const rest = names.slice(TEAMS_SHOWN);
+  if (rest.length) {
+    const more = h("button", { class: "btn btn-ghost btn-sm more-inline", type: "button", id: "btn-more-teams", title: rest.join(", ") }, `+${rest.length} more`);
+    const wrap = h("span", {}, " ", more);
+    more.addEventListener("click", () => {
+      const tail = h("span", { tabindex: "-1" }, `, ${rest.join(", ")}`);
+      wrap.replaceWith(tail);
+      tail.focus(); // keep keyboard focus where the button was
+    });
+    el.append(wrap);
+  }
+  return el;
+}
+
+/** Notes banner: the first note always shows, any others fold behind "N more notes" (remembered for the page). */
+function notesBanner(notes: string[]): HTMLElement | null {
+  if (!notes.length) return null;
+  const [first, ...rest] = notes;
+  const more: Child = rest.length
+    ? keepFold(
+        h("details", { class: "more-notes" }, h("summary", { class: "chev" }, `${rest.length} more ${rest.length === 1 ? "note" : "notes"}`), h("ul", { class: "notes" }, ...rest.map((n) => h("li", {}, n)))),
+        "ac:more-notes",
+      )
+    : null;
+  return h("div", { class: "warnings", id: "notes" }, h("ul", { class: "notes" }, h("li", {}, first)), more);
+}
 
 /** Highlight the focused right's column in the Roles table (under `root`) and mark which verdict chip is pressed. */
 function markFocusColumn(root: ParentNode): void {
@@ -432,7 +504,7 @@ function rolesView(d: CheckData): { body: HTMLElement; extra: HTMLElement } {
         shown.map((hr) => [
           hr.role.name,
           hr.viaTeam ? `via team ${hr.viaTeam.name} (${TEAM_TYPE_LABEL[hr.viaTeam.type] ?? "team"})${hr.role.isInherited ? "" : " · team privileges only"}` : "direct",
-          ...RIGHTS.map((_, i) => depthLabel(depthOf(hr.role.id, i))),
+          ...RIGHTS.map((_, i) => depthEl(depthOf(hr.role.id, i))),
         ]),
         undefined,
         "roles",
@@ -447,7 +519,26 @@ function rolesView(d: CheckData): { body: HTMLElement; extra: HTMLElement } {
   });
   render();
   const extra = h("span", { class: "roles-filter" }, h("label", { class: "check" }, box, "Hide roles with no privilege on this table"), caption);
-  return { body, extra };
+  return { body: h("div", {}, body, depthLegend()), extra };
+}
+
+/** Collapsed legend under the Roles table: what each depth name covers (also on each cell's tooltip). */
+function depthLegend(): HTMLElement {
+  const depths: (Depth | null)[] = [0, 1, 2, 3, null];
+  const row = (d: Depth | null): Node[] => {
+    const i = depthInfo(d);
+    return [h("dt", {}, d == null ? "— (None)" : i.name), h("dd", {}, i.meaning)];
+  };
+  return keepFold(
+    h(
+      "details",
+      { class: "depth-legend", id: "depth-legend" },
+      h("summary", { class: "chev caption" }, "Depth legend"),
+      h("dl", { class: "kv" }, ...depths.flatMap(row)),
+      h("p", { class: "caption" }, "Local and Deep count from the business unit of the role (or team) that grants the privilege: the user's own unless a note above says otherwise."),
+    ),
+    "ac:depth-legend",
+  );
 }
 
 // ---------- render: shares ----------

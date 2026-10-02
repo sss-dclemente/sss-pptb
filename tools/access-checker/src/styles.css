@@ -83,3 +83,13 @@ table.roles th.is-focus { color: var(--accent-strong); }
 .filters label.check { display: inline-flex; align-items: center; gap: var(--s-1); font-size: var(--fs-caption); color: var(--fg-muted); }
 .filters .count-caption { margin-left: auto; }
 table.shares tr.is-affecting td:first-child { font-weight: var(--fw-bold); color: var(--fg-primary); }
+
+/* Notes banner: first note always shown, the rest folded; depth legend under Roles; "+N more" teams */
+.warnings .more-notes > summary { cursor: pointer; width: fit-content; margin-top: var(--s-1); font-size: var(--fs-caption); }
+.warnings .more-notes > .notes { margin-top: var(--s-1); }
+.depth-legend { margin-top: var(--s-3); }
+.depth-legend > summary { cursor: pointer; width: fit-content; }
+.depth-legend .kv { margin: var(--s-2) 0; }
+.more-inline { padding: 0 var(--s-1); margin-left: var(--s-1); vertical-align: baseline; }
+/* Depth names explain themselves on hover */
+table.roles td span[title], .why .detail span[title] { cursor: help; }

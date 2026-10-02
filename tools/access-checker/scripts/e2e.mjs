@@ -84,9 +84,11 @@ const MOCK = `
   };
   const teams = [{ teamid: T_EU, name: 'Sales EU', teamtype: 0, _businessunitid_value: BU_SALES }];
   const readers = { teamid: T_READERS, name: 'Sales Readers', teamtype: 0, _businessunitid_value: BU_SALES };
+  // Plus User belongs to 7 role-less teams: the user details show 5 and a "+2 more" button.
+  const many = Array.from({ length: 7 }, (_, i) => ({ teamid: 'd1000000-0000-0000-0000-' + String(i + 1).padStart(12, '0'), name: 'Team ' + (i + 1), teamtype: 0, _businessunitid_value: BU_SALES }));
   const expand = {
     systemuserroles_association: { [ANA]: [roles[R_SALES], roles[R_ROOTAPP], roles[R_NOPRIV]], [DIEGO]: [roles[R_ADMIN]], [EVA]: [roles[R_CAPP]] },
-    teammembership_association: { [ANA]: teams, [EVA]: [readers] },
+    teammembership_association: { [ANA]: teams, [EVA]: [readers], [PLUS]: many },
     systemuserprofiles_association: { [ANA]: [] },
     teamroles_association: { [T_EU]: [roles[R_SHARER], roles[R_TEAMONLY]], [T_READERS]: [roles[R_CREADER]] },
     teamprofiles_association: { [T_EU]: [{ fieldsecurityprofileid: FSP, name: 'Margin Readers' }] },
@@ -203,6 +205,7 @@ const MOCK = `
         return { RolePrivileges: best === null ? [] : [{ PrivilegeId: P(want), Depth: best, BusinessUnitId: BU_SALES }] };
       }
       case 'RetrievePrincipalAccess': {
+        if (window.__failPrincipalAccess) throw new Error('mock: RetrievePrincipalAccess unavailable');
         const id = req.parameters.Target.id;
         if (req.parameters.Target.entityLogicalName === 'contact') return { AccessRights: id === CON_E && req.entityId === EVA ? 'ReadAccess, WriteAccess, AppendAccess' : 'None' };
         if (req.parameters.Target.entityLogicalName !== 'account') throw new Error('mock: bad target');
@@ -289,6 +292,40 @@ assert(why1.includes("agrees") && !why1.includes("platform says otherwise"), "to
   assert(await page.$$eval("#why details", (d) => d.every((x) => x.open)), "why: Expand all opens every row");
   await card.locator(".fold-all button", { hasText: "Collapse all" }).click();
   assert(await page.$$eval("#why details", (d) => d.every((x) => !x.open)), "why: Collapse all closes every row");
+}
+// A8: depth names and verdicts explain themselves; depth legend under Roles; one-path Why rows don't repeat the summary.
+{
+  const title = (sel) => page.getAttribute(sel, "title");
+  assert((await title('#verdicts .verdict[data-right="Read"] .depth')).startsWith("Deep (Parent: Child Business Units): records in the user's business unit and its child"), "legend: chip depth carries a tooltip");
+  assert((await title('#verdicts .verdict[data-right="Read"] .badge')).startsWith("Platform verdict"), "legend: platform verdict badge carries a tooltip");
+  const cellTitles = await page.$$eval("#tab-check table.roles td span[title]", (s) => Object.fromEntries(s.map((x) => [x.textContent, x.title])));
+  assert(cellTitles.Global === undefined && cellTitles.Deep.includes("child business units") && cellTitles.Basic.startsWith("Basic (User): records the user") && cellTitles.Local.startsWith("Local (Business Unit): records in the user's business unit") && cellTitles["—"].startsWith("None"), "legend: Roles depth cells carry tooltips: " + JSON.stringify(cellTitles));
+  const legend = "#card-roles #depth-legend";
+  assert(await page.$eval(legend, (d) => d.tagName === "DETAILS" && !d.open && d.querySelector(":scope > summary").classList.contains("chev") && d.querySelector(":scope > summary").textContent === "Depth legend"), "legend: Roles card has a collapsed 'Depth legend' fold with a chevron");
+  const legendText = await text(legend);
+  assert(["Basic (User)", "Local (Business Unit)", "Deep (Parent: Child Business Units)", "Global (Organization)", "— (None)", "every record in the organisation"].every((t) => legendText.includes(t)), "legend: lists every depth name with its meaning");
+  await page.click(`${legend} > summary`);
+  assert(await page.$eval(legend, (d) => d.open), "legend: opens on click");
+  await page.uncheck("#hide-irrelevant-roles");
+  assert(await page.$eval(legend, (d) => d.open), "legend: stays open when the roles toggle re-renders the table");
+  await page.check("#hide-irrelevant-roles");
+  await page.click(`${legend} > summary`);
+  // One path, no share: the row's summary is that path's sentence; the detail adds only depth and how it is held.
+  const detail = (r) => page.$eval(`#why-${r} .detail`, (d) => d.textContent.replace(/\s+/g, " ").trim());
+  const meta = (r) => page.$eval(`#why-${r} .detail > :first-child`, (d) => d.textContent);
+  assert((await detail("Read")) === "Deep depth · held directlyPlatform effective depth: Deep" && (await meta("Read")) === "Deep depth · held directly", "why: one-path Read detail shows only depth and how it is held (+ platform depth)");
+  assert((await meta("Share")) === "Local depth · held via team Sales EU (owner team)", "why: one-path Share detail names the team");
+  assert(!(await detail("Read")).includes("Sales Person") && (await text("#why-Read summary")).includes("Deep via Sales Person"), "why: role named once, in the summary");
+  assert((await page.$$("#why-AppendTo .detail li")).length === 2 && (await detail("AppendTo")).includes("Root Appender (direct)") && (await detail("AppendTo")).includes("Sales Person (direct)"), "why: several paths still list each one");
+  assert((await detail("Delete")).includes("No role grants prvDeleteAccount."), "why: no path keeps its 'no role grants' line");
+  assert((await title("#why-Read .detail span[title]")).startsWith("Deep"), "why: depth in the detail carries a tooltip");
+  // Teams in the user details: one team, no "+N more".
+  assert((await text("#teams")) === "Sales EU" && !(await page.$("#btn-more-teams")), "teams: short list shown whole");
+  // Notes banner: first note shown, the other folded behind "1 more note".
+  assert((await page.$$("#notes > ul.notes > li")).length === 1, "notes: one note shown up front");
+  assert(await page.$eval("#notes details.more-notes", (d) => !d.open && d.querySelector(":scope > summary.chev").textContent === "1 more note"), "notes: the rest behind a closed '1 more note' chevron fold");
+  await page.click("#notes details.more-notes > summary");
+  assert(await page.$eval("#notes details.more-notes", (d) => d.open && d.textContent.includes("Team privileges only")) && (await text("#notes > ul.notes")).includes("Direct role Root Appender"), "notes: opening the fold shows the other note");
 }
 // The point of moving off RetrieveUserPrivileges: prvShareAccount comes from a role held
 // through a team, and its real depth is Local. The old message reports team-inherited
@@ -397,6 +434,13 @@ const why2 = await text("#why");
 assert(why2.includes("Deep depth: record BU Sales is under Sales"), "Read reach explained");
 assert(why2.includes("Basic depth covers only records the user"), "Write miss explained");
 assert(why2.includes("Sharer via team Sales EU: Local depth: record is in the same BU"), "Share via team explained");
+{
+  const detail = (r) => page.$eval(`#why-${r} .detail`, (d) => d.textContent.replace(/\s+/g, " ").trim());
+  assert((await detail("Read")) === "Deep depth · held directly" && (await text("#why-Read summary")).includes("Sales Person: Deep depth: record BU Sales is under Sales"), "why (record): one-path Read keeps the reason in the summary only");
+  const appendTo = await detail("AppendTo");
+  assert((await page.$$("#why-AppendTo .detail li")).length === 2 && appendTo.includes("Root Appender (direct) · Local · Local depth covers only Root; record is in Sales"), "why (record): several paths keep each reason, misses included: " + appendTo);
+  assert(await page.$eval("#notes details.more-notes", (d) => d.open), "notes: 'more notes' fold opened on one check stays open on the next");
+}
 assert(!why2.includes("platform says otherwise"), "tool agrees with RetrievePrincipalAccess");
 assert((await text("#relation")).includes("record in the user's BU"), "BU relation");
 assert((await text("#hierarchy")).includes("direct manager"), "hierarchy hint for manager");
@@ -633,6 +677,22 @@ assert((await chip("Delete")).includes("granted") && (await chip("Delete")).incl
 assert(!(await text("#why")).includes("platform says otherwise"), "after role change: role depth re-read, tool agrees");
 await page.evaluate(() => window.__mock.rolePrivs[window.__mock.R_SALES].pop());
 
+// A8: platform verdict unavailable → starred tool verdicts, each explained by a tooltip.
+await pickRecord("bruno", "Bruno Corp");
+await page.evaluate(() => (window.__failPrincipalAccess = true));
+await page.click("#btn-check");
+await page.waitForFunction(() => document.querySelector("#tab-check h2")?.textContent.includes("Bruno Corp"));
+await settle();
+{
+  const badgeOf = (r) => page.$eval(`#verdicts .verdict[data-right="${r}"] .badge`, (b) => ({ t: b.textContent, title: b.title }));
+  const read = await badgeOf("Read");
+  const write = await badgeOf("Write");
+  assert(read.t === "granted*" && read.title === "granted*: platform verdict unavailable; this is the tool's computed result", "starred: granted* explained, got " + JSON.stringify(read));
+  assert(write.t === "denied*" && write.title.startsWith("denied*: platform verdict unavailable"), "starred: denied* explained");
+  assert((await text("#notes")).includes("RetrievePrincipalAccess failed"), "starred: notes say why the platform verdict is missing");
+}
+await page.evaluate(() => (window.__failPrincipalAccess = false));
+
 // Local/Deep include Basic: the user's own record in another BU than the role's base BU.
 await pickUser("eva", "Eva Nunes");
 await page.selectOption("#table", "contact");
@@ -676,6 +736,19 @@ await page.uncheck("#columns-only");
 await page.click(".tab[data-tab='check']");
 await page.check("#hide-irrelevant-roles");
 assert((await text("#roles-body")).includes("None of the user's 2 roles"), "roles: re-ticking hides them again");
+
+// A8: a long team list shows 5 names and a "+2 more" button that reveals the rest in place.
+await pickUser("plus user", "Plus User");
+await page.click("#btn-check");
+await page.waitForFunction(() => document.querySelector("#tab-check h2")?.textContent.includes("Plus User on table Account"));
+await settle();
+{
+  assert((await text("#teams")) === "Team 1, Team 2, Team 3, Team 4, Team 5 +2 more" && (await page.getAttribute("#btn-more-teams", "title")) === "Team 6, Team 7", "teams: first 5 then '+2 more' (rest in its tooltip)");
+  await page.click("#btn-more-teams");
+  assert((await text("#teams")) === "Team 1, Team 2, Team 3, Team 4, Team 5, Team 6, Team 7" && !(await page.$("#btn-more-teams")), "teams: '+2 more' reveals the rest inline");
+  assert(await page.evaluate(() => document.querySelector("#teams").contains(document.activeElement)), "teams: focus stays in the list after revealing");
+  assert((await page.$$("#notes > ul.notes > li")).length === 1 && !(await page.$("#notes details")), "notes: a single note has no 'more notes' fold");
+}
 
 // ---- debug mode: the switch survives a reload, so start-up calls are in the log ----
 // Shares toggle saved on Ana Ventures (left ticked) survived the reload above.
