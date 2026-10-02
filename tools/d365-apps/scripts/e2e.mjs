@@ -153,7 +153,9 @@ assert((await txt("#counts")).includes("5 apps × 2 environments") && (await txt
 await page.click("#btn-select-updates");
 let sel = await page.$$eval("td.cell.is-selected", (els) => els.map((e) => e.dataset.cell));
 assert(sel.length === 1 && sel[0] === "env-dev|msdyn_sales", "Select all updates skips the custom-upgrade package: " + sel.join(","));
-await page.check(`${cell("env-dev", "msdyn_fs")} input`);
+assert(!(await page.$eval("#btn-select-failed", (b) => b.disabled)), "Select all failed enabled: there is a failed install");
+await page.click("#btn-select-failed");
+assert(await page.$eval(`${cell("env-dev", "msdyn_fs")} input`, (e) => e.checked), "Select all failed ticks the failed install for a retry");
 await page.check("#show-available");
 await page.waitForSelector(cell("env-prod", "msdyn_extra"));
 await page.check(`${cell("env-prod", "msdyn_extra")} input`);

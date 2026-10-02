@@ -88,3 +88,32 @@ Use a connection with the Power Platform API enabled, Debug log on, and one envi
 - No paging on either list (a single page per environment).
 - Debug log caps (12 000 chars per line, 25 array items) hid most packages of a list response; raised to 64 000 and 60 in the shared debug module.
 
+## 7. Uninstall (owner question, 2026-10-02): analysis, not built
+
+**There is no uninstall in the Power Platform API.** `AppManagement` has four operations: list tenant packages, list environment packages, install, and install status (`pac app-management` mirrors them). PPAC's own "Uninstall" exists only for a few apps (Customer Insights), through an API that isn't public.
+
+**The documented route is per environment, in Dataverse:** delete the app's managed solutions, in order. For example, Microsoft's Business performance analytics uninstall lists 19 solutions to delete one by one, and Traceability lists 6 with "common" last. Two Dataverse messages make that safe to script:
+- `RetrieveDependenciesForUninstall(SolutionUniqueName)`: what blocks deleting a solution;
+- `UninstallSolutionAsync(SolutionUniqueName)`: deletes a managed solution in the background (returns an async operation to poll).
+
+**Proposal: "Unused apps", read-only first.**
+1. Map each installed package to its solutions:
+   - the anchor solution (often the package's `uniqueName`, e.g. `msdyn_ContactCenterRTAAnchor`);
+   - the managed solutions the anchor requires (`RetrieveRequiredComponents` on its components, or the solution's dependencies), from the same publisher.
+2. "Unused" signals, per environment:
+   - tables those solutions own have **no rows** (`RetrieveTotalRecordCount`, one call for many tables);
+   - its model-driven apps are assigned to no security role.
+   
+   No usage telemetry is reachable through these APIs, so the result is "probably unused", never "unused".
+3. Skip platform anchors that are installed automatically (Power Apps checker, Flow approvals, app deployment, Dataverse accelerator…). Removing them is refused ("Attempting to delete a restricted solution", seen in the real log) or they come back.
+4. Uninstall, as a later phase:
+   - dependency check per solution;
+   - an order (anchor first, shared/common last);
+   - preview with the tables and row counts that will be deleted;
+   - typed confirmation;
+   - `UninstallSolutionAsync` one solution at a time, polled.
+   
+   No backup is possible: the data in the app's tables is deleted.
+
+Needs a Dataverse connection per environment (ToolBox connections). This doesn't come through the Power Platform API token, so it is a different setup from the rest of the tool.
+
