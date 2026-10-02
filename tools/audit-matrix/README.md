@@ -75,6 +75,12 @@ Notes:
 - Metadata reads and writes are slow. Expect a few seconds per table on a large plan, and use the progress and Cancel in the status bar.
 - Metadata collections are not paged; environments with extremely large metadata could be truncated.
 
+## Debug log
+
+For troubleshooting, tick **Debug log** in the footer, reproduce the problem, then **Save log**: a `audit-matrix-debug-<timestamp>.txt` file with every ToolBox, Dataverse and Power Platform API call the tool made (the exact query or request, the response or error, timing), notifications, connection events and uncaught errors. The switch is remembered for this tool; `?debug=1` also turns it on. Off, nothing is recorded.
+
+The file is written only where you save it. Secrets (keys named like password, secret, token, authorization) are redacted, and long strings, arrays and binary payloads are truncated, but responses still contain record data such as names and ids: review the file before you share it.
+
 ## Privacy
 
 All data stays between ToolBox and your Dataverse environments: the tool talks to Dataverse only through the ToolBox `dataverseAPI` bridge, requests no CSP exceptions, and sends nothing anywhere else. Snapshots and exports are written to files you choose.

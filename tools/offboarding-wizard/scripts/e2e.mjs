@@ -21,6 +21,7 @@
 // Set E2E_SHOTS=1 to refresh docs/img/*.png from this run.
 import { mkdirSync } from "node:fs";
 import { launchPage } from "../../_shared/e2e-loader.mjs";
+import { checkDebugLog } from "../../_shared/e2e-debug.mjs";
 
 const TOOL = new URL("..", import.meta.url).pathname.replace(/\/$/, "");
 const SHOTS = process.env.E2E_SHOTS ? `${TOOL}/docs/img` : null;
@@ -428,5 +429,28 @@ assert((await bare.textContent("#host-mode")).includes("Not running inside ToolB
 assert((await bare.textContent("#tab-leaver")).includes("No leaver selected"), "renders its empty state with no host");
 assert(bareErrors.length === 0, "no errors without a host: " + bareErrors.join(" | "));
 await bareCtx.close();
+
+// ---- debug mode: the switch survives a reload, so start-up calls are in the log ----
+await checkDebugLog(page, assert, {
+  tool: "offboarding-wizard",
+  act: async () => {
+    await page.reload();
+    await page.waitForSelector("#debug-toggle");
+    assert(await page.$eval("#debug-toggle", (e) => e.checked), "offboarding-wizard: debug mode remembered across a reload");
+    await page.waitForTimeout(500);
+  },
+  readSaved: async (click) => {
+    const n = await page.evaluate(() => window.__saved.length);
+    await click();
+    await page.waitForFunction((k) => window.__saved.length > k, n);
+    const f = await page.evaluate(() => window.__saved.at(-1));
+    assert(/^offboarding-wizard-debug-.*\.txt$/.test(f.name), "offboarding-wizard: debug log file name " + f.name);
+    return f.content;
+  },
+  expect: [
+    [/\[call\] #\d+ toolboxAPI\.connections\.getActiveConnection/, "records start-up host calls"],
+    [/\[call\] #\d+ dataverseAPI\./, "records Dataverse calls"],
+  ],
+});
 
 await finish();

@@ -64,6 +64,12 @@ Notes:
 - **Queue memberships** are inventory only in this version.
 - Records per table are capped (default 500, configurable up to 5 000); a truncated table is named in the plan warnings. Dataverse counts saturate at 5 000 without saying so, so a table at that figure is reported as "5000 or more" rather than as an exact number.
 
+## Debug log
+
+For troubleshooting, tick **Debug log** in the footer, reproduce the problem, then **Save log**: a `offboarding-wizard-debug-<timestamp>.txt` file with every ToolBox, Dataverse and Power Platform API call the tool made (the exact query or request, the response or error, timing), notifications, connection events and uncaught errors. The switch is remembered for this tool; `?debug=1` also turns it on. Off, nothing is recorded.
+
+The file is written only where you save it. Secrets (keys named like password, secret, token, authorization) are redacted, and long strings, arrays and binary payloads are truncated, but responses still contain record data such as names and ids: review the file before you share it.
+
 ## Privacy
 
 All data stays between ToolBox and your Dataverse environment: the tool talks to Dataverse only through the ToolBox `dataverseAPI` bridge, requests no CSP exceptions, bundles no remote code and sends nothing anywhere else. Exports are written to files you choose.
