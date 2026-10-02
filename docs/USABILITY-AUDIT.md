@@ -151,4 +151,14 @@ Done (shared pass + §2 bugs), each covered by new e2e assertions:
   - Offboarding Wizard: O1, O2, O5, O7, expand/collapse all.
   - Audit Matrix: M1, M4, M5, saved filters.
 
-Open: every other per-tool High / Med / Low item in §3.
+Done (per-tool High items, second round):
+
+- Solution XRay: X1 change-type + name filters, big categories start closed.
+- EnvVar Matrix: E2 Columns menu (hidden columns excluded from differences).
+- Access Checker: A3 hide roles with no privilege on the table (System Administrator always shown).
+- Dependency Cleaner: D1 folded XML diffs with line counts, D2 shell list search / type / Only leaving / bulk keep-drop.
+- D365 Apps: P2 hide empty environments + ✕ per column (hidden ticks flagged in Preview).
+- Offboarding Wizard: O3 Failed / All results, failures first; O4 long errors fold and wrap.
+- Audit Matrix: M2 "Load columns for N visible tables" + relabelled column filters; M3 Origin filter via IsCustomEntity.
+
+Open: Medium and Low items in §3.
