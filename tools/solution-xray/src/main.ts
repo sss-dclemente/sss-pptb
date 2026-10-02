@@ -1,13 +1,13 @@
 import { mountDebug } from "../../_shared/debug-ui";
-import { $, badge, card, emptyState, filteredEmpty, foldAllButtons, foldCard, h, shownOf, table, wireTabs } from "../../_shared/dom";
+import { $, badge, card, emptyState, filteredEmpty, foldAllButtons, foldCard, h, keepFold, shownOf, table, wireTabs, type Child } from "../../_shared/dom";
 import { persistControls, type PersistedControls } from "../../_shared/view-state";
 import { filesFromDrop, initTheme, inToolbox, notify, pickZips, saveText } from "./host";
 import { diffSolutions, type DiffEntry, type SolutionDiff } from "./xray/diff";
-import { buildInventory, managedLabel } from "./xray/inventory";
+import { buildInventory, managedLabel, type InventoryGroup } from "./xray/inventory";
 import { computeInstallOrder, latestByName } from "./xray/order";
 import { parseSolutionZip } from "./xray/parse";
 import { scoreRisk } from "./xray/risk";
-import type { SolutionInfo } from "./xray/types";
+import type { AttributeInfo, SolutionInfo } from "./xray/types";
 
 // ---------- state ----------
 const solutions: SolutionInfo[] = [];
@@ -17,6 +17,11 @@ const ids = new WeakMap<SolutionInfo, string>();
 let nextId = 1;
 /** Compare change-type + name filters (hide-root is persisted separately: clearing these must not re-hide root rows). */
 let cmpFilters: PersistedControls;
+/** Inventory "Find component" search. */
+let invFind: PersistedControls;
+/** Risk factors whose evidence list the user expanded past the first EVIDENCE_SHOWN items. */
+const evidenceOpen = new Set<string>();
+const EVIDENCE_SHOWN = 8;
 
 function idOf(s: SolutionInfo): string {
   let id = ids.get(s);
@@ -84,6 +89,41 @@ function renderSidebar(): void {
 }
 
 // ---------- inventory ----------
+const hit = (q: string, ...texts: (string | null | undefined)[]): boolean => texts.some((t) => !!t && t.toLowerCase().includes(q));
+
+/**
+ * Fold key while searching: a separate key per query, so a search opens the cards (and column lists) holding matches
+ * without overwriting what the user left open or closed outside the search; clearing it brings that layout back.
+ */
+const findKey = (key: string, q: string): string => (q ? `${key}?find=${q}` : key);
+
+/** foldCard whose count badge reads "3 of 41" while a search hides rows. */
+function shownFold(title: string, shown: number, total: number, body: Node, open: boolean, key: string): HTMLElement {
+  return foldCard(title, shown === total ? total : `${shown} of ${total}`, body, open, { key });
+}
+
+/** A table row's "N columns" fold listing column name + type; opens when the search matched one of its columns. */
+function columnsFold(table: string, cols: AttributeInfo[], q: string): HTMLElement {
+  const matched = !!q && cols.some((c) => hit(q, c.name));
+  return keepFold(
+    h(
+      "details",
+      { class: "cols" },
+      h("summary", { class: "chev" }, `${cols.length} ${cols.length === 1 ? "column" : "columns"}`),
+      cols.length
+        ? h("ul", { class: "cols-list" }, ...cols.map((c) => h("li", { class: q && hit(q, c.name) ? "is-match" : undefined }, h("span", { class: "mono" }, c.name), h("span", { class: "caption" }, c.type || "?"))))
+        : h("p", { class: "caption" }, "No columns in this export."),
+    ),
+    findKey(`inv:cols:${table}`, matched ? q : ""),
+    matched,
+  );
+}
+
+function itemDetail(it: InventoryGroup["items"][number], q: string): Child {
+  if (!it.columns) return it.detail ?? "";
+  return h("div", { class: "row-detail" }, it.detail ? h("div", {}, it.detail) : null, columnsFold(it.name, it.columns, q));
+}
+
 function renderInventory(): void {
   const body = $("#inv-body");
   body.replaceChildren();
@@ -93,6 +133,9 @@ function renderInventory(): void {
     return;
   }
   const inv = buildInventory(s);
+  const raw = $<HTMLInputElement>("#inv-q").value.trim();
+  const q = raw.toLowerCase();
+  let shownCards = 0;
 
   if (s.warnings.length) body.append(h("div", { class: "warnings" }, ...s.warnings.map((w) => h("div", {}, w))));
 
@@ -103,53 +146,79 @@ function renderInventory(): void {
     ),
   );
 
-  if (inv.rootComponentsByType.length) {
+  const byType = inv.rootComponentsByType.filter((r) => !q || hit(q, r.typeName, String(r.type)));
+  if (byType.length) {
+    shownCards++;
     body.append(
-      foldCard(
+      shownFold(
         "Root components by type",
+        byType.reduce((n, r) => n + r.count, 0),
         s.rootComponents.length,
         table(
           ["Type", "#Count"],
-          inv.rootComponentsByType.map((r) => [`${r.typeName} (${r.type})`, String(r.count)]),
+          byType.map((r) => [`${r.typeName} (${r.type})`, String(r.count)]),
         ),
-        false,
-        { key: "inv:root-by-type" },
+        !!q,
+        findKey("inv:root-by-type", q),
       ),
     );
   }
 
   for (const g of inv.groups) {
+    // rows match on name, detail or a table's column names; a group that is not itemised matches on its label
+    const items = q ? g.items.filter((it) => hit(q, it.name, it.detail) || !!it.columns?.some((c) => hit(q, c.name))) : g.items;
+    if (q && (g.items.length ? !items.length : !hit(q, g.label))) continue;
+    shownCards++;
     body.append(
-      foldCard(
+      shownFold(
         g.label,
+        g.items.length ? items.length : g.count,
         g.count,
         g.items.length
           ? table(
               ["Name", "Detail"],
-              g.items.map((it) => [h("span", { class: "mono" }, it.name), it.detail ?? ""]),
+              items.map((it) => [h("span", { class: "mono" }, it.name), itemDetail(it, q)]),
             )
           : h("p", { class: "caption" }, "Present in customizations.xml; not itemised by this tool."),
-        g.key === "entities",
-        { key: `inv:${g.key}` },
+        !!q || g.key === "entities",
+        findKey(`inv:${g.key}`, q),
       ),
     );
   }
 
-  if (s.missingDependencies.length) {
+  const ref = (r: SolutionInfo["missingDependencies"][number]["required"]) => `${r.typeName}: ${r.displayName ?? r.schemaName ?? r.id ?? "?"}`;
+  const deps = s.missingDependencies.filter((d) => !q || hit(q, ref(d.required), d.required.solution, ref(d.dependent), d.dependent.parentSchemaName));
+  if (deps.length) {
+    shownCards++;
     body.append(
-      foldCard(
+      shownFold(
         "Missing dependencies (as declared by the export)",
+        deps.length,
         s.missingDependencies.length,
         table(
           ["Required", "From solution", "Needed by"],
-          s.missingDependencies.map((d) => [
-            `${d.required.typeName}: ${d.required.displayName ?? d.required.schemaName ?? d.required.id ?? "?"}`,
+          deps.map((d) => [
+            ref(d.required),
             d.required.solution ?? "?",
-            `${d.dependent.typeName}: ${d.dependent.displayName ?? d.dependent.schemaName ?? d.dependent.id ?? "?"}${d.dependent.parentSchemaName ? ` (${d.dependent.parentSchemaName})` : ""}`,
+            `${ref(d.dependent)}${d.dependent.parentSchemaName ? ` (${d.dependent.parentSchemaName})` : ""}`,
           ]),
         ),
-        false,
-        { key: "inv:missing-deps" },
+        !!q,
+        findKey("inv:missing-deps", q),
+      ),
+    );
+  }
+
+  if (q && !shownCards) {
+    body.append(
+      filteredEmpty(
+        "No components match",
+        `Nothing in ${s.uniqueName} matches "${raw}" (names, details and column names are searched).`,
+        () => {
+          invFind.reset();
+          renderInventory();
+        },
+        "Clear search",
       ),
     );
   }
@@ -184,6 +253,16 @@ function visibleDiff(d: SolutionDiff) {
     hiddenRoot: d.entries.length - base.length,
     counts: { added: count("added"), removed: count("removed"), changed: count("changed") },
   };
+}
+
+/** "changed": one line per changed field (`Label: before → after`); the full before / after is in the tooltip. */
+function diffDetail(e: DiffEntry): Child {
+  if (!e.fields?.length) return e.detail ?? "";
+  return h(
+    "div",
+    { class: "diff-fields", title: `Before: ${e.before ?? ""}\nAfter: ${e.after ?? ""}` },
+    ...e.fields.map((f) => h("div", {}, h("span", { class: "field" }, `${f.field}: `), f.before, " → ", f.after)),
+  );
 }
 
 function renderCompare(): void {
@@ -245,7 +324,7 @@ function renderCompare(): void {
         list.length,
         table(
           ["Change", "Name", "Detail"],
-          list.map((e) => [badge(e.change, e.change === "added" ? "ok" : e.change === "removed" ? "bad" : "warn"), h("span", { class: "mono" }, e.name), e.detail ?? ""]),
+          list.map((e) => [badge(e.change, e.change === "added" ? "ok" : e.change === "removed" ? "bad" : "warn"), h("span", { class: "mono" }, e.name), diffDetail(e)]),
           (i) => `diff-${list[i].change}`,
         ),
         list.length <= 20, // big categories start closed so the rest stays in view
@@ -256,6 +335,26 @@ function renderCompare(): void {
 }
 
 // ---------- risk ----------
+/** Evidence chips: the first EVIDENCE_SHOWN, then "+N more" expands the rest inline ("Show less" folds them back). */
+function evidenceChips(id: string, items: string[]): HTMLElement {
+  const box = h("div", { class: "evidence chips" });
+  const draw = () => {
+    const open = evidenceOpen.has(id);
+    const rest = items.length - EVIDENCE_SHOWN;
+    const more = rest > 0 ? h("button", { class: "btn btn-ghost btn-sm evidence-more", type: "button", "aria-expanded": String(open) }, open ? "Show less" : `+${rest} more`) : null;
+    more?.addEventListener("click", () => {
+      if (open) evidenceOpen.delete(id);
+      else evidenceOpen.add(id);
+      draw();
+      box.querySelector<HTMLButtonElement>(".evidence-more")?.focus();
+    });
+    box.replaceChildren(...(open ? items : items.slice(0, EVIDENCE_SHOWN)).map((e) => badge(e, "neutral")));
+    if (more) box.append(more);
+  };
+  draw();
+  return box;
+}
+
 function renderRisk(): void {
   const body = $("#risk-body");
   body.replaceChildren();
@@ -302,7 +401,7 @@ function renderRisk(): void {
           { class: "factor" },
           h("h3", {}, f.label),
           h("span", { class: "pts" }, `+${f.points}`, h("span", { class: "caption" }, ` / ${f.max}`)),
-          f.evidence.length ? h("div", { class: "evidence chips" }, ...f.evidence.map((e) => badge(e, "neutral"))) : null,
+          f.evidence.length ? evidenceChips(f.id, f.evidence) : null,
           h("p", { class: "advice caption" }, f.advice),
         ),
       ),
@@ -413,6 +512,7 @@ async function exportJson(name: string, payload: unknown): Promise<void> {
 function wire(): void {
   persistControls("solution-xray", ["cmp-hide-root"]);
   cmpFilters = persistControls("solution-xray", ["cmp-added", "cmp-changed", "cmp-removed", "cmp-q"]);
+  invFind = persistControls("solution-xray", ["inv-q"]);
   // Expand / collapse all next to the export button (fold state is kept per card across re-renders)
   $("#inv-export").before(foldAllButtons(() => document.getElementById("inv-body"), "details.card"));
   $("#cmp-export").before(foldAllButtons(() => document.getElementById("cmp-body"), "details.card"));
@@ -428,6 +528,7 @@ function wire(): void {
   });
 
   $("#inv-select").addEventListener("change", renderInventory);
+  $("#inv-q").addEventListener("input", renderInventory);
   $("#cmp-a").addEventListener("change", renderCompare);
   $("#cmp-b").addEventListener("change", renderCompare);
   for (const id of ["#cmp-hide-root", "#cmp-added", "#cmp-changed", "#cmp-removed"]) $(id).addEventListener("change", renderCompare);

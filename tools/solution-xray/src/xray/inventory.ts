@@ -1,10 +1,11 @@
-import type { SolutionInfo } from "./types";
+import type { AttributeInfo, SolutionInfo } from "./types";
 
 export interface InventoryGroup {
   key: string;
   label: string;
   count: number;
-  items: { name: string; detail?: string }[];
+  /** `columns`: a table's columns (name + type); the UI shows them under an "N columns" fold after `detail` */
+  items: { name: string; detail?: string; columns?: AttributeInfo[] }[];
 }
 
 export interface Inventory {
@@ -35,7 +36,8 @@ export function buildInventory(s: SolutionInfo): Inventory {
       count: s.entities.length,
       items: s.entities.map((e) => ({
         name: e.name,
-        detail: `${e.displayName} · ${e.attributes.length} columns · ${e.forms} forms · ${e.views} views${e.charts ? ` · ${e.charts} charts` : ""}${e.hasRibbon ? " · ribbon" : ""}`,
+        columns: e.attributes,
+        detail: `${e.displayName} · ${e.forms} forms · ${e.views} views${e.charts ? ` · ${e.charts} charts` : ""}${e.hasRibbon ? " · ribbon" : ""}`,
       })),
     },
     {

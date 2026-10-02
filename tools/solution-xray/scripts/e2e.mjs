@@ -226,7 +226,16 @@ const solJ2 = await zip({
   "customizations.xml": customizationsXml({ entities: entity("sss_keep", "Keep", [["sss_name", "nvarchar"], ["sss_note", "memo"]]) + entity("sss_big", "Big", [["sss_name", "nvarchar"], ...BIG_COLS]) }),
 });
 
-const files = { "SolA_1_0_0_0.zip": solA1, "SolA_1_1_0_0_managed.zip": solA2, "SolB_2_0_0_0_managed.zip": solB, "SolC_1_0_0_0_managed.zip": solC, "SolD.zip": solD, "SolE.zip": solE, "SolF.zip": solF, "SolF_copy.zip": solF, "SolG.zip": solG, "SolH_1_0.zip": solH1, "SolH_1_1.zip": solH2, "SolI_1.zip": solI1, "SolI_2.zip": solI2, "SolJ_1.zip": solJ1, "SolJ_2.zip": solJ2 };
+// risk evidence (X4): 11 environment variables without default or value -> 8 chips + "+3 more"
+const EMPTY_VARS = Array.from({ length: 11 }, (_, i) => `sss_Var${String(i).padStart(2, "0")}`);
+const solK = await zip({
+  "solution.xml": solutionXml({ name: "SolK", version: "1.0.0.0", managed: 1, roots: EMPTY_VARS.map((n) => ({ type: 380, schemaName: n })) }),
+  "customizations.xml": customizationsXml({
+    extra: `<environmentvariabledefinitions>${EMPTY_VARS.map((n) => `<environmentvariabledefinition schemaname="${n}"><displayname>${n}</displayname><type>100000000</type></environmentvariabledefinition>`).join("")}</environmentvariabledefinitions>`,
+  }),
+});
+
+const files = { "SolK.zip": solK, "SolA_1_0_0_0.zip": solA1, "SolA_1_1_0_0_managed.zip": solA2, "SolB_2_0_0_0_managed.zip": solB, "SolC_1_0_0_0_managed.zip": solC, "SolD.zip": solD, "SolE.zip": solE, "SolF.zip": solF, "SolF_copy.zip": solF, "SolG.zip": solG, "SolH_1_0.zip": solH1, "SolH_1_1.zip": solH2, "SolI_1.zip": solI1, "SolI_2.zip": solI2, "SolJ_1.zip": solJ1, "SolJ_2.zip": solJ2 };
 for (const [n, b] of Object.entries(files)) writeFileSync(resolve(OUT, n), b);
 
 const { page, assert, finish } = await launchPage(import.meta.url, { width: 1280, height: 900 });
@@ -259,6 +268,13 @@ const cmp = await page.textContent("#cmp-body");
 assert(cmp.includes("upgrade"), "version upgrade detected");
 assert(cmp.includes("sss_project.sss_budget") && cmp.includes("removed"), "removed column detected");
 assert(cmp.includes("sss_task") && cmp.includes("added"), "added table detected");
+// X5: "changed" detail is a labelled per-field diff of the changed fields only, full before / after in the tooltip
+const changedRows = await page.$$eval("#cmp-body tr.diff-changed", (els) => els.map((e) => ({ text: e.textContent, title: e.querySelector(".diff-fields")?.getAttribute("title") ?? "" })));
+const envChange = changedRows.find((r) => r.text.includes("sss_apikey"));
+assert(envChange && envChange.text.includes("Has default: no → yes") && !envChange.text.includes("Has value") && !envChange.text.includes("|"), "changed env var: labelled field diff, changed fields only: " + envChange?.text);
+assert(/^Before: Type: .+ · Has default: no · Has value: no\nAfter: Type: .+ · Has default: yes · Has value: no$/.test(envChange?.title ?? ""), "changed env var: full before / after in title: " + JSON.stringify(envChange?.title));
+const tableChange = changedRows.find((r) => r.text.startsWith("changedsss_project"));
+assert(tableChange && tableChange.text.includes("Forms: 1 → 2") && !tableChange.text.includes("Views"), "changed table: only Forms listed: " + tableChange?.text);
 await page.screenshot({ path: resolve(OUT, "02-compare.png") });
 
 // risk A1 alone, then A2 with baseline A1
@@ -517,6 +533,12 @@ assert(cmpJ.includes("No changes match") && cmpJ.includes("29 changes are hidden
 await page.click('#cmp-body .empty-state button:text-is("Clear filters")');
 assert((await page.$eval("#cmp-added", (e) => e.checked)) && (await page.inputValue("#cmp-q")) === "" && (await page.$eval("#cmp-hide-root", (e) => e.checked)), "Clear filters resets type + name, keeps hide-root");
 assert((await cmpRows()) === 29 && (await shownCaption()) === null, "Clear filters shows every row again");
+const [dlj2] = await Promise.all([page.waitForEvent("download"), page.click("#cmp-export")]);
+const noteEntry = JSON.parse(readFileSync(await dlj2.path(), "utf8")).entries.find((e) => e.name === "sss_keep.sss_note");
+assert(
+  noteEntry?.change === "changed" && noteEntry.detail === "Type: nvarchar → memo" && JSON.stringify(noteEntry.fields) === '[{"field":"Type","before":"nvarchar","after":"memo"}]' && noteEntry.before === "Type: nvarchar" && noteEntry.after === "Type: memo",
+  "export JSON: changed entry keeps detail and adds fields / before / after: " + JSON.stringify(noteEntry),
+);
 await page.click("#cmp-removed");
 await page.fill("#cmp-q", "sss_keep");
 await page.reload();
@@ -527,6 +549,69 @@ await page.click('.tab[data-tab="compare"]');
 assert((await cmpRows()) === 1 && (await shownCaption()) === "1 of 29 changes", "restored filters applied after reload");
 await page.click("#cmp-removed");
 await page.fill("#cmp-q", "");
+
+// ---- inventory: table column folds (X6), find component (X3) ----
+await page.reload(); // fresh fold memory
+await addOne("SolA_1_0_0_0.zip", 1);
+await page.click('.tab[data-tab="inventory"]');
+const invCard = (title) => `#inv-body details.card:has(h3:text-is("${title}"))`;
+// fold key is inv:cols:<table>, plus ?find=<query> while a search matched one of its columns
+const colsFold = (table) => `${invCard("Tables")} details.cols:is([data-fold-key="inv:cols:${table}"], [data-fold-key^="inv:cols:${table}?find="])`;
+const colsOpen = (table) => page.$eval(colsFold(table), (d) => d.open).catch(() => null);
+assert((await page.textContent(`${colsFold("sss_project")} > summary`)) === "2 columns" && (await colsOpen("sss_project")) === false, "table row: '2 columns' fold, closed by default");
+await page.click(`${colsFold("sss_project")} > summary`);
+const colItems = await page.$$eval(`${colsFold("sss_project")} li`, (els) => els.map((e) => e.textContent));
+assert(JSON.stringify(colItems) === '["sss_namenvarchar","sss_budgetmoney"]', "table row: columns listed with name + type: " + colItems.join(" | "));
+await page.click('.tab[data-tab="risk"]');
+await page.click('.tab[data-tab="inventory"]');
+assert((await colsOpen("sss_project")) === true && (await colsOpen("account")) === false, "table column fold kept per table across re-render");
+await page.click(`${colsFold("sss_project")} > summary`);
+
+const invCards = () => page.$$eval("#inv-body details.card", (els) => els.map((d) => ({ title: d.querySelector("h3").textContent, open: d.open, count: d.querySelector(".count .badge").textContent })));
+const invCardOf = async (title) => (await invCards()).find((c) => c.title === title);
+const allCards = (await invCards()).length;
+assert((await invCardOf("Tables")).count === "2" && (await invCardOf("Plugin steps")).open === false, "find: no search, plain counts");
+await page.click(`${invCard("Tables")} > summary`); // user closes Tables outside the search
+await page.fill("#inv-q", "project");
+let found = await invCards();
+assert(JSON.stringify(found.map((c) => c.title)) === '["Tables","Plugin steps"]', "find: only groups with a match are shown: " + found.map((c) => c.title).join(", "));
+assert(found.every((c) => c.open) && found[0].count === "1 of 2" && found[1].count === "1", "find: matching cards open, badge 'shown of total': " + JSON.stringify(found));
+assert((await page.$$eval(`${invCard("Tables")} tbody > tr`, (els) => els.map((e) => e.querySelector("td").textContent))).join() === "sss_project", "find: rows filtered inside a group");
+await page.fill("#inv-q", "budget");
+assert((await invCardOf("Tables"))?.count === "1 of 2" && (await colsOpen("sss_project")) === true && (await page.textContent(`${colsFold("sss_project")} li.is-match`)).includes("sss_budget"), "find: column-name match opens the table's column list and marks the column");
+await page.fill("#inv-q", "");
+found = await invCards();
+assert(found.length === allCards && (await invCardOf("Tables")).open === false && (await invCardOf("Plugin steps")).open === false && (await colsOpen("sss_project")) === false, "find: clearing the search restores the user's folds");
+await page.fill("#inv-q", "zzz-nothing");
+assert((await page.textContent("#inv-body .empty-state")).includes("No components match"), "find: nothing matches -> filteredEmpty");
+await page.click('#inv-body .empty-state button:text-is("Clear search")');
+assert((await page.inputValue("#inv-q")) === "" && (await invCards()).length === allCards, "find: Clear search empties the box and shows every group");
+await page.fill("#inv-q", "budget");
+await page.reload();
+assert((await page.inputValue("#inv-q")) === "budget", "find: search restored after reload");
+await addOne("SolA_1_0_0_0.zip", 1);
+assert(JSON.stringify((await invCards()).map((c) => c.count)) === '["1 of 2"]', "find: restored search applied after reload");
+await page.fill("#inv-q", "");
+
+// ---- risk evidence (X4): first 8 + "+N more" inline, full list kept in the data ----
+await addOne("SolK.zip", 2);
+await page.click('.tab[data-tab="risk"]');
+await page.selectOption("#risk-select", { index: 1 });
+const envFactor = '#risk-body .factor:has(h3:text-is("Environment variables with no default and no value"))';
+const evChips = () => page.$$eval(`${envFactor} .evidence .badge`, (els) => els.map((e) => e.textContent));
+const evMore = () => page.textContent(`${envFactor} .evidence-more`).catch(() => null);
+assert((await evChips()).length === 8 && (await evMore()) === "+3 more", "evidence: first 8 chips + '+3 more'");
+await page.click(`${envFactor} .evidence-more`);
+assert(JSON.stringify(await evChips()) === JSON.stringify(EMPTY_VARS) && (await evMore()) === "Show less", "evidence: '+3 more' expands inline to all 11");
+assert(await page.$eval(`${envFactor} .evidence-more`, (b) => b === document.activeElement && b.getAttribute("aria-expanded") === "true"), "evidence: toggle keeps focus, aria-expanded");
+await page.selectOption("#risk-baseline", { index: 1 });
+await page.selectOption("#risk-baseline", { index: 0 });
+assert((await evChips()).length === 11, "evidence: expanded state kept across re-render");
+await page.click(`${envFactor} .evidence-more`);
+assert((await evChips()).length === 8 && (await evMore()) === "+3 more", "evidence: 'Show less' folds back to 8");
+const [dlr] = await Promise.all([page.waitForEvent("download"), page.click("#risk-export")]);
+const riskK = JSON.parse(readFileSync(await dlr.path(), "utf8"));
+assert(riskK.factors.find((f) => f.id === "env-vars")?.evidence.length === 11, "risk export keeps the full evidence list");
 
 // ---- debug mode (standalone: no host, the log still records the switch and saves as a download) ----
 await checkDebugLog(page, assert, {

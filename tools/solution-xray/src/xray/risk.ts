@@ -7,6 +7,7 @@ export interface RiskFactor {
   label: string;
   points: number;
   max: number;
+  /** Every item behind the factor (the UI shows the first few and expands the rest). */
   evidence: string[];
   advice: string;
 }
@@ -59,7 +60,7 @@ export function scoreRisk(s: SolutionInfo, baseline?: SolutionInfo | null): Risk
     label: "Missing dependencies on unmanaged components (Active)",
     points: active.length * 15,
     max: 30,
-    evidence: active.slice(0, 12).map((d) => `${d.required.typeName} ${d.required.schemaName ?? d.required.id ?? "?"}`),
+    evidence: active.map((d) => `${d.required.typeName} ${d.required.schemaName ?? d.required.id ?? "?"}`),
     advice:
       "The required component exists only as unmanaged customization in the source environment; add it to the solution or a prerequisite solution. The import fails in any other environment until then.",
   });
@@ -68,7 +69,7 @@ export function scoreRisk(s: SolutionInfo, baseline?: SolutionInfo | null): Risk
     label: "Missing dependencies on other solutions",
     points: external.length * 8,
     max: 30,
-    evidence: external.slice(0, 12).map((d) => `${d.required.typeName} ${d.required.schemaName ?? d.required.id ?? "?"} from ${d.required.solution ?? "?"}`),
+    evidence: external.map((d) => `${d.required.typeName} ${d.required.schemaName ?? d.required.id ?? "?"} from ${d.required.solution ?? "?"}`),
     advice: "Import the required solutions first, or add the missing components to this solution.",
   });
   add({
@@ -78,7 +79,6 @@ export function scoreRisk(s: SolutionInfo, baseline?: SolutionInfo | null): Risk
     max: 10,
     evidence: s.missingDependencies
       .filter((d) => isBuiltinSolution(d.required.solutionName))
-      .slice(0, 8)
       .map((d) => `${d.required.typeName} ${d.required.schemaName ?? d.required.id ?? "?"} (${d.required.solution ?? "System"})`),
     advice: "Usually satisfied by the target environment; verify first-party app versions match.",
   });
@@ -112,7 +112,7 @@ export function scoreRisk(s: SolutionInfo, baseline?: SolutionInfo | null): Risk
     label: "Plugin assemblies and steps",
     points: (s.pluginAssemblies.length ? 5 : 0) + s.pluginSteps.length,
     max: 15,
-    evidence: [...s.pluginAssemblies.map((p) => p.name), ...s.pluginSteps.slice(0, 6).map((p) => `step: ${p.name}`)],
+    evidence: [...s.pluginAssemblies.map((p) => p.name), ...s.pluginSteps.map((p) => `step: ${p.name}`)],
     advice: "Assembly version bumps and step changes are a common upgrade failure point. Confirm assembly is registered in sandbox mode and steps are not orphaned.",
   });
 
@@ -134,7 +134,7 @@ export function scoreRisk(s: SolutionInfo, baseline?: SolutionInfo | null): Risk
     label: "Cloud flows in solution",
     points: flows.length,
     max: 8,
-    evidence: flows.slice(0, 8).map((w) => w.name),
+    evidence: flows.map((w) => w.name),
     advice: "Flows import turned off when connections are not bound; verify state after import.",
   });
 
@@ -180,7 +180,7 @@ export function scoreRisk(s: SolutionInfo, baseline?: SolutionInfo | null): Risk
     label: "Custom components with a different publisher prefix",
     points: foreign.length * 2,
     max: 10,
-    evidence: foreign.slice(0, 10).map((rc) => `${rc.typeName} ${rc.schemaName}`),
+    evidence: foreign.map((rc) => `${rc.typeName} ${rc.schemaName}`),
     advice: "Components owned by another publisher in this solution indicate layering across publishers. Expect managed-layer conflicts.",
   });
 
@@ -203,7 +203,7 @@ export function scoreRisk(s: SolutionInfo, baseline?: SolutionInfo | null): Risk
       label: "Columns removed since baseline",
       points: removedColumns.length * 5,
       max: 20,
-      evidence: removedColumns.slice(0, 12).map((e) => e.name),
+      evidence: removedColumns.map((e) => e.name),
       advice: "Column data is dropped on managed upgrade. Verify no dependencies remain in the target.",
     });
     add({
@@ -211,7 +211,7 @@ export function scoreRisk(s: SolutionInfo, baseline?: SolutionInfo | null): Risk
       label: "Other components removed since baseline",
       points: removedOther.length * 2,
       max: 10,
-      evidence: removedOther.slice(0, 12).map((e) => `${e.category}: ${e.name}`),
+      evidence: removedOther.map((e) => `${e.category}: ${e.name}`),
       advice: "Removed components are deleted on upgrade if nothing else depends on them; otherwise the import fails.",
     });
     if (d.versionOrder !== "upgrade") {
