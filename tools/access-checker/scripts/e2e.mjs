@@ -313,6 +313,49 @@ assert((await text("#tab-check table.roles")).includes("Team Assigner") && (awai
   assert((await roleNames()).length === 4, "roles: ticking hides it again");
   await page.click('#why li[data-right="Write"] summary');
 }
+// A4: verdict chips are buttons that open their Why row, scroll to it and highlight the right's column in Roles.
+{
+  const focusCols = () => page.$$eval("#tab-check table.roles tr", (trs) => [...new Set(trs.flatMap((tr) => [...tr.children].map((c, j) => (c.classList.contains("is-focus") ? j : -1)).filter((j) => j >= 0)))]);
+  const focusCount = () => page.$$eval("#tab-check table.roles .is-focus", (c) => c.length);
+  const rows = await page.$$eval("#tab-check table.roles tr", (r) => r.length);
+  assert(await page.$$eval("#verdicts .verdict", (v) => v.every((x) => x.tagName === "BUTTON" && x.type === "button" && document.getElementById(x.getAttribute("aria-controls"))?.tagName === "DETAILS")), "chips: every applicable verdict is a button whose aria-controls is its Why <details>");
+  assert(!(await page.$eval("#why-Read", (d) => d.open)), "chips: Read Why row closed before the click");
+  await page.evaluate(() => (document.querySelector(".main").scrollTop = document.querySelector(".main").scrollHeight));
+  await page.click('#verdicts .verdict[data-right="Read"]');
+  assert(await page.$eval("#why-Read", (d) => d.open), "chips: clicking Read opens its Why row");
+  assert(await page.$eval("#why-Read", (d) => { const r = d.getBoundingClientRect(), m = document.querySelector(".main").getBoundingClientRect(); return r.top >= m.top - 1 && r.top < m.bottom; }), "chips: the Read Why row is scrolled into view");
+  assert((await page.getAttribute('#verdicts .verdict[data-right="Read"]', "aria-pressed")) === "true", "chips: Read chip pressed");
+  assert(JSON.stringify(await focusCols()) === "[3]" && (await focusCount()) === rows && (await page.textContent("#tab-check table.roles th.is-focus")) === "Read", "chips: Read column (th + every td) highlighted in Roles");
+  await page.click('#verdicts .verdict[data-right="Write"]');
+  assert(JSON.stringify(await focusCols()) === "[4]" && (await page.textContent("#tab-check table.roles th.is-focus")) === "Write" && (await page.getAttribute('#verdicts .verdict[data-right="Read"]', "aria-pressed")) === "false", "chips: another chip moves the highlight to its column");
+  await page.uncheck("#hide-irrelevant-roles");
+  assert(JSON.stringify(await focusCols()) === "[4]", "chips: highlight survives the roles toggle re-render");
+  await page.check("#hide-irrelevant-roles");
+  await page.click('#verdicts .verdict[data-right="Write"]');
+  assert((await focusCount()) === 0 && (await page.$$eval("#verdicts button.verdict", (b) => b.every((x) => x.getAttribute("aria-pressed") === "false"))), "chips: clicking the pressed chip again clears the highlight");
+  assert(await page.$eval("#why-Write", (d) => d.open), "chips: clearing the highlight leaves the Why row open");
+  await page.evaluate(() => document.querySelectorAll("#why details").forEach((d) => (d.open = false)));
+  await page.click('#why li[data-right="Delete"] summary');
+}
+// A7: Roles / Ownership / Shares cards fold (open by default); controls in the Roles fold header do not toggle it.
+{
+  const isOpen = (id) => page.$eval(id, (d) => d.tagName === "DETAILS" && d.open);
+  assert((await isOpen("#card-roles")) && (await isOpen("#card-ownership")) && (await isOpen("#card-shares")), "folds: Roles, Ownership, Shares are fold cards open by default");
+  assert(await page.$eval("#card-roles summary", (s) => s.contains(document.querySelector("#hide-irrelevant-roles")) && s.contains(document.querySelector("#roles-count"))), "folds: roles toggle + count sit in the Roles fold header");
+  await page.click("#hide-irrelevant-roles");
+  assert((await isOpen("#card-roles")) && !(await page.$eval("#hide-irrelevant-roles", (b) => b.checked)) && (await text("#roles-count")) === "5 roles", "folds: clicking the roles checkbox in the header toggles it, not the fold");
+  await page.click("#card-roles summary label.check", { position: { x: 40, y: 5 } });
+  assert((await isOpen("#card-roles")) && (await page.$eval("#hide-irrelevant-roles", (b) => b.checked)) && (await text("#roles-count")) === "4 of 5 roles", "folds: clicking the roles label text in the header toggles it, not the fold");
+  await page.focus("#hide-irrelevant-roles");
+  await page.keyboard.press("Space");
+  assert((await isOpen("#card-roles")) && !(await page.$eval("#hide-irrelevant-roles", (b) => b.checked)), "folds: Space on the header checkbox toggles it, not the fold");
+  await page.keyboard.press("Space");
+  assert(await page.$eval("#hide-irrelevant-roles", (b) => b.checked), "folds: Space again re-ticks it");
+  await page.click("#card-ownership summary h3");
+  assert(!(await isOpen("#card-ownership")), "folds: clicking the Ownership title collapses it");
+  await page.click("#card-roles summary h3");
+  assert(!(await isOpen("#card-roles")), "folds: clicking the Roles title collapses it");
+}
 // Privilege names now come from EntityDefinitions(...)/Privileges; privileges list is paged (10 per page).
 assert((await page.evaluate(() => window.__calls)).includes("EntityDefinitions(LogicalName='account')?$select=Privileges"), "privilege names read from entity metadata");
 assert((await page.evaluate(() => window.__calls)).some((c) => c.startsWith("privileges?") && c.includes("$skiptoken=")), "privilege list follows @odata.nextLink");
@@ -321,6 +364,24 @@ const cols = await text("#tab-columns table.columns");
 assert(cols.includes("sss_margin") && cols.includes("Margin Readers (team Sales EU)"), "column security via team profile");
 const colCells = await page.$$eval("#tab-columns table.columns tbody td .badge", (b) => b.map((x) => x.textContent));
 assert(colCells.join(",") === "yes,no,no", "column read yes / update no / create no");
+// A6: column search, "Only columns with a denied right", n of N, filtered empty with Clear.
+{
+  const colRowsN = () => page.$$eval("#tab-columns table.columns tbody tr", (r) => r.length);
+  await page.click(".tab[data-tab='columns']");
+  assert(!(await page.$eval("#columns-only", (b) => b.checked)) && (await text("#columns-count")) === "", "columns: toggle off by default, no n-of-N caption unfiltered");
+  await page.fill("#columns-q", "sss_");
+  assert((await colRowsN()) === 1, "columns: search matches the logical name");
+  await page.fill("#columns-q", "zzz");
+  assert(!(await page.$("#tab-columns table.columns")) && (await text("#tab-columns .empty-state")).includes("No columns match") && (await text("#columns-count")) === "0 of 1 secured column", "columns: no match shows a filtered empty state and '0 of 1 secured column'");
+  assert((await page.$eval("#columns-q", (e) => document.activeElement === e)), "columns: focus stays in the search box while filtering");
+  await page.click("#tab-columns .empty-actions button");
+  assert((await colRowsN()) === 1 && (await page.inputValue("#columns-q")) === "", "columns: Clear empties the search and restores the rows");
+  await page.check("#columns-only");
+  assert((await colRowsN()) === 1, "columns: 'Only denied' keeps a column with a denied right (update/create no)");
+  await page.uncheck("#columns-only");
+  await page.fill("#columns-q", "margin");
+  await page.click(".tab[data-tab='check']");
+}
 
 // record check: Bruno's account (same BU, Ana is Bruno's manager)
 await page.fill("#record-q", "bruno");
@@ -339,6 +400,19 @@ assert(why2.includes("Sharer via team Sales EU: Local depth: record is in the sa
 assert(!why2.includes("platform says otherwise"), "tool agrees with RetrievePrincipalAccess");
 assert((await text("#relation")).includes("record in the user's BU"), "BU relation");
 assert((await text("#hierarchy")).includes("direct manager"), "hierarchy hint for manager");
+assert(await page.$eval("#card-hierarchy", (d) => d.tagName === "DETAILS" && !d.open), "folds: Hierarchy is a fold card, closed by default");
+{
+  const isOpen = (id) => page.$eval(id, (d) => d.open);
+  assert(!(await isOpen("#card-ownership")) && !(await isOpen("#card-roles")) && (await isOpen("#card-shares")), "folds: cards collapsed on the previous check stay collapsed on the next");
+  await page.click("#card-ownership summary h3");
+  await page.click("#card-roles summary h3");
+  assert((await isOpen("#card-ownership")) && (await isOpen("#card-roles")), "folds: reopened");
+  await page.click(".tab[data-tab='columns']");
+  assert((await page.inputValue("#columns-q")) === "margin" && (await page.$$("#tab-columns table.columns tbody tr")).length === 1, "columns: search kept for the next check");
+  await page.fill("#columns-q", "");
+  await page.click(".tab[data-tab='check']");
+}
+assert(await page.$eval("#card-shares", (d) => d.open && d.querySelector(".card-head .count .badge")?.textContent === "0"), "folds: Shares affecting this user shows its count");
 assert(!why2.includes("platform says otherwise") && !(await text("#tab-check")).includes("Platform verdict differs"), "no disagreement on a clean case");
 assert((await text("#tab-check .warnings")).includes("Team privileges only") && (await text("#tab-check .warnings")).includes("Direct role Root Appender belongs to BU Root"), "notes explain team-only role and cross-BU direct role");
 // organization.maxdepthforhierarchicalsecuritymodel = 1: the chain above Bruno stops at Ana, Carla (Ana's manager) is never fetched.
@@ -367,6 +441,21 @@ await page.click(".tab[data-tab='shares']");
 assert(await page.$$eval(".tab", (t) => t.every((x) => x.getAttribute("role") === "tab" && x.getAttribute("aria-selected") === String(x.dataset.tab === "shares"))), "tabs: aria-selected follows the active tab");
 const sharesRows = await page.$$eval("#tab-shares table.shares tbody tr", (r) => r.map((x) => x.textContent));
 assert(sharesRows.length === 2 && sharesRows[0].includes("Sales EU") && sharesRows[0].includes("via team") && sharesRows[1].includes("Bruno Costa") && !sharesRows[1].includes("via"), "shares table with affects badge");
+// A5: affecting shares first and counted, principal search, "Only shares affecting <user>", filtered empty with Clear.
+{
+  const shareNames = () => page.$$eval("#tab-shares table.shares tbody tr td:first-child", (t) => t.map((x) => x.textContent));
+  assert((await text("#tab-shares .card-head h3")) === "2 principals · 1 affects Ana Silva", "shares: title counts principals and those affecting the user");
+  assert(!(await page.$eval("#shares-only", (b) => b.checked)) && (await text("label:has(#shares-only)")).includes("Only shares affecting Ana Silva"), "shares: toggle off by default, names the user");
+  await page.check("#shares-only");
+  assert(JSON.stringify(await shareNames()) === '["Sales EU"]' && (await text("#shares-count")) === "1 of 2 principals", "shares: toggle keeps only the affecting share, '1 of 2 principals'");
+  await page.uncheck("#shares-only");
+  await page.fill("#shares-q", "BRUNO");
+  assert(JSON.stringify(await shareNames()) === '["Bruno Costa"]' && (await text("#shares-count")) === "1 of 2 principals", "shares: search by principal name (case-insensitive)");
+  await page.check("#shares-only");
+  assert(!(await page.$("#tab-shares table.shares")) && (await text("#tab-shares .empty-state")).includes("No shares match"), "shares: search + toggle hiding everything shows a filtered empty state");
+  await page.click("#tab-shares .empty-actions button");
+  assert((await shareNames()).length === 2 && (await page.inputValue("#shares-q")) === "" && !(await page.$eval("#shares-only", (b) => b.checked)), "shares: Clear resets search and toggle");
+}
 
 // exports
 await page.click("#btn-export-shares");
@@ -395,6 +484,15 @@ assert(!why4.includes("platform says otherwise"), "tool agrees with RetrievePrin
 await page.click(".tab[data-tab='shares']");
 const dummyRows = await page.$$eval("#tab-shares table.shares tbody tr", (r) => r.map((x) => x.textContent));
 assert(dummyRows.length === 60 && dummyRows.every((r) => r.includes("Dummy ")) && dummyRows.some((r) => r.includes("Dummy 60")), "60 share principals resolved by name");
+{
+  assert((await text("#tab-shares .card-head h3")) === "60 principals · 0 affect Ana Silva", "shares: '60 principals · 0 affect Ana Silva'");
+  await page.fill("#shares-q", "dummy 0");
+  assert((await page.$$("#tab-shares table.shares tbody tr")).length === 9 && (await text("#shares-count")) === "9 of 60 principals", "shares: search 'dummy 0' → Dummy 01..09, '9 of 60 principals'");
+  await page.fill("#shares-q", "");
+  await page.check("#shares-only");
+  assert((await text("#tab-shares .empty-state")).includes("No share on this record affects Ana Silva.") && (await text("#shares-count")) === "0 of 60 principals", "shares: toggle on with nothing affecting explains why it is empty");
+  assert((await page.evaluate(() => JSON.parse(localStorage.getItem("sss-view:access-checker") ?? "{}").sharesOnlyAffecting)) === true, "shares: toggle saved in view state");
+}
 {
   const c = await page.evaluate(() => window.__calls);
   const byId = c.filter((q) => q.startsWith("systemusers?") && (q.match(/systemuserid eq /g) ?? []).length > 1);
@@ -447,6 +545,11 @@ await page.waitForFunction(() => document.querySelector("#tab-check h2")?.textCo
 assert((await text("#tab-check .warnings")).includes("User holds System Administrator"), "sysadmin by role template, not name");
 await page.waitForFunction(() => document.querySelector("#tab-columns table.columns"));
 assert((await text("#tab-columns table.columns")).includes("System Administrator (bypasses column security)"), "column security bypass for template-detected sysadmin");
+await page.click(".tab[data-tab='columns']");
+await page.check("#columns-only");
+assert((await text("#tab-columns .empty-state")).includes("Diego Admin has every right on every secured column.") && (await text("#columns-count")) === "0 of 1 secured column", "columns: 'Only denied' for a sysadmin explains nothing is denied");
+await page.uncheck("#columns-only");
+await page.click(".tab[data-tab='check']");
 
 // ---------- regression cases ----------
 const until = (fn, arg, timeout = 4000) => page.waitForFunction(fn, arg, { timeout }).then(() => true, () => false);
@@ -554,6 +657,10 @@ assert(!(await page.$("#tab-check table.roles")) && (await text("#roles-body")).
 assert((await text("#roles-count")) === "0 of 2 roles", "roles: count caption '0 of 2 roles'");
 await page.click("#btn-show-all-roles");
 assert(!(await page.$eval("#hide-irrelevant-roles", (b) => b.checked)) && (await page.$$("#tab-check table.roles tbody tr")).length === 2, "roles: 'Show all roles' unticks the toggle and lists both roles");
+await page.waitForFunction(() => document.querySelector("#columns-only"));
+await page.click(".tab[data-tab='columns']");
+await page.check("#columns-only");
+await page.click(".tab[data-tab='check']");
 await page.reload();
 await page.waitForFunction(() => document.querySelectorAll("#table option").length > 1);
 await pickUser("eva", "Eva Nunes");
@@ -562,10 +669,27 @@ await page.click("#btn-check");
 await page.waitForFunction(() => document.querySelector("#tab-check h2")?.textContent.includes("Eva Nunes on table Account"));
 await settle();
 assert(!(await page.$eval("#hide-irrelevant-roles", (b) => b.checked)) && (await page.$$("#tab-check table.roles tbody tr")).length === 2, "roles: unticked toggle survives a reload");
+await page.waitForFunction(() => document.querySelector("#columns-only"));
+assert(await page.$eval("#columns-only", (b) => b.checked), "columns: 'Only columns with a denied right' survives a reload");
+await page.click(".tab[data-tab='columns']");
+await page.uncheck("#columns-only");
+await page.click(".tab[data-tab='check']");
 await page.check("#hide-irrelevant-roles");
 assert((await text("#roles-body")).includes("None of the user's 2 roles"), "roles: re-ticking hides them again");
 
 // ---- debug mode: the switch survives a reload, so start-up calls are in the log ----
+// Shares toggle saved on Ana Ventures (left ticked) survived the reload above.
+await pickUser("ana silva", "Ana Silva");
+await pickRecord("ventures", "Ana Ventures");
+await page.click("#btn-check");
+await page.waitForFunction(() => document.querySelector("#tab-check h2")?.textContent.includes("Ana Ventures"));
+await settle();
+await page.click(".tab[data-tab='shares']");
+assert(await page.$eval("#shares-only", (b) => b.checked), "shares: 'Only shares affecting' survives a reload");
+await page.uncheck("#shares-only");
+assert((await page.$$("#tab-shares table.shares tbody tr")).length === 60 && (await page.evaluate(() => JSON.parse(localStorage.getItem("sss-view:access-checker") ?? "{}").sharesOnlyAffecting)) === undefined, "shares: unticking shows all 60 and drops the saved value");
+await page.click(".tab[data-tab='check']");
+
 await checkDebugLog(page, assert, {
   tool: "access-checker",
   act: async () => {
