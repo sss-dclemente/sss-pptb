@@ -88,7 +88,7 @@ Use a connection with the Power Platform API enabled, Debug log on, and one envi
 - No paging on either list (a single page per environment).
 - Debug log caps (12 000 chars per line, 25 array items) hid most packages of a list response; raised to 64 000 and 60 in the shared debug module.
 
-## 7. Uninstall (owner question, 2026-10-02): analysis, not built
+## 7. Uninstall (owner question, 2026-10-02): analysis; report built as 0.2.0 (§8), uninstall not built
 
 **There is no uninstall in the Power Platform API.** `AppManagement` has four operations: list tenant packages, list environment packages, install, and install status (`pac app-management` mirrors them). PPAC's own "Uninstall" exists only for a few apps (Customer Insights), through an API that isn't public.
 
@@ -117,3 +117,28 @@ Use a connection with the Power Platform API enabled, Debug log on, and one envi
 
 Needs a Dataverse connection per environment (ToolBox connections). This doesn't come through the Power Platform API token, so it is a different setup from the rest of the tool.
 
+
+## 8. Unused apps report (0.2.0, read-only)
+
+Built from §7 steps 1–3, for the **connection's** environment only (Dataverse calls go through `dataverseAPI`, which has one connection). Code: `src/apps/unused.ts`, UI `src/unused-ui.ts`.
+
+| Step | Call | Notes |
+|---|---|---|
+| Installed apps | `listPackages` (Power Platform API), or the matrix's read for that environment | Packages mid-install are left out |
+| Solutions | `solutions?$filter=ismanaged eq true and isvisible eq true` | |
+| Package → solutions | `msdyn_solutionhistories?$select=msdyn_name,msdyn_packagename,msdyn_operation,msdyn_result&$filter=msdyn_operation eq 0 and msdyn_packagename ne null`; on error the same without `$filter` (virtual table), then filtered in code; on error again, anchors only | **UNVERIFIED**: that `msdyn_packagename` equals the Power Platform API package `uniqueName`. Plus the anchor: solution `uniquename` = package `uniqueName` |
+| Components | `solutioncomponents` types 1 and 80 by `_solutionid_value`, 20 per `or` | |
+| Tables | `EntityDefinitions` (`IsCustomEntity` true, not intersect, not virtual) | `objectid` = `MetadataId` |
+| Rows | `RetrieveTotalRecordCount(EntityNames=@p1)?@p1=<JSON, URI-encoded>` via `queryData`, 50 per call; a 0 or a missing table re-checked with `<set>?$select=<pk>&$top=1` | Snapshot < 24 h. A live row the snapshot missed = written recently = in use |
+| Apps | `appmodules` with `$expand=appmoduleroles_association($select=roleid)`; without the expand on error | Info only, not in the verdict (first-party apps ship with roles) |
+
+Ownership: a solution or table counts for a package only when no other installed package's solutions contain it. Shared ones are listed, never counted.
+
+Verdict: platform list (§6 names) → `platform`; no solutions → `not-found`; no countable own table → `no-signal`; a live row the snapshot missed → `in-use`; all own tables 0 → `unused`; max ≤ 10 rows → `light` ("Seed data only?"); else `in-use`.
+
+### Probe (owner, 10 min)
+
+Debug log on, a connection to an environment with a few D365 apps, **Unused apps…**, Save log:
+- [ ] Does `msdyn_solutionhistories` answer the filtered query, and does `msdyn_packagename` match the package unique names (e.g. `msdyn_SalesApp`)? If most apps show *Solutions not found* or *anchor* only, send the log.
+- [ ] `RetrieveTotalRecordCount` response shape (`EntityRecordCountCollection.Keys/Values`).
+- [ ] Any app marked *Probably unused* that you know is used: which tables did it count?

@@ -4,7 +4,9 @@ import { errText, isSetupError, listEnvironments, listPackages, type PpLike } fr
 import { matrixCsv, pacScript, resultsCsv } from "./apps/export";
 import { buildMatrix, cellKey, counts, failedKeys, isProduction, planInstalls, updateKeys } from "./apps/matrix";
 import { runInstalls, toRunItems } from "./apps/run";
+import type { DvLike } from "./apps/unused";
 import type { Cell, EnvPackages, Environment, Matrix, PlannedInstall, RunItem } from "./apps/types";
+import { initUnused, unusedAvailable } from "./unused-ui";
 import { dataverse, getConnections, initTheme, inToolbox, notify, onConnectionChange, powerplatform, saveText, type LiveConnection } from "./host";
 
 const STORE_KEY = "sss-d365-apps:envs";
@@ -82,6 +84,7 @@ function setupBanner(kind: "nohost" | "noconn" | "api", detail?: string): void {
 async function start(): Promise<void> {
   const g = ++gen;
   $("#setup").replaceChildren();
+  unusedAvailable(false);
   results = [];
   matrix = null;
   selected.clear();
@@ -114,6 +117,7 @@ async function start(): Promise<void> {
   if (g !== gen) return;
   setStatus(null);
   $<HTMLButtonElement>("#btn-envs").disabled = false;
+  unusedAvailable(!!dataverse() && envs.length > 0);
   const stored = readStore().filter((id) => envs.some((e) => e.id === id));
   picked = stored.length ? stored : await defaultPick();
   if (g !== gen) return;
@@ -125,15 +129,20 @@ async function start(): Promise<void> {
   await loadPackages();
 }
 
-/** The connection's own environment (RetrieveCurrentOrganization), else nothing. */
-async function defaultPick(): Promise<string[]> {
+/** The connection's environment id (RetrieveCurrentOrganization), null when unknown. */
+async function connectionEnvId(): Promise<string | null> {
   try {
     const r = (await dataverse()?.execute({ operationName: "RetrieveCurrentOrganization", operationType: "function", parameters: { AccessType: "Microsoft.Dynamics.CRM.EndpointAccessType'Default'" } })) as { Detail?: { EnvironmentId?: string } } | undefined;
-    const id = r?.Detail?.EnvironmentId;
-    return id && envs.some((e) => e.id === id) ? [id] : [];
+    return r?.Detail?.EnvironmentId ?? null;
   } catch {
-    return [];
+    return null;
   }
+}
+
+/** The connection's own environment, else nothing. */
+async function defaultPick(): Promise<string[]> {
+  const id = await connectionEnvId();
+  return id && envs.some((e) => e.id === id) ? [id] : [];
 }
 
 async function loadPackages(only?: string[]): Promise<void> {
@@ -455,6 +464,15 @@ function wire(): void {
   $("#host-mode").textContent = inToolbox() ? "Running inside Power Platform ToolBox" : "Standalone mode";
 }
 
+initUnused({
+  pp,
+  dv: () => dataverse() as unknown as DvLike | undefined,
+  envId: connectionEnvId,
+  envs: () => envs,
+  cached: (id) => results.find((r) => r.env.id === id && !r.error)?.installed ?? null,
+  notify: async (t, b, k) => void (await notify(t, b, k)),
+  save: exportFile,
+});
 mountDebug(document.querySelector("footer"), "d365-apps");
 void initTheme((t) => document.documentElement.setAttribute("data-theme", t));
 wire();

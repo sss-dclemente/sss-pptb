@@ -48,6 +48,14 @@ table.matrix input[type="checkbox"] { accent-color: var(--accent); }
 .run-head h3 { font-size: var(--fs-body); }
 .run table { width: 100%; }
 
+.unused { border-bottom: 1px solid var(--border-subtle); padding: var(--s-2) var(--s-5); max-height: 55vh; overflow: auto; }
+.unused h3 { font-size: var(--fs-body); }
+.unused table { width: 100%; }
+.unused td.name .uname { display: block; font-family: var(--font-mono); font-size: var(--fs-micro); color: var(--fg-muted); }
+.unused td .note { display: block; font-size: var(--fs-micro); color: var(--fg-muted); }
+.unused details ul { padding-left: var(--s-5); margin: var(--s-1) 0; }
+.unused .summary-line { padding: var(--s-1) 0; }
+
 .envpick { display: flex; flex-direction: column; gap: var(--s-2); }
 .envpick .list { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: var(--s-1) var(--s-3); font-size: var(--fs-caption); }
 .envpick .list label { display: flex; gap: var(--s-2); align-items: center; }
