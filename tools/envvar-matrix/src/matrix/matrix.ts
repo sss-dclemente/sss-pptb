@@ -14,7 +14,8 @@ function connRefCell(rec: ColumnData["connRefs"][number] | null): ConnRefCell {
 }
 
 export function buildMatrix(columns: ColumnData[]): Matrix {
-  const keys = columns.map((c) => c.meta.key);
+  // Columns that failed to load have no data: show them, but leave them out of the comparison.
+  const keys = columns.filter((c) => !c.meta.error).map((c) => c.meta.key);
 
   const evNames = new Map<string, { schemaName: string; displayName: string; type: string; isSecret: boolean }>();
   for (const c of columns)
@@ -52,11 +53,13 @@ export function buildMatrix(columns: ColumnData[]): Matrix {
       const cells: Record<string, ConnRefCell> = {};
       for (const c of columns) cells[c.meta.key] = connRefCell(c.connRefs.find((r) => r.logicalName.toLowerCase() === key) ?? null);
       const states = new Set(keys.map((k) => cells[k].state));
+      // Same logical name bound to different connectors across environments is a difference too.
+      const connectors = new Set(keys.map((k) => cells[k].record?.connectorId?.toLowerCase()).filter((x): x is string => !!x));
       return {
         key,
         ...head,
         cells,
-        differs: states.size > 1,
+        differs: states.size > 1 || connectors.size > 1,
         anyUnbound: keys.some((k) => cells[k].state === "unbound"),
         anyAbsent: keys.some((k) => cells[k].state === "absent"),
       };

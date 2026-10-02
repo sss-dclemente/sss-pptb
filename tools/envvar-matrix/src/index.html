@@ -17,6 +17,7 @@
       <span class="spacer"></span>
       <button id="btn-refresh" class="btn btn-sm" type="button">Refresh</button>
       <button id="btn-load-snap" class="btn btn-sm" type="button">Load snapshot…</button>
+      <button id="btn-runlog" class="btn btn-ghost btn-sm" type="button" title="Every write this tool made, with export">Run log</button>
     </header>
 
     <nav class="tabs" role="tablist">
@@ -29,6 +30,7 @@
       <label class="check"><input type="checkbox" id="filter-diff" /> Only differences</label>
       <label class="check"><input type="checkbox" id="filter-missing" /> Only missing / unbound</label>
       <label>Solution <select id="filter-solution"><option value="">all</option></select></label>
+      <button id="btn-consolidate" class="btn btn-sm" type="button" hidden>Consolidate…</button>
       <div class="right">
         <label>Export <select id="export-col"></select></label>
         <button id="btn-export-settings" class="btn btn-ghost btn-sm" type="button">deploymentSettings.json</button>
@@ -47,8 +49,18 @@
       <span class="count"><span id="sel-count">0</span> selected</span>
       <label>Copy from <select id="copy-from"></select></label>
       <label>to <select id="copy-to"></select></label>
+      <label class="check" id="bind-restart-wrap" hidden><input type="checkbox" id="bind-restart" checked /> Restart flows that are on</label>
       <button id="btn-copy" class="btn btn-primary btn-sm" type="button" style="flex:none">Preview copy…</button>
+      <button id="btn-pick" class="btn btn-sm" type="button" hidden title="Experimental: lists connections through the Power Platform API">Pick connections…</button>
       <button id="btn-clear-sel" class="btn btn-ghost btn-sm" type="button">Clear selection</button>
+    </div>
+
+    <div id="mergebar" class="bulkbar" hidden>
+      <span class="count" id="merge-count"></span>
+      <label class="check"><input type="checkbox" id="merge-collapse" checked /> Collapse duplicate keys in flows</label>
+      <label class="check"><input type="checkbox" id="merge-delete" checked /> Delete merged references when unused</label>
+      <button id="btn-merge-preview" class="btn btn-primary btn-sm" type="button" style="flex:none">Preview merge…</button>
+      <button id="btn-merge-clear" class="btn btn-ghost btn-sm" type="button">Clear selection</button>
     </div>
 
     <footer class="footer" style="padding: var(--s-2) var(--s-5); margin-top: 0; flex-direction: row; justify-content: space-between; align-items: center;">

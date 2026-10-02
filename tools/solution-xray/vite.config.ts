@@ -27,6 +27,8 @@ export default defineConfig(({ mode }) => ({
   base: "./",
   publicDir: "../public",
   plugins: [fixHtmlForPPTB()],
+  // shown in the debug log header (_shared/debug.ts); npm sets npm_package_version for `npm run build`
+  define: { __TOOL_VERSION__: JSON.stringify(process.env.npm_package_version ?? "dev") },
   build: {
     outDir: "../dist",
     emptyOutDir: true,

@@ -1,8 +1,26 @@
 /** Privilege naming, depth and access-mask parsing. Pure. */
-import { DEPTH_LABEL, RIGHTS, type Depth, type Right } from "./types";
+import { DEPTH_LABEL, RIGHTS, SYSADMIN_TEMPLATE_ID, type Depth, type RoleRef, type Right, type TablePrivileges } from "./types";
 
-/** Dataverse privilege name for a right on a table, lower-cased: prvReadAccount → "prvreadaccount". */
+/** Naming convention prv{Right}{Table}, lower-cased: prvReadAccount → "prvreadaccount". Only a fallback
+ *  when entity metadata is unavailable: it is wrong for activities (prvReadActivity), annotation
+ *  (prvReadNote), systemuser (prvReadUser) and others. */
 export const privilegeName = (right: Right, tableLogicalName: string): string => `prv${right}${tableLogicalName}`.toLowerCase();
+
+/** Lower-cased privilege name for a right on the checked table, from entity metadata; null when the
+ *  table has no privilege for that right. Falls back to the naming convention when metadata is empty. */
+export function tablePrivilegeName(tp: TablePrivileges, right: Right, tableLogicalName: string): string | null {
+  if (!Object.keys(tp).length) return privilegeName(right, tableLogicalName);
+  return tp[right]?.toLowerCase() ?? null;
+}
+
+/** EntityMetadata.Privileges[].PrivilegeType → right. "None" and unknown types map to null. */
+export function rightOfPrivilegeType(v: unknown): Right | null {
+  const n = typeof v === "number" ? (["None", "Create", "Read", "Write", "Delete", "Assign", "Share", "Append", "AppendTo"][v] ?? "") : String(v ?? "");
+  return RIGHTS.find((r) => r.toLowerCase() === n.trim().toLowerCase()) ?? null;
+}
+
+/** System Administrator by role template (language- and rename-proof); role name as fallback. */
+export const isSystemAdminRole = (r: RoleRef): boolean => (r.templateId ? r.templateId === SYSADMIN_TEMPLATE_ID : r.name.trim().toLowerCase() === "system administrator");
 
 const DEPTH_BY_NAME: Record<string, Depth> = { basic: 0, user: 0, local: 1, businessunit: 1, deep: 2, parentchild: 2, parentchildbusinessunit: 2, global: 3, organization: 3 };
 

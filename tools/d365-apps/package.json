@@ -1,0 +1,63 @@
+{
+  "name": "@simplesmoothsafe/pptb-d365-apps",
+  "version": "0.1.2",
+  "displayName": "SSS D365 Apps Matrix",
+  "description": "Dynamics 365 apps across environments: installed version, update available, failed install per app and environment. Tick cells, preview, run: installs are queued per environment, environments run in parallel, status is polled live. Power Platform API; pac script export.",
+  "main": "index.html",
+  "icon": "icon.svg",
+  "license": "MIT",
+  "keywords": [
+    "powerplatform",
+    "dataverse",
+    "toolbox",
+    "pptb",
+    "dynamics365",
+    "admin",
+    "environments",
+    "alm"
+  ],
+  "author": "Simple Smooth Safe",
+  "contributors": [
+    {
+      "name": "Duarte Clemente",
+      "url": "https://simplesmoothsafe.com"
+    }
+  ],
+  "homepage": "https://simplesmoothsafe.com",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sss-dclemente/sss-pptb.git",
+    "directory": "tools/d365-apps"
+  },
+  "configurations": {
+    "repository": "https://github.com/sss-dclemente/sss-pptb",
+    "website": "https://simplesmoothsafe.com",
+    "readmeUrl": "https://raw.githubusercontent.com/sss-dclemente/sss-pptb/main/tools/d365-apps/README.md"
+  },
+  "features": {
+    "multiConnection": "none",
+    "connectionRequirement": "required",
+    "minAPI": "1.2.6",
+    "enabledForPowerPlatformAPI": true
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "scripts": {
+    "build": "tsc --noEmit && vite build && node scripts/check-dist.mjs",
+    "dev-watch": "vite build --mode development --watch",
+    "typecheck": "tsc --noEmit",
+    "validate": "node node_modules/@pptb/validate/dist/cli.js",
+    "test": "node scripts/unit-test.mjs",
+    "e2e": "node scripts/e2e.mjs"
+  },
+  "devDependencies": {
+    "@pptb/types": "^1.2.5",
+    "@pptb/validate": "^1.0.2",
+    "typescript": "^5.6.0",
+    "vite": "^5.4.0"
+  },
+  "files": [
+    "dist"
+  ]
+}

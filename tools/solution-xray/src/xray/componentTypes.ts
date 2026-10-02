@@ -84,7 +84,9 @@ const NAMES: Record<number, string> = {
   208: "Import Map",
   210: "Web Wizard",
   300: "Canvas App",
-  371: "Connection Reference",
+  // Both 371 and 372 are "Connector" in the componenttype option set. Connection references, custom APIs etc. have
+  // org-specific codes (>= 10000) that differ per environment; see inferCustomTypeNames in parse.ts.
+  371: "Connector",
   372: "Connector",
   380: "Environment Variable Definition",
   381: "Environment Variable Value",
@@ -94,14 +96,17 @@ const NAMES: Record<number, string> = {
   430: "Entity Analytics Config",
   431: "Attribute Image Config",
   432: "Entity Image Config",
-  10001: "Custom API",
-  10002: "Custom API Request Parameter",
-  10003: "Custom API Response Property",
 };
 
+/** First org-specific component type code: these map to tables that differ per environment. */
+export const CUSTOM_TYPE_MIN = 10000;
+
 export function componentTypeName(type: number): string {
-  return NAMES[type] ?? `Component type ${type}`;
+  return NAMES[type] ?? (type >= CUSTOM_TYPE_MIN ? `Custom component (type ${type})` : `Component type ${type}`);
 }
+
+/** Label used when zip content reveals the table behind an org-specific type code. */
+export const CONNECTION_REFERENCE = "Connection Reference";
 
 export const WORKFLOW_CATEGORY: Record<number, string> = {
   0: "Classic workflow",
@@ -123,8 +128,17 @@ export const ENV_VAR_TYPE: Record<string, string> = {
   "100000005": "Secret",
 };
 
-/** Solutions that are always present in an environment; never an install-order dependency. */
-export const BUILTIN_SOLUTIONS = new Set(["System", "Active", "Basic", "Default"]);
+/**
+ * Solutions that are always present in an environment; never an install-order dependency.
+ * "Active" is deliberately NOT here: a MissingDependency on solution "Active" means the component exists only as an
+ * unmanaged customization in the source environment and is not in the export, so the import fails. See isActiveSolution.
+ */
+export const BUILTIN_SOLUTIONS = new Set(["System", "Basic", "Default"]);
+
+/** Required component lives only in the source environment's unmanaged (Active) layer. */
+export function isActiveSolution(name: string | null): boolean {
+  return name === "Active";
+}
 
 export function isBuiltinSolution(name: string | null): boolean {
   if (!name) return true;

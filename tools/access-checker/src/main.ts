@@ -1,3 +1,4 @@
+import { mountDebug } from "../../_shared/debug-ui";
 import { $, append, badge, card, emptyState, h, table, wireTabs, type BadgeKind } from "../../_shared/dom";
 import { dataverse, getConnections, initTheme, inToolbox, notify, onConnectionChange, saveText } from "../../_shared/host";
 import { columnAccess } from "./access/columns";
@@ -9,13 +10,14 @@ import {
   fetchDirectRoles,
   fetchFieldPermissions,
   fetchFieldProfiles,
-  fetchHierarchyEnabled,
+  fetchHierarchySettings,
   fetchManagerChain,
   fetchPrincipalAccess,
   fetchRecord,
   fetchRolePrivileges,
   fetchSecuredColumns,
   fetchShares,
+  fetchTablePrivileges,
   fetchTables,
   fetchTeams,
   fetchUser,
@@ -26,7 +28,7 @@ import {
   searchUsers,
   type DataverseLike,
 } from "./access/fetch";
-import { depthLabel, privilegeName } from "./access/privileges";
+import { depthLabel, isSystemAdminRole, tablePrivilegeName } from "./access/privileges";
 import { RIGHTS, TEAM_TYPE_LABEL, type CheckData, type ColumnAccess, type Explanation, type RecordInfo, type ShareEntry, type TableInfo, type UserInfo } from "./access/types";
 
 // ---------- state ----------
@@ -39,6 +41,13 @@ let recordId: string | null = null; // GUID pasted without a fetched record yet
 let data: CheckData | null = null;
 let expl: Explanation | null = null;
 let colRows: ColumnAccess[] | null = null;
+/** Column security for the current check: "idle" before any check, then loading → ready | failed. */
+let colState: "idle" | "loading" | "ready" | "failed" = "idle";
+let colError: string | null = null;
+/** Bumped by every check / search; a result whose token is no longer current is dropped. */
+let checkSeq = 0;
+let userSeq = 0;
+let recSeq = 0;
 let envName: string | null = null;
 
 const api = (): DataverseLike | null => (dataverse() as unknown as DataverseLike | undefined) ?? null;
@@ -127,45 +136,71 @@ async function loadTables(): Promise<void> {
 async function runCheck(): Promise<void> {
   const a = api();
   if (!a || !user || !tbl) return;
+  // Everything the check depends on is captured now: the inputs may change while it is in flight.
+  const seq = ++checkSeq;
+  const stale = (): boolean => seq !== checkSeq;
   const t = tbl;
+  const picked = user;
+  const pickedRecord = record;
+  const pickedRecordId = recordId;
+  // Role and user privileges change without a connection change (a role assigned or edited between two
+  // checks): re-read them for every check. Metadata caches (tables, privileges, BUs) are kept.
+  cache.userPrivileges = {};
+  cache.rolePrivileges = {};
+  colRows = null;
+  colState = "loading";
+  colError = null;
+  renderColumns();
   setStatus("Checking…");
   $<HTMLButtonElement>("#btn-check").disabled = true;
   try {
-    const fresh = (await fetchUser(a, user.id)) ?? user;
-    user = fresh;
-    renderUserSel();
-    const [direct, teams, bus] = await Promise.all([fetchDirectRoles(a, fresh.id), fetchTeams(a, fresh.id), fetchBusinessUnits(a, cache)]);
+    const fresh = (await fetchUser(a, picked.id)) ?? picked;
+    if (stale()) return;
+    // Refresh the selection only if it is still the user this check started for.
+    if (user && user.id === picked.id) {
+      user = fresh;
+      renderUserSel();
+    }
+    const [direct, teams, bus, tablePrivileges] = await Promise.all([fetchDirectRoles(a, fresh.id), fetchTeams(a, fresh.id), fetchBusinessUnits(a, cache), fetchTablePrivileges(a, cache, t.logicalName)]);
+    if (stale()) return;
     const held = heldRoles(direct, teams);
     const rolePrivileges = await fetchRolePrivileges(a, cache, held.map((x) => x.role));
+    if (stale()) return;
     let rec: RecordInfo | null = null;
-    if (recordId && (!record || record.id !== recordId)) rec = await fetchRecord(a, t, recordId);
-    else rec = record;
-    if (recordId && !rec) throw new Error(`Record ${recordId} not found in ${t.logicalName}`);
-    record = rec;
-    renderRecordSel();
+    if (pickedRecordId && (!pickedRecord || pickedRecord.id !== pickedRecordId)) rec = await fetchRecord(a, t, pickedRecordId);
+    else rec = pickedRecord;
+    if (stale()) return;
+    if (pickedRecordId && !rec) throw new Error(`Record ${pickedRecordId} not found in ${t.logicalName}`);
+    if (tbl === t && recordId === pickedRecordId && pickedRecordId) {
+      record = rec;
+      renderRecordSel();
+    }
 
     let shares: ShareEntry[] | null = null;
     let platformRights: ReturnType<typeof explain>["verdicts"][number]["right"][] | null = null;
     let platformDepths: CheckData["platformDepths"] = null;
     let hierarchyEnabled: boolean | null = null;
+    let hierarchyMaxDepth = 3;
     let ownerManagers: UserInfo[] = [];
     if (rec) {
       const [sh, pa, hier] = await Promise.all([
         fetchShares(a, t, rec.id).catch((e: Error) => {
-          void notify("Shares", e.message, "warning");
+          if (!stale()) void notify("Shares", e.message, "warning");
           return null;
         }),
         fetchPrincipalAccess(a, fresh.id, t, rec.id),
-        fetchHierarchyEnabled(a, cache),
+        fetchHierarchySettings(a, cache),
       ]);
       shares = sh;
       platformRights = pa;
-      hierarchyEnabled = hier;
-      if (hier && rec.ownerType === "systemuser" && rec.ownerId && rec.ownerId !== fresh.id) {
+      hierarchyEnabled = hier.enabled;
+      hierarchyMaxDepth = hier.maxDepth;
+      if (hier.enabled && rec.ownerType === "systemuser" && rec.ownerId && rec.ownerId !== fresh.id) {
         const owner = (await fetchUsersById(a, [rec.ownerId])).get(rec.ownerId);
-        if (owner) ownerManagers = await fetchManagerChain(a, owner);
+        if (owner) ownerManagers = await fetchManagerChain(a, owner, hier.maxDepth);
       }
-    } else platformDepths = await fetchUserPrivileges(a, cache, fresh.id);
+    } else platformDepths = await fetchUserPrivileges(a, cache, fresh.id, t.logicalName, tablePrivileges);
+    if (stale()) return;
 
     data = {
       user: fresh,
@@ -175,30 +210,46 @@ async function runCheck(): Promise<void> {
       teams,
       rolePrivileges,
       table: t,
+      tablePrivileges,
       record: rec,
       shares,
       platformRights,
       platformDepths,
       hierarchyEnabled,
+      hierarchyMaxDepth,
       ownerManagers,
     };
     expl = explain(data);
     renderCheck();
     renderShares();
+    renderColumns();
     $<HTMLButtonElement>("#btn-export-json").disabled = false;
 
     setStatus("Loading column security…");
-    const isAdmin = held.some((x) => x.role.name.trim().toLowerCase() === "system administrator");
-    const [cols, profiles] = await Promise.all([fetchSecuredColumns(a, t), fetchFieldProfiles(a, fresh.id, teams)]);
-    const perms = await fetchFieldPermissions(a, t, [...new Set(profiles.map((p) => p.id))]);
-    colRows = columnAccess(cols, profiles, perms, isAdmin);
+    const isAdmin = held.some((x) => isSystemAdminRole(x.role));
+    try {
+      const [cols, profiles] = await Promise.all([fetchSecuredColumns(a, t), fetchFieldProfiles(a, fresh.id, teams)]);
+      const perms = await fetchFieldPermissions(a, t, [...new Set(profiles.map((p) => p.id))]);
+      if (stale()) return;
+      colRows = columnAccess(cols, profiles, perms, isAdmin);
+      colState = "ready";
+    } catch (e) {
+      if (stale()) return;
+      colState = "failed";
+      colError = (e as Error).message;
+      void notify("Column security", colError, "warning");
+    }
     renderColumns();
     setStatus(null);
   } catch (e) {
+    if (stale()) return;
+    colState = "failed";
+    colError = `Check failed: ${(e as Error).message}`;
+    renderColumns();
     setStatus(null);
     await notify("Check failed", (e as Error).message, "error");
   } finally {
-    updateCheckButton();
+    if (!stale()) updateCheckButton();
   }
 }
 
@@ -244,8 +295,8 @@ function renderCheck(): void {
               { class: "detail" },
               v.paths.length
                 ? h("ul", {}, ...v.paths.map((p) => h("li", { class: `path ${p.reaches === false ? "is-miss" : "is-ok"}` }, `${p.role.name}${p.viaTeam ? ` via team ${p.viaTeam.name}` : " (direct)"} · ${depthLabel(p.depth)}${x.mode === "record" ? ` · ${p.reason}` : ""}`)))
-                : h("p", { class: "caption" }, `No role grants ${privilegeName(v.right, d.table.logicalName)}.`),
-              v.sharePaths.length ? h("ul", {}, ...v.sharePaths.map((s) => h("li", { class: "path is-ok" }, `Share: ${s}`))) : null,
+                : h("p", { class: "caption" }, `No role grants ${d.tablePrivileges[v.right] ?? tablePrivilegeName(d.tablePrivileges, v.right, d.table.logicalName) ?? v.right}.`),
+              v.sharePaths.length ? h("ul", {}, ...v.sharePaths.map((s) => h("li", { class: `path ${v.sharesEffective ? "is-ok" : "is-miss"}` }, `Share: ${s}${v.sharesEffective ? "" : " (no effect: the user holds no role with this privilege)"}`))) : null,
               v.hierarchyHint ? h("p", { class: "caption" }, v.hierarchyHint) : null,
               x.mode === "table" && v.platformDepth != null ? h("p", { class: "caption" }, `Platform effective depth: ${depthLabel(v.platformDepth)}`) : null,
             ),
@@ -259,8 +310,11 @@ function renderCheck(): void {
         ["Role", "Held", ...RIGHTS],
         d.heldRoles.map((hr) => [
           hr.role.name,
-          hr.viaTeam ? `via team ${hr.viaTeam.name} (${TEAM_TYPE_LABEL[hr.viaTeam.type] ?? "team"})` : "direct",
-          ...RIGHTS.map((r) => depthLabel(d.rolePrivileges[hr.role.id]?.[privilegeName(r, d.table.logicalName)] ?? null)),
+          hr.viaTeam ? `via team ${hr.viaTeam.name} (${TEAM_TYPE_LABEL[hr.viaTeam.type] ?? "team"})${hr.role.isInherited ? "" : " · team privileges only"}` : "direct",
+          ...RIGHTS.map((r) => {
+            const prv = tablePrivilegeName(d.tablePrivileges, r, d.table.logicalName);
+            return depthLabel(prv ? (d.rolePrivileges[hr.role.id]?.[prv] ?? null) : null);
+          }),
         ]),
         undefined,
         "roles",
@@ -338,6 +392,14 @@ function renderShares(): void {
 function renderColumns(): void {
   const panel = $("#tab-columns");
   panel.replaceChildren();
+  if (colState === "loading") {
+    panel.append(emptyState("Loading column security…", "Column security for this check is still loading."));
+    return;
+  }
+  if (colState === "failed") {
+    panel.append(emptyState("Column security failed to load", colError ?? "Run the check again."));
+    return;
+  }
   if (!data || !colRows) {
     panel.append(emptyState("No check yet", "Run a check to see column security for the table."));
     return;
@@ -382,12 +444,14 @@ function wire(): void {
     debounce(async () => {
       const a = api();
       const q = userQ.value.trim();
+      const seq = ++userSeq;
       if (!a || q.length < 2) {
         userList.hidden = true;
         return;
       }
       try {
         const found = await searchUsers(a, q);
+        if (seq !== userSeq) return;
         suggest(
           userList,
           found.map((u) => ({
@@ -409,9 +473,15 @@ function wire(): void {
   );
   userQ.addEventListener("blur", () => setTimeout(() => (userList.hidden = true), 200));
 
+  const recQ = $<HTMLInputElement>("#record-q");
+  const recList = $("#record-results");
   $<HTMLSelectElement>("#table").addEventListener("change", (ev) => {
     const ln = (ev.target as HTMLSelectElement).value;
     tbl = tables.find((t) => t.logicalName === ln) ?? null;
+    // Drop any record search in flight for the previous table and its suggestions.
+    recSeq++;
+    recList.hidden = true;
+    recList.replaceChildren();
     record = null;
     recordId = null;
     $<HTMLInputElement>("#record-q").value = "";
@@ -419,13 +489,13 @@ function wire(): void {
     updateCheckButton();
   });
 
-  const recQ = $<HTMLInputElement>("#record-q");
-  const recList = $("#record-results");
   recQ.addEventListener(
     "input",
     debounce(async () => {
       const a = api();
       const q = recQ.value.trim();
+      const seq = ++recSeq;
+      const t = tbl;
       recList.hidden = true;
       if (GUID.test(q)) {
         recordId = q.replace(/[{}]/g, "").toLowerCase();
@@ -433,24 +503,28 @@ function wire(): void {
         renderRecordSel();
         return;
       }
-      if (!a || !tbl || q.length < 2) return;
+      if (!a || !t || q.length < 2) return;
       try {
-        const found = await searchRecords(a, tbl, q);
+        const found = await searchRecords(a, t, q);
+        // Results belong to the table and text they were searched for.
+        if (seq !== recSeq || tbl !== t) return;
         suggest(
           recList,
           found.map((r) => ({
             title: r.name,
             meta: `${r.id}${r.ownerName ? ` · owner ${r.ownerName}` : ""}`,
             onPick: () => {
+              if (tbl !== t) return;
               record = r;
               recordId = r.id;
               recQ.value = "";
               renderRecordSel();
             },
           })),
-          tbl.primaryName ? "No records match" : "This table has no primary name column: paste a GUID",
+          t.primaryName ? "No records match" : "This table has no primary name column: paste a GUID",
         );
       } catch (e) {
+        if (seq !== recSeq) return;
         await notify("Record search failed", (e as Error).message, "error");
       }
     }, 250),
@@ -471,7 +545,10 @@ function wire(): void {
     cache.businessUnits = null;
     cache.privileges = null;
     cache.rolePrivileges = {};
+    cache.userPrivileges = {};
     cache.hierarchy = undefined;
+    cache.hierarchyMaxDepth = undefined;
+    cache.tablePrivileges = {};
     void renderConnection();
     void loadTables().then(updateCheckButton);
   });
@@ -491,4 +568,5 @@ async function main(): Promise<void> {
   updateCheckButton();
 }
 
+mountDebug(document.querySelector("footer"), "access-checker");
 void main();

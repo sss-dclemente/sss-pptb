@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SSS D365 Apps Matrix</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <div class="content" style="height:100%">
+    <header class="topbar">
+      <div class="brand">
+        <span class="eyebrow">Simple Smooth Safe</span>
+        <h1>D365 Apps Matrix</h1>
+      </div>
+      <span id="conn" class="conns" aria-label="Connection"></span>
+      <span class="spacer"></span>
+      <button id="btn-envs" class="btn btn-sm" type="button" disabled>Environments…</button>
+      <button id="btn-refresh" class="btn btn-sm" type="button" disabled>Refresh</button>
+      <button id="btn-export-csv" class="btn btn-ghost btn-sm" type="button" disabled>Matrix CSV</button>
+    </header>
+
+    <div id="setup"></div>
+
+    <div class="toolbar">
+      <input id="filter-text" type="search" placeholder="Filter apps…" aria-label="Filter apps" />
+      <label class="check"><input type="checkbox" id="only-updates" /> Only updates / failed</label>
+      <label class="check" title="Also list apps available to install that no selected environment has"><input type="checkbox" id="show-available" /> Show not installed</label>
+      <button id="btn-select-updates" class="btn btn-sm" type="button" disabled>Select all updates</button>
+      <button id="btn-select-failed" class="btn btn-sm" type="button" disabled title="Tick every failed install for a retry (rows hidden by the filter are left out)">Select all failed</button>
+      <button id="btn-clear-sel" class="btn btn-ghost btn-sm" type="button" disabled>Clear selection</button>
+      <div class="right">
+        <span id="sel-count" class="caption"></span>
+        <button id="btn-pac" class="btn btn-ghost btn-sm" type="button" disabled title="PowerShell script with the same installs through pac application install">pac script</button>
+        <button id="btn-preview" class="btn btn-primary btn-sm" type="button" disabled>Preview…</button>
+      </div>
+    </div>
+
+    <div id="status" class="status" hidden></div>
+    <div id="summary" class="summary-line"></div>
+
+    <main class="matrix-wrap" id="matrix"></main>
+
+    <section id="run" class="run" hidden>
+      <div class="run-head">
+        <h3 id="run-title">Run</h3>
+        <span class="spacer"></span>
+        <button id="btn-stop" class="btn btn-sm" type="button" hidden>Stop waiting</button>
+        <button id="btn-results-csv" class="btn btn-ghost btn-sm" type="button">Results CSV</button>
+      </div>
+      <div id="run-body"></div>
+    </section>
+
+    <footer class="footer" style="padding: var(--s-2) var(--s-5); margin-top: 0; flex-direction: row; justify-content: space-between; align-items: center;">
+      <a href="https://simplesmoothsafe.com" target="_blank" rel="noopener">Simple Smooth Safe</a>
+      <span class="caption" id="host-mode"></span>
+    </footer>
+  </div>
+
+  <dialog id="dlg">
+    <div class="dlg-head"><h3 id="dlg-title">Confirm</h3><span class="spacer" style="flex:1"></span><span id="dlg-target" class="target"></span></div>
+    <div class="dlg-body" id="dlg-body"></div>
+    <div class="dlg-foot">
+      <button id="dlg-cancel" class="btn btn-ghost" type="button">Cancel</button>
+      <button id="dlg-ok" class="btn btn-primary" type="button" style="flex:none">OK</button>
+    </div>
+  </dialog>
+
+  <script type="module" src="./main.ts"></script>
+</body>
+</html>

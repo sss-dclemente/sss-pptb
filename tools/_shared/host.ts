@@ -5,13 +5,19 @@
  * Nothing here touches the network. Types come from each tool's tsconfig `types: ["@pptb/types"]`.
  */
 
+import { dlog, instrument } from "./debug";
+
 export type Target = "primary" | "secondary";
 export type Theme = "light" | "dark";
-type W = { toolboxAPI?: ToolBoxAPI.API; dataverseAPI?: DataverseAPI.API };
+type W = { toolboxAPI?: ToolBoxAPI.API; dataverseAPI?: DataverseAPI.API; powerplatformAPI?: PowerPlatformAPI.API };
 
 const w = (): W => window as unknown as W;
-export const toolbox = (): ToolBoxAPI.API | undefined => w().toolboxAPI;
-export const dataverse = (): DataverseAPI.API | undefined => w().dataverseAPI;
+/** Host objects are handed out through debug instrumentation: transparent while debug mode is off (see debug.ts). */
+const wrap = <T extends object>(o: T | undefined, label: string): T | undefined => (o ? instrument(o, label) : undefined);
+export const toolbox = (): ToolBoxAPI.API | undefined => wrap(w().toolboxAPI, "toolboxAPI");
+export const dataverse = (): DataverseAPI.API | undefined => wrap(w().dataverseAPI, "dataverseAPI");
+/** Power Platform API bridge (ToolBox ≥ 1.2.6); undefined on older hosts. */
+export const powerplatform = (): PowerPlatformAPI.API | undefined => wrap(w().powerplatformAPI, "powerplatformAPI");
 /** True when the host injected the file-system API (desktop ToolBox). */
 export const hasFileApi = (): boolean => !!toolbox()?.fileSystem?.selectPath;
 /** True when connections + dataverse bridge are present. */
@@ -36,7 +42,10 @@ export async function getConnections(): Promise<LiveConnection[]> {
 export function onConnectionChange(cb: () => void): void {
   try {
     toolbox()?.events?.on((_e: unknown, payload: ToolBoxAPI.ToolBoxEventPayload) => {
-      if (typeof payload?.event === "string" && payload.event.startsWith("connection:")) cb();
+      if (typeof payload?.event === "string" && payload.event.startsWith("connection:")) {
+        dlog("info", "event", payload.event);
+        cb();
+      }
     });
   } catch {
     /* outside PPTB */
@@ -68,6 +77,7 @@ export async function initTheme(apply: (t: Theme) => void): Promise<void> {
 }
 
 export async function notify(title: string, body: string, type: "info" | "success" | "warning" | "error" = "info"): Promise<void> {
+  dlog(type === "error" ? "error" : type === "warning" ? "warn" : "info", "notify", `${title}: ${body}`);
   const tb = toolbox();
   if (tb?.utils?.showNotification) {
     try {

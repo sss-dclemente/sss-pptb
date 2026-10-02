@@ -17,6 +17,7 @@ Per tool, from `tools/<tool>`:
 npm install && npm run build      # dist/ + CSP guard
 npm run e2e                        # needs playwright + chromium (npm i -g playwright && npx playwright install chromium)
 npm run validate                   # @pptb/validate 1.0.2, live HEAD on readmeUrl
+npm test                           # envvar-matrix only: unit tests, no browser
 ```
 
 ToolBox: Settings → *Show Debug Menu* → Debug → *Load Local Tool* → pick `tools/<tool>`. Light and dark (Settings → theme) both.
@@ -30,6 +31,7 @@ Real-env test (no connection needed):
 - [ ] Risk: score + factors read sensibly on a real managed solution.
 - [ ] Install order: multi-solution set sorts by dependencies; missing dependency listed.
 - [ ] Export JSON writes via ToolBox save dialog.
+- [ ] Debug log (1.1.0; published to npm 2026-10-02 before this check, fixes go in 1.1.1): tick Debug log in the footer, add a zip, Save log: the .txt names the tool and 1.1.0 and records the switch and the file pick. Untick: nothing more is recorded.
 
 Screenshots (replace `docs/img/*.png`, keep file names): `inventory-light.png`, `inventory-dark.png`, `risk.png`, `install-order.png`. Then delete the line "Synthetic sample data. Replace with real captures before publishing." from `README.md`.
 
@@ -48,6 +50,18 @@ Real-env test (primary + secondary connection, Dev + Test):
 - [ ] Set single cell on a boolean and a JSON variable.
 - [ ] Secret rows masked, never written, skipped in preview.
 - [ ] Export deploymentSettings.json for Test; feed it to `pac solution import --settings-file` on a throwaway solution.
+
+Note: 1.2.0 was published to npm on 2026-09-24, before the checks below had run on a real environment. Fix failures in 1.2.1; do not unpublish.
+
+- [ ] Consolidate (1.2.0), throwaway Dev env: two solution flows on two different Office 365 references (same connection), one flow On. Merge one into the other: backup saved, preview key-by-key, flow turned off/on and still runs, designer shows the kept reference, merged reference deleted. Repeat with the kept reference unbound: flow reported "left off". Reference used by a canvas app: delete skipped with dependency reason. Restore from backup puts both back.
+- [ ] Unused cleanup (1.2.0): one unused unmanaged reference + one used only by a canvas app. Preview: first "delete", second "keep" with dependency reason. Apply deletes the first only.
+- [ ] Solution check (1.2.0): solution with a flow whose reference lives outside it. Filter to the solution in Consolidate: listed; Add to solution; export the solution, the reference is in it.
+- [ ] Load a real `pac solution create-settings` file via Load snapshot…: values show as a column; copy one value into Dev through the preview.
+- [ ] Bind from that settings file: one unbound reference used by an active flow. Preview → Bind: connection set in maker portal, flow restarted and runs. Snapshot from another env as source: refused.
+- [ ] Pick connections (1.3.0, experimental; published to npm 2026-09-24 before the probe, fixes go in 1.3.1): first run the probe in `docs/PP-API-SPIKE.md` §6. Connection with Power Platform API enabled: Pick connections… lists the env's connections, each dropdown only that connector's; bind one, flow restarted and runs. Connection without it: "Connections unavailable" with the reason. If the probe shows other field names, fix `normalizeConnection` in `src/matrix/ppconnections.ts`.
+- [ ] Turn on flows (1.4.0; published to npm 2026-09-25 before this check, fixes go in 1.4.1): after importing a solution with flows, bind their references, open Consolidate: flows listed as ready / blocked with reasons; turn on one ready flow, it runs on its trigger; a flow whose reference is unbound cannot be selected.
+- [ ] Bind backup + run log (1.4.1; published to npm 2026-09-25 before this check, fixes go in 1.4.2): bind one reference; a `connref-bind-backup-*.json` is saved first; Consolidate → Restore from backup… with it puts the old binding back (also for a reference that was unbound). Run log lists the bind and the restore; Export CSV opens cleanly in Excel. Reload the tool: the log is still there.
+- [ ] Unit test fixture (1.4.0): export a real solution flow's `clientdata` with two keys on one connector (e.g. `shared_office365`, `shared_office365_1`) and add it next to `scripts/fixtures/flow-clientdata.json` (synthetic, modelled on the export shape); `npm test` must stay green.
 - [ ] Snapshot export from Dev, reload as third column, matrix compares.
 - [ ] Connection references tab: bound / unbound / absent correct.
 
@@ -55,9 +69,11 @@ Screenshots: `envvars.png`, `preview.png`, `connrefs.png`, `snapshot-dark.png`. 
 
 Publish:
 ```bash
-cd tools/envvar-matrix && npm run build && npm run validate && npm publish --access public
+cd tools/envvar-matrix && npm run build && npm test && npm run validate && npm publish --access public
 ```
 Submit: `@simplesmoothsafe/pptb-envvar-matrix`, categories **Environments, Migration, Comparisons**.
+
+- [ ] Debug log (1.5.0; published to npm 2026-10-02 before this check, fixes go in 1.5.1): tick Debug log, Refresh, Save log: every `queryData` with its query text and result, no connection secret in the file. The switch is still on after reopening the tool.
 
 ## 3. SSS Access Checker — `tools/access-checker`
 
@@ -68,8 +84,12 @@ Real-env test (one connection, a user with a mix of direct role + team role):
 - [ ] Record check: pick a record owned by another user in a child BU and one in a sibling BU; verdict chips match what the user actually sees (log in as them or use "Check access" in the model-driven app). Any `platform says otherwise` → note the case in `docs/BACKLOG.md`.
 - [ ] Record shared with a team the user belongs to: Shares tab lists it with `via team`; Check tab shows the share as the winning path.
 - [ ] Column security on a table with a secured column: Read / Update / Create match the field security profile UI.
-- [ ] Hierarchy: with hierarchy security on and the user as the owner's manager, the Hierarchy card appears. If the card says "state unknown", the attribute `ishierarchicalsecuritymodelenabled` is wrong: fix `fetchHierarchyEnabled` in `src/access/fetch.ts`.
+- [ ] Hierarchy: with hierarchy security on and the user as the owner's manager, the Hierarchy card appears. If the card says "state unknown", the organization row could not be read: check `fetchHierarchySettings` in `src/access/fetch.ts` (`ishierarchicalsecuritymodelenabled`, `maxdepthforhierarchicalsecuritymodel`, both documented on the organization table). A manager further above the owner than the organization's hierarchy depth gets no card.
+- [ ] Table-level check on an activity table (Task) and on Note: chips agree (names come from entity metadata: `prv*Activity`, `prv*Note`).
+- [ ] Team role with *Member's privilege inheritance* = *Team privileges only* at Basic: a record the user owns is not reached through it; a record owned by that team is.
+- [ ] Record shared with the user for a right they hold no privilege for: the chip is denied and the "why" line says the share has no effect.
 - [ ] Exports: JSON, shares CSV, columns CSV.
+- [ ] Debug log (1.1.0; published to npm 2026-10-02 before this check, fixes go in 1.1.1): tick Debug log, run a record check, Save log: user, privilege and share queries with results; a failed call shows its error.
 
 Screenshots: `check.png`, `columns-dark.png` (+ optionally `shares.png`, add to README). Remove the synthetic-data line from `README.md`.
 
@@ -79,7 +99,22 @@ cd tools/access-checker && npm run build && npm run validate && npm publish --ac
 ```
 Submit: `@simplesmoothsafe/pptb-access-checker`, categories **Users & Security, Troubleshooting**.
 
-## 4. SSS Offboarding Wizard — `tools/offboarding-wizard`
+## 4. SSS Dependency Cleaner — `tools/dependency-cleaner`
+
+Real-env test, Upgrade blockers (1.1.0; published to npm 2026-10-02 before this check, fixes go in 1.1.1). Sandbox only: primary = Dev with the unmanaged solution, secondary = Test with it installed managed, a custom page still listed by a model-driven app.
+- [ ] Tick Debug log, Upgrade blockers → Analyze, Save log. The log answers the probe in docs/UPGRADE-BLOCKERS-PLAN.md §4: `RetrieveDependenciesForDelete` response shape, `msdyn_componentlayers` rows (and the unmanaged layer's name), `canvasappid` / `appmoduleid` equal or not between Dev and Test. Send the .txt; adjust `src/deps/upgrade.ts` if a shape differs.
+- [ ] Counts (removed / deleted / survive / blockers) match what a real stage-and-upgrade of the same solution reports in the target.
+- [ ] Remove from app on the page blocker: backup saved, `RemoveAppComponents` succeeds, the app no longer lists the page after publish, re-analysis drops the blocker. Restore puts the page back.
+- [ ] Runtime breaks: a JS web resource calling `navigateTo` with the page name is listed.
+- [ ] Exports: Markdown checklist and CSV.
+- [x] 1.1.1 (published to npm 2026-10-02): Diagnose and Upgrade blockers failed on their first query with `0x80060888: Could not find a property named '_rootsolutioncomponentid_value'` (first real-environment debug log). `rootsolutioncomponentid` is a Uniqueidentifier column, not a lookup; the e2e mocks now reject the wrong name like Dataverse does.
+
+Publish:
+```bash
+cd tools/dependency-cleaner && npm run build && npm run validate && npm publish --access public
+```
+
+## 5. SSS Offboarding Wizard — `tools/offboarding-wizard`
 
 Real-env test (one connection, a sandbox user who owns a bit of everything, plus a second user as successor). **Do the first run against a sandbox**: this tool writes ownership and membership.
 
@@ -98,9 +133,9 @@ Publish:
 ```bash
 cd tools/offboarding-wizard && npm run build && npm run validate && npm publish --access public
 ```
-Submit: `@simplesmoothsafe/pptb-offboarding-wizard`, categories **Users & Security, Data Management**.
+Submit: `@simplesmoothsafe/pptb-offboarding-wizard`, categories **Users & Security, Data**.
 
-## 5. SSS Audit Config Matrix — `tools/audit-matrix`
+## 6. SSS Audit Config Matrix — `tools/audit-matrix`
 
 Real-env test (two connections to sandboxes whose audit configuration differs, or one connection plus a snapshot). **Metadata writes are real and need a publish**: sandbox first.
 
@@ -128,6 +163,6 @@ Submit: `@simplesmoothsafe/pptb-audit-matrix`, categories **Users & Security, Co
 - [ ] ToolBox → Debug → *Install from npm* → each package name; smoke test once more from the published build (README, LICENSE, src are stripped at intake, only `package.json` + `dist/` ship).
 - [x] Root `README.md`: change "unpublished" to the published version per tool.
 - [ ] Commit real screenshots + README edits; `readmeUrl` points at `main`, so the marketplace picks them up on the next daily sync.
-- [ ] Version: `0.1.3` is published and fine for listing. Bump to `1.0.0` (Verified badge needs ≥1.0.0) once the real-env checklist passes; registry syncs `latest` daily at 00:00 UTC.
+- [x] Version: all four tools at `1.0.0` (Verified badge needs ≥1.0.0). Bumped by owner decision before the real-env checklist ran; registry syncs `latest` daily at 00:00 UTC.
 - [ ] Do NOT add a package-root `index.html` either. 0.1.2 generated one; 0.1.3 removed it. `main` resolves inside `dist/`, so it was never needed — the npm-install launch failure was a host bug (PPTB-NOTES §11), not a packaging problem.
 - [ ] Do NOT reintroduce `npm-shrinkwrap.json`. The PPTB samples and publishing docs prescribe it plus a `finalize-package` script, and both were dropped in 0.1.1: npm honours a published shrinkwrap as the full tree including its `dev: true` entries, so `npm install` of a ~25 kB tool pulled ~50 MB of vite/esbuild/typescript/rollup (measured: 50 MB → under 200 KB after the fix). `npm shrinkwrap --omit=dev` does not help. The `dist/` bundles are self-contained, so there is nothing left to lock, and `@pptb/validate` does not check for it. See docs/PORT-PLAN.md.

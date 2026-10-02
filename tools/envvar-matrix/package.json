@@ -1,15 +1,27 @@
 {
   "name": "@simplesmoothsafe/pptb-envvar-matrix",
-  "version": "0.1.3",
+  "version": "1.5.0",
   "displayName": "SSS EnvVar & ConnRef Matrix",
-  "description": "Environment variables and connection references as a matrix across environments: missing values, differences, copy values between environments, deploymentSettings.json export.",
+  "description": "Environment variables and connection references as a matrix across environments: missing values, differences, copy values between environments, consolidate and clean up connection references across cloud flows, bind connection references (from a settings file or picked via the Power Platform API), solution fit check, turn on flows after import, deploymentSettings.json import and export.",
   "main": "index.html",
   "icon": "icon.svg",
   "license": "MIT",
-  "keywords": ["powerplatform", "dataverse", "toolbox", "pptb", "environment-variables", "connection-references", "alm"],
+  "keywords": [
+    "powerplatform",
+    "dataverse",
+    "toolbox",
+    "pptb",
+    "environment-variables",
+    "connection-references",
+    "cloud-flows",
+    "alm"
+  ],
   "author": "Simple Smooth Safe",
   "contributors": [
-    { "name": "Duarte Clemente", "url": "https://simplesmoothsafe.com" }
+    {
+      "name": "Duarte Clemente",
+      "url": "https://simplesmoothsafe.com"
+    }
   ],
   "homepage": "https://simplesmoothsafe.com",
   "repository": {
@@ -27,13 +39,17 @@
     "connectionRequirement": "required",
     "minAPI": "1.2.0"
   },
-  "engines": { "node": ">=18.0.0" },
+  "engines": {
+    "node": ">=18.0.0"
+  },
   "scripts": {
     "build": "tsc --noEmit && vite build && node scripts/check-dist.mjs",
     "dev-watch": "vite build --mode development --watch",
     "typecheck": "tsc --noEmit",
     "validate": "node node_modules/@pptb/validate/dist/cli.js",
-    "e2e": "node scripts/e2e.mjs"
+    "test": "node scripts/unit-test.mjs",
+    "e2e": "node scripts/e2e.mjs && node scripts/e2e-consolidate.mjs",
+    "screenshots": "node scripts/screenshots.mjs"
   },
   "devDependencies": {
     "@pptb/types": "^1.2.5",
@@ -41,5 +57,7 @@
     "typescript": "^5.6.0",
     "vite": "^5.4.0"
   },
-  "files": ["dist"]
+  "files": [
+    "dist"
+  ]
 }
