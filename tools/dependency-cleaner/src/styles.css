@@ -35,6 +35,7 @@
 .finding .name { font-weight: var(--fw-bold); color: var(--fg-primary); }
 .finding .cause { font-size: var(--fs-caption); }
 .finding select { max-width: 100%; margin-left: auto; font-size: var(--fs-caption); }
+.finding .head > .report-only { margin-left: auto; }
 .req { display: inline-flex; gap: var(--s-1); align-items: center; padding: 1px var(--s-2); border-radius: var(--radius-pill); border: 1px solid var(--border-color); font-size: var(--fs-micro); background: var(--bg-subtle); }
 .req .sol { font-weight: var(--fw-bold); color: var(--fg-primary); }
 .req.is-safe { opacity: 0.6; }
@@ -55,9 +56,9 @@ details.error-all ul.plain { margin-top: var(--s-1); max-height: 240px; overflow
 .ops .why { color: var(--fg-muted); }
 .ops-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-2); }
 .ops-head .fold-all { margin-left: auto; }
-details.diff-fold { margin-top: var(--s-1); }
-details.diff-fold > summary { cursor: pointer; width: fit-content; font-size: var(--fs-caption); color: var(--fg-muted); padding: 2px 0; }
-details.diff-fold > summary:hover { color: var(--fg-primary); }
+details.diff-fold, details.layers-fold { margin-top: var(--s-1); }
+details.diff-fold > summary, details.layers-fold > summary { cursor: pointer; width: fit-content; font-size: var(--fs-caption); color: var(--fg-muted); padding: 2px 0; }
+details.diff-fold > summary:hover, details.layers-fold > summary:hover { color: var(--fg-primary); }
 pre.diff { font-family: var(--font-mono); font-size: var(--fs-micro); background: var(--bg-subtle); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); padding: var(--s-2); overflow: auto; max-height: 280px; white-space: pre; margin-top: var(--s-1); }
 pre.diff .del { color: var(--status-bad-fg); background: var(--status-bad-bg); display: block; }
 pre.diff .add { color: var(--status-ok-fg); background: var(--status-ok-bg); display: block; }

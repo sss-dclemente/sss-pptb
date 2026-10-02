@@ -861,7 +861,10 @@ function wire(): void {
   persistControls("dependency-cleaner", ["show-safe", "ub-scan", "off-show-safe"]);
   diagCtl = persistControls("dependency-cleaner", ["diag-find", "diag-type"]);
   offCtl = persistControls("dependency-cleaner", ["off-find", "off-type"]);
-  wireTabs(() => undefined);
+  // Findings JSON / CSV export the Diagnose result only: shown on that tab alone
+  wireTabs((tab) => {
+    for (const id of ["#btn-export-json", "#btn-export-csv"]) $(id).hidden = tab !== "diagnose";
+  });
   $("#btn-run").addEventListener("click", () => void runDiagnosis());
   $("#btn-cancel").addEventListener("click", () => {
     cancelFlag = true;

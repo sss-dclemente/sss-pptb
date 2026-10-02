@@ -1,5 +1,5 @@
 /** "Upgrade blockers" tab: docs/UPGRADE-BLOCKERS-PLAN.md. Dev = primary connection, target = secondary. */
-import { $, badge, emptyState, foldAllButtons, foldCard, h, type Child } from "../../_shared/dom";
+import { $, badge, emptyState, foldAllButtons, foldCard, h, keepFold, type Child } from "../../_shared/dom";
 import { backupFileName, buildUpgradeBackup } from "./deps/backup";
 import { Cancelled } from "./deps/diagnose";
 import { csvCell, safeFileName } from "./deps/export";
@@ -154,11 +154,32 @@ function blockerCard(b: Blocker): HTMLElement {
       badge(b.required.kind ?? typeName(b.required.type), "neutral"),
       h("span", { class: "name mono" }, b.required.name),
       badge(b.owner === "Active" ? "unmanaged" : b.owner, b.location === "dev" ? "warn" : "bad"),
-      sel,
+      sel ?? reportBadge(b),
     ),
     h("div", { class: "cause" }, b.note),
-    h("div", { class: "caption" }, `Layers in target (top first): ${b.layers.join(" › ") || "none"}${b.layerSource === "membership" ? " · from solution membership, order unknown" : ""}`),
+    layersFold(b),
   );
+}
+
+/** No fix to pick: say so where the select would be ("Fix by hand in Dev", "Report only"). */
+function reportBadge(b: Blocker): HTMLElement | null {
+  const report = b.fixes.find((f) => f.kind === "report");
+  if (!report) return null;
+  const el = badge(report.label, b.location === "dev" ? "warn" : "neutral");
+  el.classList.add("report-only");
+  return el;
+}
+
+/** Target layers, folded; open when they come from solution membership (order unknown), which is worth a look. */
+function layersFold(b: Blocker): HTMLElement {
+  const membership = b.layerSource === "membership";
+  const el = h(
+    "details",
+    { class: "layers-fold" },
+    h("summary", { class: "chev" }, "Layers"),
+    h("div", { class: "caption" }, `In target, top first: ${b.layers.join(" › ") || "none"}${membership ? " · from solution membership, order unknown" : ""}`),
+  );
+  return keepFold(el, `ub-layers:${b.key}`, membership);
 }
 
 /** Runtime breaks open by default up to this many rows; a longer list starts folded. */

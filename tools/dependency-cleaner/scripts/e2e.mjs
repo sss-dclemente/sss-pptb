@@ -353,6 +353,7 @@ await page.uncheck("#show-safe");
 await page.screenshot({ path: resolve(OUT, "01-diagnose.png"), fullPage: true });
 
 // ---- exports ----
+assert((await page.isVisible("#btn-export-json")) && (await page.isVisible("#btn-export-csv")), "D8: Findings JSON / CSV shown on the Diagnose tab");
 await page.click("#btn-export-csv");
 await page.click("#btn-export-json");
 let saved = await M(() => window.__mock.saved);
@@ -441,6 +442,7 @@ await page.screenshot({ path: resolve(OUT, "03-results.png"), fullPage: true });
 
 // ---- restore ----
 await page.click('.tab[data-tab="restore"]');
+assert((await page.isHidden("#btn-export-json")) && (await page.isHidden("#btn-export-csv")), "D8: Findings JSON / CSV hidden off the Diagnose tab (Restore, after Fix)");
 await page.evaluate((t) => { window.__mock.nextText = t; }, backup.content);
 await page.click("#btn-load-backup");
 await page.waitForSelector("#restore-ops li");
@@ -459,6 +461,7 @@ assert(after.form && after.fetch && after.layout, "restore writes original formx
 assert(after.members.includes(ids.E.acc + ":0") && after.members.length === 7, "restore puts account back with all assets (7 members)");
 assert(after.pubs === 2, "restore publishes");
 await page.click('.tab[data-tab="diagnose"]');
+assert((await page.isVisible("#btn-export-json")) && (await page.isVisible("#btn-export-csv")), "D8: Findings JSON / CSV shown again back on Diagnose");
 await page.click("#btn-run");
 await page.waitForFunction(() => document.querySelectorAll("#findings .finding").length === 5);
 assert(true, "after restore the 5 blockers are back");
@@ -487,6 +490,7 @@ await page.evaluate(() => { window.__mock.managedFlip = false; });
 
 // ---- offline ----
 await page.click('.tab[data-tab="offline"]');
+assert(await page.isHidden("#btn-export-json"), "D8: Findings JSON hidden on the Offline tab");
 await page.evaluate((b) => { window.__mock.nextBinary = b; }, zipBytes);
 await page.click("#btn-open-zip");
 await page.waitForSelector("#offline-summary");
