@@ -108,7 +108,10 @@ export interface Matrix {
 export interface Filters {
   text: string;
   onlyDiff: boolean;
+  /** deployed but without a value (env var: no value and no default) or without a connection (connection reference) */
   onlyMissing: boolean;
+  /** not deployed: absent from at least one compared column */
+  onlyAbsent: boolean;
   /** lowercase schema/logical names allowed; null = no solution filter */
   scope: Set<string> | null;
 }

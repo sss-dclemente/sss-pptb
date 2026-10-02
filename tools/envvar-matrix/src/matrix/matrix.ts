@@ -75,13 +75,19 @@ export function buildMatrix(columns: ColumnData[], hidden: ReadonlySet<string> =
   return { columns: visible.map((c) => c.meta), envVars, connRefs };
 }
 
+/**
+ * "Missing value / unbound" and "Not deployed" each narrow to rows with that problem; with both on, a row with
+ * either one is shown (two kinds of gap, not a combination nobody asks for).
+ */
+const gapOk = (f: Filters, missing: boolean, absent: boolean): boolean => (!f.onlyMissing && !f.onlyAbsent) || (f.onlyMissing && missing) || (f.onlyAbsent && absent);
+
 export function filterEnvVars(rows: EnvVarRow[], f: Filters): EnvVarRow[] {
   const t = f.text.trim().toLowerCase();
   return rows.filter(
     (r) =>
       (!t || r.key.includes(t) || r.displayName.toLowerCase().includes(t)) &&
       (!f.onlyDiff || r.differs) &&
-      (!f.onlyMissing || r.anyMissing || r.anyAbsent) &&
+      gapOk(f, r.anyMissing, r.anyAbsent) &&
       (!f.scope || f.scope.has(r.key)),
   );
 }
@@ -92,7 +98,7 @@ export function filterConnRefs(rows: ConnRefRow[], f: Filters): ConnRefRow[] {
     (r) =>
       (!t || r.key.includes(t) || r.displayName.toLowerCase().includes(t) || (r.connector ?? "").toLowerCase().includes(t)) &&
       (!f.onlyDiff || r.differs) &&
-      (!f.onlyMissing || r.anyUnbound || r.anyAbsent) &&
+      gapOk(f, r.anyUnbound, r.anyAbsent) &&
       (!f.scope || f.scope.has(r.key)),
   );
 }

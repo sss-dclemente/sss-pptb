@@ -1,5 +1,5 @@
 import { mountDebug } from "../../_shared/debug-ui";
-import { $, badge, card, emptyState, filteredEmpty, h, showDialog, shownOf, wireTabs } from "../../_shared/dom";
+import { $, badge, card, emptyState, filteredEmpty, foldAllButtons, foldCard, h, showDialog, shownOf, wireTabs } from "../../_shared/dom";
 import { loadView, persistControls, saveView } from "../../_shared/view-state";
 import { dataverse, getConnections, initTheme, inToolbox, notify, onConnectionChange, openText, powerplatform, saveText } from "./host";
 import { deploymentSettings, matrixCsv, safeFileName, snapshot } from "./matrix/export";
@@ -76,7 +76,7 @@ const columns = (): ColumnData[] => [...live, ...snaps];
 // ---------- persisted view (per viewer, localStorage) ----------
 const VIEW = "envvar-matrix";
 /** toolbar filters, saved on change and restored now; the Solution filter is restored once its options load */
-const view = persistControls(VIEW, ["filter-text", "filter-diff", "filter-missing", "filter-solution"]);
+const view = persistControls(VIEW, ["filter-text", "filter-diff", "filter-missing", "filter-absent", "filter-solution"]);
 /** the saved Solution filter still has to be applied (first load with solutions listed) */
 let restoreSolution = true;
 
@@ -239,6 +239,7 @@ function filters(): Filters {
     text: $<HTMLInputElement>("#filter-text").value,
     onlyDiff: $<HTMLInputElement>("#filter-diff").checked,
     onlyMissing: $<HTMLInputElement>("#filter-missing").checked,
+    onlyAbsent: $<HTMLInputElement>("#filter-absent").checked,
     scope,
   };
 }
@@ -295,11 +296,18 @@ function renderHeader(): void {
   renderColMenu();
 }
 
-/** The Columns menu applies to the matrix only: hidden in the consolidate view (one environment, its own picker). */
+const inConsolidate = (): boolean => activeTab === "connrefs" && consolidating;
+
+/**
+ * Matrix-only toolbar controls are hidden in the consolidate view, which ignores them: the Columns menu (one
+ * environment, its own picker), the difference / gap filters and the exports. Their values are kept for the matrix.
+ */
 function syncColMenu(): void {
+  const cons = inConsolidate();
   const menu = $<HTMLDetailsElement>("#colmenu");
-  menu.hidden = !columns().length || (activeTab === "connrefs" && consolidating);
+  menu.hidden = !columns().length || cons;
   if (menu.hidden) menu.open = false;
+  document.querySelectorAll<HTMLElement>(".toolbar .matrix-only").forEach((el) => (el.hidden = cons));
 }
 
 /** Columns menu: one checkbox per loaded column; the last visible one cannot be unchecked. */
@@ -346,6 +354,42 @@ function colHead(c: ColumnMeta): HTMLElement {
   return th;
 }
 
+/** Cells whose full value the user expanded (`ev|cr:<row key>:<column key>`), kept across re-renders. */
+const expandedCells = new Set<string>();
+/** Values shorter than this on one line never reach 3 lines in a cell: no toggle, nothing to measure. */
+const CLAMP_MIN = 40;
+
+/**
+ * Cell value, clamped to 3 lines by CSS with the full value in its tooltip. A long value also gets a toggle in the
+ * cell's meta row, hidden until markOverflow() finds the value actually cut off. Secrets pass `full = null`.
+ */
+function cellValue(td: HTMLElement, id: string, shown: string, full: string | null, label: string): { val: HTMLElement; toggle: HTMLElement | null } {
+  const val = h("span", { class: "val", title: full || undefined }, shown);
+  if (full === null || (full.length < CLAMP_MIN && !full.includes("\n"))) return { val, toggle: null };
+  const open = expandedCells.has(id);
+  td.classList.toggle("is-expanded", open);
+  const toggle = h("button", { class: "val-more", type: "button", "aria-expanded": String(open), "aria-label": `Full value of ${label}`, hidden: !open }, open ? "less" : "more");
+  toggle.addEventListener("click", () => {
+    const on = !td.classList.contains("is-expanded");
+    td.classList.toggle("is-expanded", on);
+    if (on) expandedCells.add(id);
+    else expandedCells.delete(id);
+    toggle.setAttribute("aria-expanded", String(on));
+    toggle.textContent = on ? "less" : "more";
+  });
+  return { val, toggle };
+}
+
+/** Show the toggle of each clamped value that is cut off: all reads first, then all writes (one layout pass). */
+function markOverflow(root: ParentNode): void {
+  const toggles = [...root.querySelectorAll<HTMLElement>("td.cell:not(.is-expanded) .val-more")];
+  const cut = toggles.map((b) => {
+    const v = b.closest("td")?.querySelector<HTMLElement>(".val");
+    return !!v && v.scrollHeight > v.clientHeight + 1;
+  });
+  toggles.forEach((b, i) => (b.hidden = !cut[i]));
+}
+
 /** Cell of a live column whose load failed. */
 const errorCell = (c: ColumnMeta): HTMLElement => h("td", { class: "cell error", title: c.error ?? "" }, h("span", { class: "val" }, "—"), h("div", { class: "meta" }, badge("error", "bad")));
 
@@ -381,11 +425,12 @@ function envVarTable(rows: EnvVarRow[]): HTMLElement {
           td.append(h("span", { class: "val" }, "—"), h("div", { class: "meta" }, badge("absent", "neutral")));
           return td;
         }
-        td.append(h("span", { class: "val" }, r.isSecret ? "••••••" : (cell.effective ?? "")));
+        const v = cellValue(td, `ev:${r.key}:${c.key}`, r.isSecret ? "••••••" : (cell.effective ?? ""), r.isSecret ? null : (cell.effective ?? ""), `${r.schemaName} in ${c.name}`);
+        td.append(v.val);
         const dupes = cell.record?.valueCount ?? 0;
         const dupeBadge = dupes > 1 ? badge(`${dupes} value rows`, "bad") : null;
         if (dupeBadge) dupeBadge.title = "More than one environmentvariablevalue row for this definition; the one shown may not be the one the platform uses. Remove the extras.";
-        const meta = h("div", { class: "meta" }, badge(cell.source, cell.source === "value" ? "ok" : cell.source === "default" ? "warn" : "bad"), cell.record?.isManaged ? badge("managed", "neutral") : null, dupeBadge);
+        const meta = h("div", { class: "meta" }, badge(cell.source, cell.source === "value" ? "ok" : cell.source === "default" ? "warn" : "bad"), cell.record?.isManaged ? badge("managed", "neutral") : null, dupeBadge, v.toggle);
         if (c.kind === "live" && !r.isSecret) {
           const edit = h("button", { class: "btn-icon", type: "button", title: `Set value in ${c.name}`, "aria-label": `Set ${r.schemaName} in ${c.name}` }, "✎");
           edit.addEventListener("click", () => openSetDialog(r, c));
@@ -422,9 +467,10 @@ function connRefTable(rows: Matrix["connRefs"]): HTMLElement {
         const td = h("td", { class: `cell ${cell.state}` });
         const otherConnector = cell.connector && r.connector && cell.connector.toLowerCase() !== r.connector.toLowerCase() ? badge(cell.connector, "warn") : null;
         if (otherConnector) otherConnector.title = `Connector differs: ${cell.record?.connectorId ?? cell.connector}`;
+        const v = cellValue(td, `cr:${r.key}:${c.key}`, cell.state === "absent" ? "—" : (cell.connectionId ?? "(no connection)"), cell.connectionId, `${r.logicalName} in ${c.name}`);
         td.append(
-          h("span", { class: "val" }, cell.state === "absent" ? "—" : (cell.connectionId ?? "(no connection)")),
-          h("div", { class: "meta" }, badge(cell.state, cell.state === "bound" ? "ok" : cell.state === "unbound" ? "bad" : "neutral"), cell.record?.isManaged ? badge("managed", "neutral") : null, otherConnector),
+          v.val,
+          h("div", { class: "meta" }, badge(cell.state, cell.state === "bound" ? "ok" : cell.state === "unbound" ? "bad" : "neutral"), cell.record?.isManaged ? badge("managed", "neutral") : null, otherConnector, v.toggle),
         );
         return td;
       }),
@@ -471,6 +517,7 @@ function renderTable(): void {
           : emptyState("No connection references", "None in the loaded columns."),
     );
   }
+  markOverflow(body);
   renderBulkbar();
 }
 
@@ -596,6 +643,7 @@ function renderConsolidate(body: HTMLElement, f: Filters): void {
     }
     return;
   }
+  head.insertBefore(foldAllButtons(() => document.querySelector(".cons-groups"), "details.card"), restore);
   const usage = usageByConnRef(flows);
   const t = f.text.trim().toLowerCase();
   const refs = col.connRefs.filter((r) => (!f.scope || f.scope.has(lcase(r.logicalName))) && (!t || lcase(r.logicalName).includes(t) || lcase(r.displayName).includes(t) || lcase(r.connector ?? "").includes(t)));
@@ -659,7 +707,16 @@ function renderConsolidate(body: HTMLElement, f: Filters): void {
       h("thead", {}, h("tr", {}, h("th", {}, "Keep"), h("th", {}, "Merge"), h("th", {}, "Connection reference"), h("th", {}, "Connection"), h("th", {}, "Usage"))),
       h("tbody", {}, ...rows),
     );
-    wrap.append(card(`${g.connector} · ${g.refs.length} references`, table, all));
+    // open while there is something to act on (a merge picked, a keep target changed, an unbound reference)
+    const picked = g.refs.filter((r) => lcase(r.logicalName) !== lcase(keep) && mergeSel.has(lcase(r.logicalName))).length;
+    const unbound = g.refs.filter((r) => !r.connectionId).length;
+    const flags = h("span", { class: "cons-flags" }, picked ? badge(`${picked} to merge`, "warn") : null, unbound ? badge(`${unbound} unbound`, "bad") : null);
+    wrap.append(
+      foldCard(g.connector, g.refs.length, h("div", {}, h("div", { class: "cons-actions" }, all), table), picked > 0 || keepBy.has(gk) || unbound > 0, {
+        key: `cons:${col.meta.key}:group:${gk}`,
+        extra: flags.childElementCount ? flags : null,
+      }),
+    );
   }
   wrap.append(cleanupCard(col, unusedConnRefs(refs, usage)));
   wrap.append(offFlowsCard(col, flows, t));
@@ -667,7 +724,9 @@ function renderConsolidate(body: HTMLElement, f: Filters): void {
 }
 
 function cleanupCard(col: ColumnData, unused: ConnRefRecord[]): HTMLElement {
-  if (!unused.length) return card("Unused connection references", emptyState("None", "Every connection reference is used by at least one cloud flow (within the current filters)."));
+  const title = "Unused connection references";
+  const key = `cons:${col.meta.key}:unused`;
+  if (!unused.length) return foldCard(title, 0, emptyState("None", "Every connection reference is used by at least one cloud flow (within the current filters)."), false, { key });
   const deletable = unused.filter((r) => !r.isManaged);
   const rows = unused.map((r) => {
     const name = lcase(r.logicalName);
@@ -689,7 +748,7 @@ function cleanupCard(col: ColumnData, unused: ConnRefRecord[]): HTMLElement {
     );
   });
   const n = unused.filter((r) => cleanupSel.has(lcase(r.logicalName)) && !r.isManaged).length;
-  const actions = h("span", { style: "display:inline-flex; gap: var(--s-2); margin-left:auto" });
+  const actions = h("div", { class: "cons-actions" });
   const all = h("button", { class: "btn btn-ghost btn-sm", type: "button" }, "Select all unmanaged");
   all.addEventListener("click", () => {
     for (const r of deletable) cleanupSel.add(lcase(r.logicalName));
@@ -705,7 +764,7 @@ function cleanupCard(col: ColumnData, unused: ConnRefRecord[]): HTMLElement {
     h("thead", {}, h("tr", {}, h("th", {}, "Delete"), h("th", {}, "Connection reference"), h("th", {}, "Connector"), h("th", {}, "State"))),
     h("tbody", {}, ...rows),
   );
-  return card(`Unused connection references · ${unused.length}`, table, actions);
+  return foldCard(title, unused.length, h("div", {}, actions, table), true, { key });
 }
 
 const cleanupSummary = (n: number): string => `${n} unused reference${n === 1 ? "" : "s"} to delete`;
@@ -726,8 +785,9 @@ async function previewCleanup(col: ColumnData): Promise<void> {
 
 function offFlowsCard(col: ColumnData, flows: FlowRecord[], text: string): HTMLElement {
   const all = offFlows(flows, col.connRefs).filter((f) => !text || f.name.toLowerCase().includes(text) || f.refs.some((r) => r.toLowerCase().includes(text)));
-  const title = `Flows that are off · ${all.length}`;
-  if (!all.length) return card(title, emptyState("None", "Every solution cloud flow is on (within the current filters)."));
+  const title = "Flows that are off";
+  const key = `cons:${col.meta.key}:off`;
+  if (!all.length) return foldCard(title, 0, emptyState("None", "Every solution cloud flow is on (within the current filters)."), false, { key });
   const ready = all.filter((f) => f.ready);
   const rows = all.map((f) => {
     const cb = h("input", { type: "checkbox", "aria-label": `Turn on ${f.name}` }) as HTMLInputElement;
@@ -748,7 +808,7 @@ function offFlowsCard(col: ColumnData, flows: FlowRecord[], text: string): HTMLE
     );
   });
   const n = ready.filter((f) => turnOnSel.has(f.flowId)).length;
-  const actions = h("span", { style: "display:inline-flex; gap: var(--s-2); margin-left:auto" });
+  const actions = h("div", { class: "cons-actions" });
   const selAll = h("button", { class: "btn btn-ghost btn-sm", type: "button" }, "Select all ready");
   selAll.toggleAttribute("disabled", !ready.length);
   selAll.addEventListener("click", () => {
@@ -765,7 +825,7 @@ function offFlowsCard(col: ColumnData, flows: FlowRecord[], text: string): HTMLE
     h("thead", {}, h("tr", {}, h("th", {}, "On"), h("th", {}, "Flow"), h("th", {}, "Connection references"), h("th", {}, "State"))),
     h("tbody", {}, ...rows),
   );
-  return card(title, table, actions);
+  return foldCard(title, all.length, h("div", {}, actions, table), true, { key });
 }
 
 async function previewTurnOn(col: ColumnData, picked: { flowId: string; name: string; refs: string[] }[]): Promise<void> {
@@ -1539,12 +1599,18 @@ function wire(): void {
   document.addEventListener("click", (e) => {
     if (colMenu.open && !colMenu.contains(e.target as Node)) colMenu.open = false;
   });
+  // column widths follow the window: which clamped values are cut off may change
+  let resizeFrame = 0;
+  window.addEventListener("resize", () => {
+    cancelAnimationFrame(resizeFrame);
+    resizeFrame = requestAnimationFrame(() => markOverflow($("#matrix-body")));
+  });
   $("#btn-merge-preview").addEventListener("click", () => void previewMerge());
   $("#btn-merge-clear").addEventListener("click", () => {
     mergeSel.clear();
     renderTable();
   });
-  for (const id of ["#filter-text", "#filter-diff", "#filter-missing"]) $(id).addEventListener("input", renderTable);
+  for (const id of ["#filter-text", "#filter-diff", "#filter-missing", "#filter-absent"]) $(id).addEventListener("input", renderTable);
   $("#filter-solution").addEventListener("change", async () => {
     selectedSolution = $<HTMLSelectElement>("#filter-solution").value;
     scope = null;

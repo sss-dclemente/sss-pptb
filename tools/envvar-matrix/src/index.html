@@ -27,8 +27,9 @@
 
     <div class="toolbar">
       <input id="filter-text" type="search" placeholder="Filter by name…" aria-label="Filter" />
-      <label class="check"><input type="checkbox" id="filter-diff" /> Only differences</label>
-      <label class="check"><input type="checkbox" id="filter-missing" /> Only missing / unbound</label>
+      <label class="check matrix-only"><input type="checkbox" id="filter-diff" /> Only differences</label>
+      <label class="check matrix-only" title="Deployed, but an environment variable has no value and no default, or a connection reference has no connection"><input type="checkbox" id="filter-missing" /> Missing value / unbound</label>
+      <label class="check matrix-only" title="Not deployed: absent from at least one compared environment"><input type="checkbox" id="filter-absent" /> Not deployed (absent)</label>
       <label>Solution <select id="filter-solution"><option value="">all</option></select></label>
       <details id="colmenu" class="colmenu" hidden>
         <summary id="colmenu-sum" class="btn btn-sm chev" title="Show or hide environment columns; hidden columns are not compared">Columns</summary>
@@ -36,7 +37,7 @@
       </details>
       <span id="count-caption" class="count-caption" aria-live="polite"></span>
       <button id="btn-consolidate" class="btn btn-sm" type="button" hidden>Consolidate…</button>
-      <div class="right">
+      <div class="right matrix-only">
         <label>Export <select id="export-col"></select></label>
         <button id="btn-export-settings" class="btn btn-ghost btn-sm" type="button">deploymentSettings.json</button>
         <button id="btn-export-snap" class="btn btn-ghost btn-sm" type="button">Snapshot</button>

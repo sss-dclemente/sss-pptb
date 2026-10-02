@@ -146,8 +146,14 @@ assert(names.length === 4 && !names.includes("sss_apikey"), "only differences �
 await page.uncheck("#filter-diff");
 await page.check("#filter-missing");
 names = await rowNames();
-assert(JSON.stringify(names) === JSON.stringify(["sss_flag", "sss_onlydev", "sss_onlytest"]), "only missing → flag, onlydev, onlytest");
+assert(JSON.stringify(names) === JSON.stringify(["sss_flag"]), "missing value → flag only, not the rows that are not deployed: " + names.join(","));
+await page.check("#filter-absent");
+names = await rowNames();
+assert(JSON.stringify(names) === JSON.stringify(["sss_flag", "sss_onlydev", "sss_onlytest"]), "missing value + not deployed → flag, onlydev, onlytest");
 await page.uncheck("#filter-missing");
+names = await rowNames();
+assert(JSON.stringify(names) === JSON.stringify(["sss_onlydev", "sss_onlytest"]), "not deployed → onlydev, onlytest: " + names.join(","));
+await page.uncheck("#filter-absent");
 await page.fill("#filter-text", "api");
 names = await rowNames();
 assert(names.length === 2, "text filter");
@@ -509,6 +515,7 @@ await checkDebugLog(page, assert, {
   await page.click('#matrix-body button:has-text("Clear filters")');
   await page.waitForFunction(() => document.querySelectorAll("table.matrix tbody tr").length === 2);
   assert((await page.inputValue("#filter-solution")) === "" && (await caption()) === "2 connection references", "Clear filters also resets the solution filter");
+  assert(!(await page.isChecked("#filter-absent")) && !(await page.isChecked("#filter-missing")), "Clear filters resets Missing value and Not deployed");
 }
 
 // ---- E2: Columns menu hides environment columns (not rendered, not compared, persisted) ----
@@ -555,10 +562,18 @@ await checkDebugLog(page, assert, {
   await page.click('.tab[data-tab="connrefs"]');
   assert((await page.$$eval("table.matrix thead th.col", (els) => els.length)) === 1 && !(await page.textContent("#matrix-body")).includes("conn-test"), "hidden on connection references too");
   await page.click('.tab[data-tab="envvars"]');
-  // persisted across reload
+  // persisted across reload (Not deployed filter too: only sss_onlytest is absent from the visible Dev column)
+  await page.check("#filter-absent");
+  await page.check("#filter-missing");
   await page.reload();
   await page.waitForFunction(() => document.querySelectorAll("#columns .colchip").length === 2 && document.querySelectorAll("table.matrix tbody tr").length > 0);
   assert(JSON.stringify(await heads()) === JSON.stringify(["primarySSS Dev"]) && (await page.textContent("#colmenu-sum")) === "Columns (1 of 2)", "hidden column persisted across reload");
+  assert((await page.isChecked("#filter-absent")) && (await page.isChecked("#filter-missing")), "Missing value and Not deployed filters persisted across reload");
+  // flag is missing only in the hidden Test column: with Dev alone the one gap left is onlytest, not deployed in Dev
+  assert(JSON.stringify(await rowNames()) === '["sss_onlytest"]', "persisted gap filters applied: " + (await rowNames()).join(","));
+  await page.uncheck("#filter-absent");
+  assert((await rowNames()).length === 0 && (await page.textContent("#matrix-body")).includes("No environment variables match"), "Missing value alone: nothing missing in Dev");
+  await page.uncheck("#filter-missing");
   // show again
   await page.click("#colmenu-sum");
   await page.check(colBox("secondary"));
@@ -574,6 +589,67 @@ await checkDebugLog(page, assert, {
   assert(await page.isHidden("#colmenu"), "Columns menu hidden in the consolidate view");
   await page.click("#btn-consolidate");
   assert(await page.isVisible("#colmenu"), "Columns menu back with the matrix");
+}
+
+
+// ---- E4: long values clamp to 3 lines, full value in the tooltip, per-cell "more" toggle; secrets stay masked ----
+{
+  const long = JSON.stringify({ items: Array.from({ length: 50 }, (_, i) => ({ id: i, name: "item-" + i, enabled: i % 2 === 0 })) });
+  const kvRef = "@Microsoft.KeyVault(SecretUri=https://sss-kv.vault.azure.net/secrets/api-key/0123456789abcdef0123456789abcdef)";
+  await page.evaluate(([v, kv]) => {
+    const e = window.__mock.envs.primary;
+    e.vals.find((x) => x.environmentvariablevalueid === "v4").value = v;
+    e.vals.find((x) => x.environmentvariablevalueid === "v2").value = kv;
+  }, [long, kvRef]);
+  await page.click('.tab[data-tab="envvars"]');
+  await page.click("#btn-refresh");
+  await page.waitForFunction((v) => [...document.querySelectorAll("table.matrix td.cell .val")].some((e) => e.title === v), long, { timeout: 10000 });
+  const devCell = (name) => page.locator("table.matrix tbody tr", { has: page.locator("td.name .mono", { hasText: new RegExp(`^${name}$`) }) }).locator("td.cell").first();
+  const box = (loc) => loc.evaluate((td) => { const v = td.querySelector(".val"); return { h: v.clientHeight, sh: v.scrollHeight, title: v.getAttribute("title"), text: v.textContent, expanded: td.classList.contains("is-expanded") }; });
+  assert(long.length > 2000, "fixture value is over 2 KB (" + long.length + ")");
+  const oneLine = (await box(devCell("sss_apiurl"))).h;
+  const big = devCell("sss_onlydev");
+  let b = await box(big);
+  assert(b.sh > b.h && Math.abs(b.h - oneLine * 3) <= 3, `long value clamped to 3 lines (${b.h}px for ${oneLine}px lines, ${b.sh}px in full)`);
+  assert(b.title === long, "full value in the tooltip");
+  const toggle = big.locator(".val-more");
+  assert((await toggle.isVisible()) && (await toggle.getAttribute("aria-expanded")) === "false", "cut-off value gets a visible toggle, collapsed");
+  assert((await devCell("sss_apiurl").locator(".val-more").count()) === 0, "short value: no toggle");
+  const secret = await box(devCell("sss_apikey"));
+  assert(secret.text === "••••••" && secret.title === null && (await devCell("sss_apikey").locator(".val-more").count()) === 0, "secret stays masked: no tooltip, no toggle");
+  assert(!(await page.textContent("#matrix-body")).includes("sss-kv.vault"), "Key Vault reference of a secret not in the page");
+  await toggle.click();
+  b = await box(big);
+  assert((await toggle.getAttribute("aria-expanded")) === "true" && b.expanded && b.h === b.sh && b.h > oneLine * 10, "toggle shows the full value (" + b.h + "px)");
+  await page.fill("#filter-text", "onlydev");
+  await page.waitForFunction(() => document.querySelectorAll("table.matrix tbody tr").length === 1);
+  assert((await box(big)).expanded && (await big.locator(".val-more").getAttribute("aria-expanded")) === "true", "expanded cell stays expanded across a re-render");
+  await big.locator(".val-more").click();
+  b = await box(big);
+  assert(!b.expanded && b.sh > b.h && (await big.locator(".val-more").getAttribute("aria-expanded")) === "false", "toggle collapses it again");
+  await page.fill("#filter-text", "");
+  await page.screenshot({ path: resolve(OUT, "06-long-values.png") });
+}
+
+// ---- E5: toolbar controls the consolidate view ignores are hidden there, restored with the matrix ----
+{
+  const matrixOnly = ["#filter-diff", "#filter-missing", "#filter-absent", "#export-col", "#btn-export-settings", "#btn-export-snap", "#btn-export-csv"];
+  const all = async (fn) => (await Promise.all(matrixOnly.map(fn))).every(Boolean);
+  await page.click('.tab[data-tab="connrefs"]');
+  await page.check("#filter-diff");
+  assert(await all((id) => page.isVisible(id)), "matrix: filters and exports shown");
+  await page.click("#btn-consolidate");
+  await page.waitForSelector(".cons-head");
+  assert(await all((id) => page.isHidden(id)), "consolidate: difference / gap filters and exports hidden");
+  assert((await page.isVisible("#filter-text")) && (await page.isVisible("#filter-solution")), "consolidate: text and solution filters stay (it uses them)");
+  await page.click('.tab[data-tab="envvars"]');
+  assert(await all((id) => page.isVisible(id)), "env var tab while consolidating connection references: controls shown");
+  await page.click('.tab[data-tab="connrefs"]');
+  assert(await all((id) => page.isHidden(id)), "back on the consolidate view: hidden again");
+  await page.click("#btn-consolidate");
+  await page.waitForSelector("table.matrix");
+  assert((await all((id) => page.isVisible(id))) && (await page.isChecked("#filter-diff")), "back to the matrix: controls restored with their values");
+  await page.uncheck("#filter-diff");
 }
 
 await finish();

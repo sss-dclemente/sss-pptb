@@ -41,7 +41,17 @@ table.matrix td.name .display { display: block; font-size: var(--fs-micro); colo
 table.matrix tr.differs td.name { box-shadow: inset 3px 0 0 var(--status-warn-fg); }
 table.matrix tr.missing td.name { box-shadow: inset 3px 0 0 var(--status-bad-fg); }
 table.matrix td.cell { font-family: var(--font-mono); font-size: var(--fs-caption); max-width: 360px; }
-table.matrix td.cell .val { display: block; white-space: pre-wrap; word-break: break-all; color: var(--fg-primary); }
+/* long values (JSON, Key Vault references) clamp to 3 lines; the cell's "more" toggle (.val-more) shows the rest */
+table.matrix td.cell .val {
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; line-clamp: 3; overflow: hidden;
+  white-space: pre-wrap; word-break: break-all; color: var(--fg-primary);
+}
+table.matrix td.cell.is-expanded .val { display: block; -webkit-line-clamp: none; line-clamp: none; overflow: visible; }
+table.matrix td.cell .val-more {
+  font: inherit; font-family: var(--font-sans); font-size: var(--fs-micro); color: var(--accent);
+  background: none; border: none; padding: 0 var(--s-1); cursor: pointer; text-decoration: underline;
+}
+table.matrix td.cell .val-more:focus-visible { outline: none; box-shadow: var(--shadow-teal); border-radius: var(--radius-sm); }
 table.matrix td.cell.absent { background: var(--bg-subtle); color: var(--fg-muted); }
 table.matrix td.cell.error { background: var(--status-bad-bg); color: var(--fg-muted); }
 table.matrix th.col .col-error { display: flex; flex-direction: column; gap: 2px; margin-top: 2px; text-transform: none; letter-spacing: 0; font-weight: normal; white-space: normal; }
@@ -80,6 +90,8 @@ dialog textarea, dialog input[type="text"] {
 .cons-head .spacer { flex: 1; }
 .cons-groups { display: flex; flex-direction: column; gap: var(--s-3); padding: var(--s-3) var(--s-5); }
 .cons-groups .card-head { display: flex; align-items: center; gap: var(--s-2); }
+.cons-groups .card-head .count, .cons-flags { display: inline-flex; gap: var(--s-1); align-items: center; }
+.cons-actions { display: flex; flex-wrap: wrap; gap: var(--s-2); justify-content: flex-end; margin-bottom: var(--s-2); }
 .cons-groups table { width: 100%; }
 .cons-groups td.pick { width: 1%; white-space: nowrap; text-align: center; }
 .cons-groups tr.keep td { background: var(--status-ok-bg); }

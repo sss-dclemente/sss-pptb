@@ -392,3 +392,23 @@ test("buildMatrix: hidden columns keep their cells but are not shown or compared
   assert.equal(row(only, "c").anyMissing && !row(only, "c").anyAbsent, true, "missing still flagged in the visible column");
   assert.equal(row(only, "d").anyAbsent, true, "absent in the visible column");
 });
+
+test("filters: 'Missing value / unbound' and 'Not deployed' are separate; both on shows either gap", () => {
+  const ev = (schemaName, value, defaultValue = null) => ({ definitionId: schemaName, schemaName, displayName: schemaName, typeCode: 100000000, type: "String", defaultValue, value, valueId: null, isManaged: false });
+  const crec = (logicalName, connectionId) => ({ id: logicalName, logicalName, displayName: logicalName, connectorId: "/apis/shared_sql", connector: "shared_sql", connectionId, isManaged: false });
+  const col = (key, envVars, connRefs) => ({ meta: { key, kind: "live", target: key, name: key, url: "", environment: key, takenAt: "" }, envVars, connRefs });
+  const m = M.buildMatrix([
+    col("primary", [ev("ok", "1"), ev("nov", null), ev("onlyp", "x")], [crec("bound", "c1"), crec("unb", null), crec("onlyp", "c2")]),
+    col("secondary", [ev("ok", "1"), ev("nov", "2")], [crec("bound", "c1"), crec("unb", "c3")]),
+  ]);
+  const f = (o) => ({ text: "", onlyDiff: false, onlyMissing: false, onlyAbsent: false, scope: null, ...o });
+  const ev3 = (o) => M.filterEnvVars(m.envVars, f(o)).map((r) => r.key);
+  const cr3 = (o) => M.filterConnRefs(m.connRefs, f(o)).map((r) => r.key);
+  assert.deepEqual(ev3({}), ["nov", "ok", "onlyp"]);
+  assert.deepEqual(ev3({ onlyMissing: true }), ["nov"], "missing value only, not the absent row");
+  assert.deepEqual(ev3({ onlyAbsent: true }), ["onlyp"], "not deployed only");
+  assert.deepEqual(ev3({ onlyMissing: true, onlyAbsent: true }), ["nov", "onlyp"], "both: either gap");
+  assert.deepEqual(cr3({ onlyMissing: true }), ["unb"], "unbound only, not the absent reference");
+  assert.deepEqual(cr3({ onlyAbsent: true }), ["onlyp"]);
+  assert.deepEqual(cr3({ onlyMissing: true, onlyAbsent: true, text: "only" }), ["onlyp"], "still combined with the text filter");
+});
