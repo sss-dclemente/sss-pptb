@@ -20,6 +20,18 @@ Built by [Simple Smooth Safe](https://simplesmoothsafe.com).
   - Run results CSV.
   - **pac script**: a PowerShell script with the same installs as `pac application install` lines, for CI or for a machine without ToolBox.
 
+## Screenshots
+
+Synthetic sample data from the e2e harness (mocked ToolBox host). Replace with real captures.
+
+![Matrix: updates, failed installs and installs in progress per environment](https://raw.githubusercontent.com/sss-dclemente/sss-pptb/main/tools/d365-apps/docs/img/matrix.png)
+
+![Preview before running installs, with the Production warning](https://raw.githubusercontent.com/sss-dclemente/sss-pptb/main/tools/d365-apps/docs/img/preview.png)
+
+![After a run: results per install](https://raw.githubusercontent.com/sss-dclemente/sss-pptb/main/tools/d365-apps/docs/img/run.png)
+
+![Matrix, dark theme](https://raw.githubusercontent.com/sss-dclemente/sss-pptb/main/tools/d365-apps/docs/img/matrix-dark.png)
+
 ## Setup
 
 The tool uses the [Power Platform API](https://learn.microsoft.com/rest/api/power-platform/) through ToolBox (version **1.2.6 or later**), not Dataverse.
