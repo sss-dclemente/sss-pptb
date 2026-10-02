@@ -4,6 +4,12 @@ What to put in each screenshot is spelled out per shot in [SCREENSHOTS.md](SCREE
 
 Everything below runs on the owner's machine: needs ToolBox desktop, a Dataverse connection and an npm login. Order per tool: real-env test → real screenshots → publish → submit. Repo state: `main` builds and e2e green for all five; `pptb-validate` passes for all of them. Offboarding Wizard and Audit Config Matrix (0.1.0 on npm since 2026-10-02) have been loaded against a real environment read-only; their write paths are untested.
 
+**Next release: show/hide usability (not on npm yet).** Versions bumped in `package.json`, waiting for a real-environment check and publish: Solution XRay 1.2.0, EnvVar Matrix 1.6.0, Access Checker 1.2.0, Dependency Cleaner 1.2.0, D365 Apps 0.3.0, Offboarding Wizard 0.2.0, Audit Config Matrix 0.2.0. What changed per tool: [USABILITY-AUDIT.md](USABILITY-AUDIT.md) §5. Before publishing each one:
+- [ ] Load it in ToolBox, light and dark: the fold chevrons, Expand all / Collapse all, the new filters with their "N of M" counts and Clear filters.
+- [ ] Reopen the tool: filters and toggles come back as left (saved per viewer in localStorage).
+- [ ] Run one write path end to end against a throwaway environment (the preview and plan dialogs were regrouped).
+- [ ] Replace the `docs/img` screenshots (they predate the new controls), then update the version in the root `README.md` table after `npm publish`.
+
 Common prep (once):
 
 ```bash

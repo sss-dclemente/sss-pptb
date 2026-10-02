@@ -1,6 +1,6 @@
 {
   "name": "@simplesmoothsafe/pptb-offboarding-wizard",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "displayName": "SSS Offboarding Wizard",
   "description": "A user is leaving: inventory everything they hold — records per table, flows, personal views and charts, queues, teams, roles, connection references, direct reports — pick a successor, preview the reassignment and apply it in one audited run.",
   "main": "index.html",
