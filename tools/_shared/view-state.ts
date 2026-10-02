@@ -87,7 +87,11 @@ export function persistControls(tool: string, ids: string[]): PersistedControls 
   restore();
   return {
     restore,
-    active: () => controls.some((c) => valueOf(c) !== defaultOf(c)),
+    active: () => controls.some((c) => {
+      const v = valueOf(c);
+      const d = defaultOf(c);
+      return typeof v === "string" && typeof d === "string" ? v.trim() !== d.trim() : v !== d;
+    }),
     reset: () => {
       for (const c of controls) {
         setValue(c, defaultOf(c));

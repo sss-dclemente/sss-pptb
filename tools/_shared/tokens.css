@@ -204,7 +204,8 @@ summary.chev:focus-visible { outline: none; box-shadow: var(--shadow-teal); bord
   details.card > summary .card-head::before, summary.chev::before { transition: none; }
 }
 .fold-all { display: inline-flex; gap: var(--s-1); }
-.card-head .fold-all { margin-left: auto; }
+.card-head .fold-all, .toolbar .fold-all { margin-left: auto; }
+.toolbar .fold-all + .btn { margin-left: 0; } /* fold-all and a following button stay together at the right */
 
 .kv { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: var(--s-3) var(--s-4); }
 .kv div { display: flex; flex-direction: column; gap: 2px; }
