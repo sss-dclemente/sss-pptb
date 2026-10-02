@@ -2,7 +2,7 @@
 
 What to put in each screenshot is spelled out per shot in [SCREENSHOTS.md](SCREENSHOTS.md).
 
-Everything below runs on the owner's machine: needs ToolBox desktop, a Dataverse connection and an npm login. Order per tool: real-env test → real screenshots → publish → submit. Repo state: `main` builds and e2e green for all five; `pptb-validate` passes for the three published tools and runs for the other two once their READMEs are on `main`. The two new tools have been loaded against a real environment read-only; their write paths are untested.
+Everything below runs on the owner's machine: needs ToolBox desktop, a Dataverse connection and an npm login. Order per tool: real-env test → real screenshots → publish → submit. Repo state: `main` builds and e2e green for all five; `pptb-validate` passes for all of them. Offboarding Wizard and Audit Config Matrix (0.1.0 on npm since 2026-10-02) have been loaded against a real environment read-only; their write paths are untested.
 
 Common prep (once):
 
@@ -119,6 +119,8 @@ cd tools/dependency-cleaner && npm run build && npm run validate && npm publish 
 Real-env test (one connection, a sandbox user who owns a bit of everything, plus a second user as successor). **Do the first run against a sandbox**: this tool writes ownership and membership.
 
 > **Status, 2026-09-21.** Loaded in ToolBox against a real environment and exercised read-only: it connects, reads and renders. No plan was applied, so every write path below is still untested and none of the boxes are ticked on the strength of that session.
+>
+> **0.1.0 published to npm 2026-10-02, before the write-path checks below.** Fixes go in 0.1.1; do not unpublish.
 - [ ] Leaver typeahead finds by name / domain / email; BU, manager, state, access mode and direct-report count are right. If access mode shows `—`, the attribute name is wrong: fix it in `src/offboard/fetch.ts`.
 - [ ] Record scan: the request count in the confirmation is plausible, the progress bar moves, Cancel stops it, and any table listed as *not scanned* is one that genuinely rejects the owner filter. Counts for two or three tables match an advanced find on the same owner.
 - [ ] Every other category is correct against the maker portal / admin centre: flows (an active modern flow is flagged), personal views and charts, queues owned, queue memberships, teams (owner vs Entra group), security roles, field security profiles, connection references, direct reports. Any category that errors → note the entity set or relationship name in `docs/OFFBOARDING-PLAN.md` §UNVERIFIED and fix `src/offboard/fetch.ts`.
@@ -140,6 +142,8 @@ Submit: `@simplesmoothsafe/pptb-offboarding-wizard`, categories **Users & Securi
 Real-env test (two connections to sandboxes whose audit configuration differs, or one connection plus a snapshot). **Metadata writes are real and need a publish**: sandbox first.
 
 > **Status, 2026-09-21.** Loaded in ToolBox against a real environment and exercised read-only: it connects, reads and renders. No plan was applied, so every write path below is still untested and none of the boxes are ticked on the strength of that session.
+>
+> **0.1.0 published to npm 2026-10-02, before the write-path checks below.** Fixes go in 0.1.1; do not unpublish.
 - [ ] Matrix loads; table count and the audited count match Settings → Auditing → Entity and Field Audit Settings.
 - [ ] A table from a managed solution that forbids the change shows as `locked` and cannot be ticked.
 - [ ] Secondary connection populates the comparison column; `≠` appears exactly where the two environments really differ. Then export a snapshot from one, load it into the other, and check the same diff appears.
