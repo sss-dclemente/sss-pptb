@@ -52,6 +52,8 @@ table.matrix td.cell .val-more {
   background: none; border: none; padding: 0 var(--s-1); cursor: pointer; text-decoration: underline;
 }
 table.matrix td.cell .val-more:focus-visible { outline: none; box-shadow: var(--shadow-teal); border-radius: var(--radius-sm); }
+/* a cell whose value differs from the first visible column (the row marker only says "somewhere in this row") */
+table.matrix td.cell.differs { background: color-mix(in srgb, var(--status-warn-bg) 55%, transparent); }
 table.matrix td.cell.absent { background: var(--bg-subtle); color: var(--fg-muted); }
 table.matrix td.cell.error { background: var(--status-bad-bg); color: var(--fg-muted); }
 table.matrix th.col .col-error { display: flex; flex-direction: column; gap: 2px; margin-top: 2px; text-transform: none; letter-spacing: 0; font-weight: normal; white-space: normal; }
@@ -60,6 +62,8 @@ table.matrix td.cell .btn-icon { opacity: 0; font-size: var(--fs-caption); }
 table.matrix tr:hover td.cell .btn-icon,
 table.matrix td.cell .btn-icon:focus-visible { opacity: 1; }
 table.matrix input[type="checkbox"] { accent-color: var(--accent); }
+/* Compact: badges that say nothing is wrong (value, bound, managed) are hidden; the value itself stays */
+#matrix-body.compact table.matrix td.cell .badge.is-ok { display: none; }
 
 .bulkbar {
   display: flex; flex-wrap: wrap; gap: var(--s-2); align-items: center;
@@ -83,6 +87,9 @@ dialog textarea, dialog input[type="text"] {
 .btn-danger { background: var(--status-bad-fg); border-color: var(--status-bad-fg); color: var(--fg-on-accent); }
 .btn-danger:hover { filter: brightness(0.9); }
 .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+dialog .dlg-tools { display: flex; flex-wrap: wrap; gap: var(--s-3); align-items: center; margin: var(--s-2) 0; font-size: var(--fs-caption); color: var(--fg-muted); }
+dialog .dlg-tools label { display: inline-flex; gap: var(--s-1); align-items: center; }
+dialog .dlg-tools input[type="checkbox"] { accent-color: var(--accent); }
 .status { padding: var(--s-2) var(--s-5); font-size: var(--fs-caption); color: var(--fg-muted); }
 
 /* ---- consolidate view ---- */
@@ -98,6 +105,7 @@ dialog textarea, dialog input[type="text"] {
 .cons-groups tr.merge td { background: var(--status-warn-bg); }
 .cons-groups input { accent-color: var(--accent); }
 .changes { font-family: var(--font-mono); font-size: var(--fs-micro); }
+.cons-actions .cons-only-ready { margin-right: auto; display: inline-flex; gap: var(--s-1); align-items: center; font-size: var(--fs-caption); color: var(--fg-muted); }
 .cons-groups td.name .display { display: block; font-size: var(--fs-micro); color: var(--fg-muted); }
 
 /* ---- columns menu (show / hide environment columns) ---- */

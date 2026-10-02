@@ -76,3 +76,38 @@ export class RunLog {
     return [head, ...rows].map((r) => r.map(csvCell).join(",")).join("\n") + "\n";
   }
 }
+
+export interface RunLogFilter {
+  /** "" = every action */
+  action: string;
+  /** environment url, "" = every environment */
+  url: string;
+  onlyFailures: boolean;
+}
+
+export function filterRunLog(entries: readonly RunLogEntry[], f: RunLogFilter): RunLogEntry[] {
+  return entries.filter((e) => (!f.action || e.action === f.action) && (!f.url || e.url === f.url) && (!f.onlyFailures || !e.ok));
+}
+
+/**
+ * Actions and environments present in the log, sorted, for the run log filters. An environment is keyed by url;
+ * its label is the name, with the host added when two urls share a name.
+ */
+export function runLogFacets(entries: readonly RunLogEntry[]): { actions: string[]; environments: { url: string; label: string }[] } {
+  const actions = [...new Set(entries.map((e) => e.action))].sort((a, b) => a.localeCompare(b));
+  const names = new Map<string, string>();
+  for (const e of entries) if (!names.has(e.url)) names.set(e.url, e.environment);
+  const count = new Map<string, number>();
+  for (const n of names.values()) count.set(n, (count.get(n) ?? 0) + 1);
+  const host = (url: string): string => {
+    try {
+      return new URL(url).host;
+    } catch {
+      return url;
+    }
+  };
+  const environments = [...names.entries()]
+    .map(([url, name]) => ({ url, label: (count.get(name) ?? 0) > 1 && url ? `${name} (${host(url)})` : name }))
+    .sort((a, b) => a.label.localeCompare(b.label));
+  return { actions, environments };
+}

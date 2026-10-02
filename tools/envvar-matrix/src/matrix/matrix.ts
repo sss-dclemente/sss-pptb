@@ -1,4 +1,4 @@
-import { SECRET_TYPE, type ColumnData, type ConnRefCell, type ConnRefRow, type EnvVarCell, type EnvVarRow, type Filters, type Matrix } from "./types";
+import { SECRET_TYPE, type ColumnData, type ColumnMeta, type ConnRefCell, type ConnRefRow, type EnvVarCell, type EnvVarRow, type Filters, type Matrix } from "./types";
 
 function envVarCell(rec: EnvVarRecordOrNull): EnvVarCell {
   if (!rec) return { source: "absent", effective: null, record: null };
@@ -102,3 +102,26 @@ export function filterConnRefs(rows: ConnRefRow[], f: Filters): ConnRefRow[] {
       (!f.scope || f.scope.has(r.key)),
   );
 }
+
+/** What `differs` compares in an env var cell: secrets by presence only, others by effective value; absent is its own value. */
+function envVarCellKey(row: EnvVarRow, cell: EnvVarCell): string {
+  if (cell.source === "absent") return "\u0000absent";
+  return row.isSecret ? cell.source : (cell.effective ?? "\u0000missing");
+}
+
+/** What `differs` compares in a connection reference cell: state and connector (connection ids are per environment). */
+const connRefCellKey = (cell: ConnRefCell): string => `${cell.state}|${cell.record?.connectorId?.toLowerCase() ?? ""}`;
+
+function diffCells<C>(cells: Record<string, C>, columns: ColumnMeta[], key: (c: C) => string): Set<string> {
+  // columns that failed to load have no data and are not compared (as in buildMatrix)
+  const keys = columns.filter((c) => !c.error && cells[c.key]).map((c) => c.key);
+  const out = new Set<string>();
+  if (keys.length < 2) return out;
+  const ref = key(cells[keys[0]]);
+  for (const k of keys.slice(1)) if (key(cells[k]) !== ref) out.add(k);
+  return out;
+}
+
+/** Keys of the columns whose cell differs from the first compared column of `columns` (the visible ones, in order). */
+export const envVarDiffCells = (row: EnvVarRow, columns: ColumnMeta[]): Set<string> => diffCells(row.cells, columns, (c) => envVarCellKey(row, c));
+export const connRefDiffCells = (row: ConnRefRow, columns: ColumnMeta[]): Set<string> => diffCells(row.cells, columns, connRefCellKey);

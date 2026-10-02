@@ -652,4 +652,143 @@ await checkDebugLog(page, assert, {
   await page.uncheck("#filter-diff");
 }
 
+// ---- E9: per-cell difference tint, badge tooltips, Compact (non-ok badges only, persisted) ----
+{
+  await page.click('.tab[data-tab="envvars"]');
+  await page.waitForFunction(() => document.querySelectorAll("table.matrix tbody tr").length === 5);
+  const tints = (name) => page.$$eval(`tr:has(input[aria-label="Select ${name}"]) td.cell`, (tds) => tds.map((td) => td.classList.contains("differs")));
+  const same = async (name, want) => JSON.stringify(await tints(name)) === JSON.stringify(want);
+  assert(await same("sss_apiurl", [false, true]), "value differing from the first column tinted, the first column never: " + JSON.stringify(await tints("sss_apiurl")));
+  assert(await same("sss_flag", [false, true]), "Dev default 'yes' vs missing in Test: Test tinted");
+  assert(await same("sss_apikey", [false, false]), "secret set in both: not tinted (values not compared)");
+  assert((await same("sss_onlydev", [false, true])) && (await same("sss_onlytest", [false, true])), "absent vs value tinted");
+  const bgs = (name) => page.$$eval(`tr:has(input[aria-label="Select ${name}"]) td.cell`, (tds) => tds.map((td) => getComputedStyle(td).backgroundColor));
+  const [plain, tinted] = await bgs("sss_apiurl");
+  assert(tinted !== plain && tinted !== "rgba(0, 0, 0, 0)", `tint visible in light theme (${plain} → ${tinted})`);
+  await page.evaluate(() => document.documentElement.setAttribute("data-theme", "dark"));
+  const [plainD, tintedD] = await bgs("sss_apiurl");
+  assert(tintedD !== plainD && tintedD !== tinted, `tint follows the dark tokens (${plainD} → ${tintedD})`);
+  await page.evaluate(() => document.documentElement.setAttribute("data-theme", "light"));
+  // the first visible column is the reference: with Dev hidden there is nothing to compare
+  await page.click("#colmenu-sum");
+  await page.uncheck('#colmenu-list input[data-col-key="primary"]');
+  assert((await page.$$eval("table.matrix td.cell.differs", (els) => els.length)) === 0, "one visible column: no cell tinted");
+  await page.check('#colmenu-list input[data-col-key="primary"]');
+  await page.keyboard.press("Escape");
+
+  // every cell badge explains itself
+  const untitled = () => page.$$eval("table.matrix td.cell .badge", (bs) => bs.filter((b) => !b.title).map((b) => b.textContent));
+  assert((await untitled()).length === 0, "every env var cell badge has a tooltip: " + (await untitled()).join(","));
+  const titleOf = (text) => page.$$eval("table.matrix td.cell .badge", (bs, t) => bs.find((b) => b.textContent === t)?.title ?? "", text);
+  assert((await titleOf("value")).includes("own value") && (await titleOf("default")).includes("default value applies") && (await titleOf("absent")).includes("not deployed") && (await titleOf("managed")).includes("managed solution"), "badge tooltips explain value / default / absent / managed");
+
+  // Compact: on by default, only badges that need attention are shown
+  const shownBadges = () => page.$$eval("table.matrix td.cell .badge", (bs) => bs.filter((b) => b.offsetParent !== null).map((b) => b.textContent));
+  assert(await page.isChecked("#view-compact"), "Compact on by default");
+  let sb = await shownBadges();
+  assert(!sb.includes("value") && !sb.includes("managed") && sb.includes("default") && sb.includes("absent") && sb.includes("2 value rows"), "Compact hides value / managed, keeps default / absent / duplicate rows: " + sb.join(","));
+  await page.uncheck("#view-compact");
+  sb = await shownBadges();
+  assert(sb.includes("value") && sb.includes("managed"), "Compact off: every badge shown");
+  await page.reload();
+  await page.waitForFunction(() => document.querySelectorAll("table.matrix tbody tr").length === 5);
+  assert(!(await page.isChecked("#view-compact")) && (await shownBadges()).includes("value"), "Compact off persisted across reload");
+  await page.fill("#filter-text", "zzz-nothing");
+  await page.click('#matrix-body button:has-text("Clear filters")');
+  assert(!(await page.isChecked("#view-compact")), "Clear filters leaves Compact as it is (a view option, not a filter)");
+  await page.check("#view-compact");
+  await page.click('.tab[data-tab="connrefs"]');
+  await page.waitForFunction(() => document.querySelectorAll("table.matrix tbody tr").length === 2);
+  sb = await shownBadges();
+  assert(!sb.includes("bound") && !sb.includes("managed") && sb.filter((b) => b === "unbound").length === 2, "connection references: Compact hides bound / managed, keeps unbound: " + sb.join(","));
+  assert((await untitled()).length === 0 && (await titleOf("bound")).includes("connection") && (await titleOf("unbound")).includes("no connection"), "connection reference badges have tooltips");
+  assert((await same("sss_sql", [false, true])) && (await same("sss_office365", [false, true])), "connection references: bound vs unbound tinted");
+  // bound everywhere to each environment's own connection: not a difference; another connector is
+  await page.evaluate(() => {
+    const e = window.__mock.envs;
+    e.primary.crs[1].connectionid = "conn-dev-2";
+    e.secondary.crs[0].connectionid = "conn-test-1";
+    e.secondary.crs[1].connectorid = "/providers/Microsoft.PowerApps/apis/shared_sqlx";
+  });
+  await page.click("#btn-refresh");
+  await page.waitForFunction(() => document.querySelector("#matrix-body").textContent.includes("shared_sqlx"), null, { timeout: 10000 });
+  assert((await same("sss_office365", [false, false])) && (await same("sss_sql", [false, true])), "other connection id (per environment) not tinted, other connector tinted");
+  sb = await shownBadges();
+  assert(sb.length === 1 && sb[0] === "shared_sqlx", "Compact: only the connector difference left: " + sb.join(","));
+  await page.click('.tab[data-tab="envvars"]');
+}
+
+// ---- E10d: select-all-shown header checkbox (indeterminate when partial; only the rows shown) ----
+{
+  const all = "table.matrix thead th.sel input";
+  const state = () => page.$eval(all, (b) => (b.indeterminate ? "partial" : b.checked ? "all" : "none"));
+  const count = () => page.textContent("#sel-count");
+  await page.waitForFunction(() => document.querySelectorAll("table.matrix tbody tr").length === 5);
+  if (!(await page.isHidden("#bulkbar"))) await page.click("#btn-clear-sel");
+  assert((await state()) === "none" && (await page.getAttribute(all, "aria-label")) === "Select all shown variables", "header checkbox in th.sel, nothing selected");
+  await page.fill("#filter-text", "api");
+  await page.check(all);
+  assert((await count()) === "2" && (await page.isChecked('input[aria-label="Select sss_apiurl"]')) && (await page.isChecked('input[aria-label="Select sss_apikey"]')), "select all selects only the 2 rows shown");
+  await page.fill("#filter-text", "");
+  assert((await state()) === "partial", "2 of 5 shown rows selected: indeterminate");
+  await page.check(all);
+  assert((await count()) === "5" && (await state()) === "all", "clicking the indeterminate box selects every shown row");
+  await page.uncheck('input[aria-label="Select sss_onlydev"]');
+  assert((await state()) === "partial" && (await count()) === "4", "unchecking a row makes it indeterminate");
+  await page.fill("#filter-text", "api");
+  assert((await state()) === "all", "all shown rows selected: checked");
+  await page.uncheck(all);
+  await page.fill("#filter-text", "");
+  assert((await count()) === "2" && (await page.isChecked('input[aria-label="Select sss_flag"]')) && !(await page.isChecked('input[aria-label="Select sss_apiurl"]')), "clearing clears only the shown rows; hidden ones keep their selection");
+  await page.click("#btn-clear-sel");
+  await page.click('.tab[data-tab="connrefs"]');
+  await page.check(all);
+  assert((await count()) === "2" && (await page.getAttribute(all, "aria-label")) === "Select all shown connection references", "connection references table has it too");
+  await page.click("#btn-clear-sel");
+  await page.click('.tab[data-tab="envvars"]');
+}
+
+// ---- E10a: copy preview hides skipped rows by default when long (counts and writes unchanged) ----
+{
+  await page.evaluate(() => {
+    const e = window.__mock.envs;
+    for (let i = 0; i < 8; i++) {
+      for (const [env, p] of [[e.primary, "x"], [e.secondary, "y"]]) {
+        env.defs.push({ environmentvariabledefinitionid: p + "d" + i, schemaname: "sss_extra" + i, displayname: "EXTRA" + i, type: 100000000, defaultvalue: null, ismanaged: false });
+        env.vals.push({ environmentvariablevalueid: p + "v" + i, value: "same" + i, ismanaged: false, _environmentvariabledefinitionid_value: p + "d" + i });
+      }
+    }
+  });
+  await page.click("#btn-refresh");
+  await page.waitForFunction(() => document.querySelectorAll("table.matrix tbody tr").length === 13, null, { timeout: 10000 });
+  await page.check("table.matrix thead th.sel input");
+  assert((await page.textContent("#sel-count")) === "13", "13 rows selected through the header");
+  await page.selectOption("#copy-from", "primary");
+  await page.selectOption("#copy-to", "secondary");
+  const wBefore = await page.evaluate(() => window.__mock.writes.length);
+  await page.click("#btn-copy");
+  await page.waitForFunction(() => document.querySelector("#dlg-title").textContent === "Preview changes" && document.querySelector("dialog").open);
+  const rows = () => page.$$eval("#dlg-body tbody tr", (trs) => ({ all: trs.length, shown: trs.filter((tr) => !tr.hidden).length, skip: trs.filter((tr) => tr.classList.contains("is-skip")).length }));
+  const r = await rows();
+  const caption = await page.textContent("#dlg-body p.caption");
+  assert(r.all === 13 && r.skip >= 8 && caption.includes(`${r.skip} skipped`), `13 planned rows, ${r.skip} skipped: ${caption}`);
+  assert((await page.isChecked("#hide-skipped")) && (await page.textContent("#dlg-body .dlg-tools")).includes(`Hide skipped (${r.skip})`), "Hide skipped (n) on by default for more than 10 rows");
+  assert(r.shown === r.all - r.skip, `skipped rows hidden (${r.shown} shown)`);
+  const okLabel = await page.textContent("#dlg-ok");
+  await page.uncheck("#hide-skipped");
+  assert((await rows()).shown === 13 && (await page.textContent("#dlg-body p.caption")) === caption && (await page.textContent("#dlg-ok")) === okLabel, "unchecked: every row shown, counts and Apply unchanged (" + okLabel + ")");
+  await page.check("#hide-skipped");
+  await page.click("#dlg-cancel");
+  assert((await page.evaluate(() => window.__mock.writes.length)) === wBefore, "cancelled preview wrote nothing");
+  // a short plan shows its skipped rows
+  await page.click("#btn-clear-sel");
+  await page.check('input[aria-label="Select sss_apiurl"]');
+  await page.check('input[aria-label="Select sss_apikey"]');
+  await page.click("#btn-copy");
+  await page.waitForFunction(() => document.querySelector("#dlg-title").textContent === "Preview changes" && document.querySelector("dialog").open);
+  assert((await page.isVisible("#hide-skipped")) && !(await page.isChecked("#hide-skipped")) && (await rows()).shown === 2, "2-row preview: Hide skipped offered, off");
+  await page.click("#dlg-cancel");
+  await page.click("#btn-clear-sel");
+}
+
 await finish();

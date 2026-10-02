@@ -1,10 +1,10 @@
 import { mountDebug } from "../../_shared/debug-ui";
-import { $, badge, card, emptyState, filteredEmpty, foldAllButtons, foldCard, h, showDialog, shownOf, wireTabs } from "../../_shared/dom";
+import { $, badge, card, emptyState, filteredEmpty, foldAllButtons, foldCard, h, showDialog, shownOf, wireTabs, type BadgeKind } from "../../_shared/dom";
 import { loadView, persistControls, saveView } from "../../_shared/view-state";
 import { dataverse, getConnections, initTheme, inToolbox, notify, onConnectionChange, openText, powerplatform, saveText } from "./host";
 import { deploymentSettings, matrixCsv, safeFileName, snapshot } from "./matrix/export";
 import { fetchColumn, fetchSolutionScope, fetchSolutions, type SolutionInfo } from "./matrix/fetch";
-import { buildMatrix, filterConnRefs, filterEnvVars } from "./matrix/matrix";
+import { buildMatrix, connRefDiffCells, envVarDiffCells, filterConnRefs, filterEnvVars } from "./matrix/matrix";
 import {
   applyMerge,
   addRefsToSolution,
@@ -13,6 +13,7 @@ import {
   connectorGroups,
   fetchFlows,
   fetchSolutionFlowIds,
+  filterOffFlows,
   markDependents,
   mergeBackupFileName,
   offFlows,
@@ -32,7 +33,7 @@ import {
   type PlannedFlow,
 } from "./matrix/consolidate";
 import { applyBind, applyBindRestore, bindBackupFileName, buildBindBackup, parseBindBackup, planBind, planBindRestore, type BindBackup, type BindPlan } from "./matrix/bind";
-import { RunLog, type StoreLike } from "./matrix/runlog";
+import { filterRunLog, RunLog, runLogFacets, type RunLogFilter, type StoreLike } from "./matrix/runlog";
 import { connectionsFor, environmentId, explainPpError, listConnections, rowConnector, type PpConnection } from "./matrix/ppconnections";
 import { isDeploymentSettings, parseDeploymentSettings } from "./matrix/settings";
 import { parseSnapshot } from "./matrix/snapshot";
@@ -67,9 +68,11 @@ const mergeSel = new Set<string>();
 const cleanupSel = new Set<string>();
 /** flow ids selected to turn on */
 const turnOnSel = new Set<string>();
-/** flow ids of the selected solution (solution fit check), stamped with solution + org */
+/** flow ids of the selected solution (solution fit check, Flows that are off), stamped with solution + primary org */
 let fitCache: { solutionId: string; url: string; flowIds: Set<string> } | null = null;
 let fitLoading: Promise<void> | null = null;
+/** `<solution id>|<org url>` whose flow ids could not be read: not retried until Rescan flows or another solution */
+let fitFailed: string | null = null;
 
 const columns = (): ColumnData[] => [...live, ...snaps];
 
@@ -79,6 +82,12 @@ const VIEW = "envvar-matrix";
 const view = persistControls(VIEW, ["filter-text", "filter-diff", "filter-missing", "filter-absent", "filter-solution"]);
 /** the saved Solution filter still has to be applied (first load with solutions listed) */
 let restoreSolution = true;
+/** view options, saved apart from the filters so Clear filters leaves them as they are */
+persistControls(VIEW, ["view-compact"]);
+/** Compact: cells show only the badges that need attention (see OK_BADGES); a class on the matrix, no re-render. */
+const syncCompact = (): void => void $("#matrix-body").classList.toggle("compact", $<HTMLInputElement>("#view-compact").checked);
+/** Flows that are off: hide the blocked ones (per viewer, off by default) */
+let offOnlyReady = loadView<unknown>(VIEW, "offOnlyReady", false) === true;
 
 /**
  * Column keys the user hid (Columns menu). Live keys ("primary" / "secondary") are stable across reloads and saved;
@@ -135,6 +144,10 @@ function logRun(action: string, target: ColumnMeta, items: LogItem[]): void {
 function renderRunLogButton(): void {
   $("#btn-runlog").textContent = `Run log (${runLog.all.length})`;
 }
+/** Run log filters, kept while the page is open (reopening the dialog shows the same slice). */
+const logFilter: RunLogFilter = { action: "", url: "", onlyFailures: false };
+const LOG_SHOWN = 300;
+
 async function openRunLog(): Promise<void> {
   const entries = [...runLog.all].reverse();
   const exportJson = h("button", { class: "btn btn-sm", type: "button" }, "Export JSON");
@@ -153,39 +166,78 @@ async function openRunLog(): Promise<void> {
     renderRunLogButton();
     $<HTMLDialogElement>("#dlg").close();
   });
-  const shown = entries.slice(0, 300);
+  const facets = runLogFacets(entries);
+  // a saved choice the log no longer holds (cleared, capped) falls back to all
+  if (!facets.actions.includes(logFilter.action)) logFilter.action = "";
+  if (!facets.environments.some((e) => e.url === logFilter.url)) logFilter.url = "";
+  const actionSel = h("select", { id: "runlog-action", "aria-label": "Action" }, h("option", { value: "" }, "all"), ...facets.actions.map((a) => h("option", { value: a }, a))) as HTMLSelectElement;
+  actionSel.value = logFilter.action;
+  const envSel = h("select", { id: "runlog-env", "aria-label": "Environment" }, h("option", { value: "" }, "all"), ...facets.environments.map((e) => h("option", { value: e.url, title: e.url }, e.label))) as HTMLSelectElement;
+  envSel.value = logFilter.url;
+  const failures = h("input", { type: "checkbox", id: "runlog-failures" }) as HTMLInputElement;
+  failures.checked = logFilter.onlyFailures;
+  const caption = h("p", { class: "caption" });
+  const list = h("div", {});
+  const render = () => {
+    const rows = filterRunLog(entries, logFilter);
+    const shown = rows.slice(0, LOG_SHOWN);
+    const filtered = rows.length !== entries.length;
+    caption.textContent = `${filtered ? `${rows.length} of ` : ""}${entries.length} write${entries.length === 1 ? "" : "s"} recorded by this tool on this machine (newest first${rows.length > shown.length ? `, ${shown.length} shown` : ""}${filtered || rows.length > shown.length ? "; the export has all" : ""}). Kept across reloads in local storage, up to 2000.`;
+    list.replaceChildren(
+      shown.length
+        ? h(
+            "table",
+            {},
+            h("thead", {}, h("tr", {}, h("th", {}, "When"), h("th", {}, "Action"), h("th", {}, "Environment"), h("th", {}, "Item"), h("th", {}, "Detail"), h("th", {}, "Result"))),
+            h(
+              "tbody",
+              {},
+              ...shown.map((e) =>
+                h(
+                  "tr",
+                  {},
+                  h("td", { class: "caption" }, e.at.replace("T", " ").slice(0, 19)),
+                  h("td", {}, e.action),
+                  h("td", { title: e.url }, e.environment),
+                  h("td", { class: "mono" }, e.item),
+                  h("td", { class: "changes" }, e.detail),
+                  h("td", {}, e.ok ? badge("ok", "ok") : h("span", {}, badge("failed", "bad"), " ", h("span", { class: "caption" }, e.error ?? ""))),
+                ),
+              ),
+            ),
+          )
+        : entries.length
+          ? filteredEmpty("No writes match", "The run log filters hide every entry.", () => {
+              Object.assign(logFilter, { action: "", url: "", onlyFailures: false });
+              actionSel.value = envSel.value = "";
+              failures.checked = false;
+              render();
+            })
+          : emptyState("Nothing yet", "Writes from copy, set, bind, merge, cleanup, restore, add to solution and turn on are recorded here."),
+    );
+  };
+  actionSel.addEventListener("change", () => {
+    logFilter.action = actionSel.value;
+    render();
+  });
+  envSel.addEventListener("change", () => {
+    logFilter.url = envSel.value;
+    render();
+  });
+  failures.addEventListener("change", () => {
+    logFilter.onlyFailures = failures.checked;
+    render();
+  });
+  render();
   const body = h(
     "div",
     {},
-    h(
-      "p",
-      { class: "caption" },
-      `${entries.length} write${entries.length === 1 ? "" : "s"} recorded by this tool on this machine (newest first${entries.length > shown.length ? `, ${shown.length} shown; the export has all` : ""}). Kept across reloads in local storage, up to 2000.`,
-    ),
+    caption,
     h("div", { style: "display:flex; gap: var(--s-2); margin-bottom: var(--s-2)" }, exportJson, exportCsv, clear),
     entries.length
-      ? h(
-          "table",
-          {},
-          h("thead", {}, h("tr", {}, h("th", {}, "When"), h("th", {}, "Action"), h("th", {}, "Environment"), h("th", {}, "Item"), h("th", {}, "Detail"), h("th", {}, "Result"))),
-          h(
-            "tbody",
-            {},
-            ...shown.map((e) =>
-              h(
-                "tr",
-                {},
-                h("td", { class: "caption" }, e.at.replace("T", " ").slice(0, 19)),
-                h("td", {}, e.action),
-                h("td", { title: e.url }, e.environment),
-                h("td", { class: "mono" }, e.item),
-                h("td", { class: "changes" }, e.detail),
-                h("td", {}, e.ok ? badge("ok", "ok") : h("span", {}, badge("failed", "bad"), " ", h("span", { class: "caption" }, e.error ?? ""))),
-              ),
-            ),
-          ),
-        )
-      : emptyState("Nothing yet", "Writes from copy, set, bind, merge, cleanup, restore, add to solution and turn on are recorded here."),
+      ? h("div", { class: "dlg-tools" }, h("label", {}, "Action ", actionSel), h("label", {}, "Environment ", envSel), h("label", { class: "check" }, failures, " Only failures"))
+      : null,
+    list,
   );
   await showDialog({ title: "Run log", body });
 }
@@ -390,27 +442,75 @@ function markOverflow(root: ParentNode): void {
   toggles.forEach((b, i) => (b.hidden = !cut[i]));
 }
 
+/** What a cell badge means, as its tooltip. */
+const BADGE_HELP: Record<string, string> = {
+  value: "value: this environment has its own value (an environmentvariablevalue row)",
+  default: "default: no value row here; the definition's default value applies",
+  missing: "missing: deployed, but no value and no default value",
+  absent: "absent: not deployed in this environment",
+  bound: "bound: set to a connection in this environment",
+  unbound: "unbound: no connection set; flows using it cannot be turned on",
+};
+/** Badges that say nothing needs attention: Compact hides them (the value itself still shows). */
+const OK_BADGES = new Set(["value", "bound", "managed"]);
+
+function cellBadge(text: string, kind: BadgeKind, help = BADGE_HELP[text]): HTMLElement {
+  const b = badge(text, kind);
+  if (help) b.title = help;
+  if (OK_BADGES.has(text)) b.classList.add("is-ok");
+  return b;
+}
+
+/**
+ * Header checkbox of a matrix table: selects or clears the rows shown (rows the filters hide keep their selection),
+ * checked when all of them are selected, indeterminate when some are. Updates the row checkboxes in place.
+ */
+function selectAllBox(rows: { key: string }[], sel: Set<string>, boxes: HTMLInputElement[], what: string): { box: HTMLInputElement; sync: () => void } {
+  const box = h("input", { type: "checkbox", class: "sel-all", "aria-label": `Select all shown ${what}`, title: `Select all ${what} shown` }) as HTMLInputElement;
+  const sync = () => {
+    const n = rows.filter((r) => sel.has(r.key)).length;
+    box.checked = n > 0 && n === rows.length;
+    box.indeterminate = n > 0 && n < rows.length;
+  };
+  box.addEventListener("change", () => {
+    rows.forEach((r, i) => {
+      if (box.checked) sel.add(r.key);
+      else sel.delete(r.key);
+      boxes[i].checked = box.checked;
+    });
+    sync();
+    renderBulkbar();
+  });
+  sync();
+  return { box, sync };
+}
+
 /** Cell of a live column whose load failed. */
 const errorCell = (c: ColumnMeta): HTMLElement => h("td", { class: "cell error", title: c.error ?? "" }, h("span", { class: "val" }, "—"), h("div", { class: "meta" }, badge("error", "bad")));
 
 function envVarTable(rows: EnvVarRow[]): HTMLElement {
   const cols = matrix.columns;
+  const boxes = rows.map((r) => h("input", { type: "checkbox", "aria-label": `Select ${r.schemaName}` }) as HTMLInputElement);
+  const all = selectAllBox(rows, selected, boxes, "variables");
   const head = h(
     "tr",
     {},
-    h("th", { class: "sel sticky-col" }, ""),
+    h("th", { class: "sel sticky-col" }, all.box),
     h("th", { class: "name sticky-col" }, "Variable"),
     h("th", {}, "Type"),
     ...cols.map(colHead),
   );
-  const body = rows.map((r) => {
-    const cb = h("input", { type: "checkbox", "aria-label": `Select ${r.schemaName}` }) as HTMLInputElement;
+  const body = rows.map((r, i) => {
+    const cb = boxes[i];
     cb.checked = selected.has(r.key);
     cb.addEventListener("change", () => {
       if (cb.checked) selected.add(r.key);
       else selected.delete(r.key);
+      all.sync();
       renderBulkbar();
     });
+    // cells whose value differs from the first visible column get a tint (the row marker says only "somewhere")
+    const diff = envVarDiffCells(r, cols);
     return h(
       "tr",
       { class: r.anyMissing || r.anyAbsent ? "missing" : r.differs ? "differs" : undefined },
@@ -420,9 +520,9 @@ function envVarTable(rows: EnvVarRow[]): HTMLElement {
       ...cols.map((c) => {
         if (c.error) return errorCell(c);
         const cell = r.cells[c.key];
-        const td = h("td", { class: `cell ${cell.source}` });
+        const td = h("td", { class: `cell ${cell.source}${diff.has(c.key) ? " differs" : ""}` });
         if (cell.source === "absent") {
-          td.append(h("span", { class: "val" }, "—"), h("div", { class: "meta" }, badge("absent", "neutral")));
+          td.append(h("span", { class: "val" }, "—"), h("div", { class: "meta" }, cellBadge("absent", "neutral", "absent: the variable is not deployed in this environment")));
           return td;
         }
         const v = cellValue(td, `ev:${r.key}:${c.key}`, r.isSecret ? "••••••" : (cell.effective ?? ""), r.isSecret ? null : (cell.effective ?? ""), `${r.schemaName} in ${c.name}`);
@@ -430,7 +530,8 @@ function envVarTable(rows: EnvVarRow[]): HTMLElement {
         const dupes = cell.record?.valueCount ?? 0;
         const dupeBadge = dupes > 1 ? badge(`${dupes} value rows`, "bad") : null;
         if (dupeBadge) dupeBadge.title = "More than one environmentvariablevalue row for this definition; the one shown may not be the one the platform uses. Remove the extras.";
-        const meta = h("div", { class: "meta" }, badge(cell.source, cell.source === "value" ? "ok" : cell.source === "default" ? "warn" : "bad"), cell.record?.isManaged ? badge("managed", "neutral") : null, dupeBadge, v.toggle);
+        const managed = cell.record?.isManaged ? cellBadge("managed", "neutral", "managed: the definition comes from a managed solution; a value can still be set here") : null;
+        const meta = h("div", { class: "meta" }, cellBadge(cell.source, cell.source === "value" ? "ok" : cell.source === "default" ? "warn" : "bad"), managed, dupeBadge, v.toggle);
         if (c.kind === "live" && !r.isSecret) {
           const edit = h("button", { class: "btn-icon", type: "button", title: `Set value in ${c.name}`, "aria-label": `Set ${r.schemaName} in ${c.name}` }, "✎");
           edit.addEventListener("click", () => openSetDialog(r, c));
@@ -446,15 +547,19 @@ function envVarTable(rows: EnvVarRow[]): HTMLElement {
 
 function connRefTable(rows: Matrix["connRefs"]): HTMLElement {
   const cols = matrix.columns;
-  const head = h("tr", {}, h("th", { class: "sel sticky-col" }, ""), h("th", { class: "name sticky-col" }, "Connection reference"), h("th", {}, "Connector"), ...cols.map(colHead));
-  const body = rows.map((r) => {
-    const cb = h("input", { type: "checkbox", "aria-label": `Select ${r.logicalName}` }) as HTMLInputElement;
+  const boxes = rows.map((r) => h("input", { type: "checkbox", "aria-label": `Select ${r.logicalName}` }) as HTMLInputElement);
+  const all = selectAllBox(rows, crSelected, boxes, "connection references");
+  const head = h("tr", {}, h("th", { class: "sel sticky-col" }, all.box), h("th", { class: "name sticky-col" }, "Connection reference"), h("th", {}, "Connector"), ...cols.map(colHead));
+  const body = rows.map((r, i) => {
+    const cb = boxes[i];
     cb.checked = crSelected.has(r.key);
     cb.addEventListener("change", () => {
       if (cb.checked) crSelected.add(r.key);
       else crSelected.delete(r.key);
+      all.sync();
       renderBulkbar();
     });
+    const diff = connRefDiffCells(r, cols);
     return h(
       "tr",
       { class: r.anyUnbound || r.anyAbsent ? "missing" : r.differs ? "differs" : undefined },
@@ -464,13 +569,20 @@ function connRefTable(rows: Matrix["connRefs"]): HTMLElement {
       ...cols.map((c) => {
         if (c.error) return errorCell(c);
         const cell = r.cells[c.key];
-        const td = h("td", { class: `cell ${cell.state}` });
+        const td = h("td", { class: `cell ${cell.state}${diff.has(c.key) ? " differs" : ""}` });
         const otherConnector = cell.connector && r.connector && cell.connector.toLowerCase() !== r.connector.toLowerCase() ? badge(cell.connector, "warn") : null;
         if (otherConnector) otherConnector.title = `Connector differs: ${cell.record?.connectorId ?? cell.connector}`;
         const v = cellValue(td, `cr:${r.key}:${c.key}`, cell.state === "absent" ? "—" : (cell.connectionId ?? "(no connection)"), cell.connectionId, `${r.logicalName} in ${c.name}`);
         td.append(
           v.val,
-          h("div", { class: "meta" }, badge(cell.state, cell.state === "bound" ? "ok" : cell.state === "unbound" ? "bad" : "neutral"), cell.record?.isManaged ? badge("managed", "neutral") : null, otherConnector, v.toggle),
+          h(
+            "div",
+            { class: "meta" },
+            cellBadge(cell.state, cell.state === "bound" ? "ok" : cell.state === "unbound" ? "bad" : "neutral", cell.state === "absent" ? "absent: the connection reference is not deployed in this environment" : undefined),
+            cell.record?.isManaged ? cellBadge("managed", "neutral", "managed: the connection reference comes from a managed solution; it can still be bound here") : null,
+            otherConnector,
+            v.toggle,
+          ),
         );
         return td;
       }),
@@ -625,7 +737,10 @@ function renderConsolidate(body: HTMLElement, f: Filters): void {
     if (!consFlows()) void scanFlows();
   });
   const rescan = h("button", { class: "btn btn-sm", type: "button" }, "Rescan flows");
-  rescan.addEventListener("click", () => void scanFlows());
+  rescan.addEventListener("click", () => {
+    fitFailed = null;
+    void scanFlows();
+  });
   const restore = h("button", { class: "btn btn-ghost btn-sm", type: "button", title: "Merge, cleanup or bind backup" }, "Restore from backup…");
   restore.addEventListener("click", () => void restoreFromBackup());
   head.append(h("label", {}, "Environment ", sel), rescan, h("span", { class: "spacer" }), restore);
@@ -784,12 +899,16 @@ async function previewCleanup(col: ColumnData): Promise<void> {
 }
 
 function offFlowsCard(col: ColumnData, flows: FlowRecord[], text: string): HTMLElement {
-  const all = offFlows(flows, col.connRefs).filter((f) => !text || f.name.toLowerCase().includes(text) || f.refs.some((r) => r.toLowerCase().includes(text)));
   const title = "Flows that are off";
   const key = `cons:${col.meta.key}:off`;
-  if (!all.length) return foldCard(title, 0, emptyState("None", "Every solution cloud flow is on (within the current filters)."), false, { key });
+  // the solution filter scopes this card to the solution's flows, as it scopes the other cards to its references
+  const ids = solutionFlowIds();
+  if (ids === "loading") return foldCard(title, null, h("p", { class: "caption" }, "Reading the solution's cloud flows…"), true, { key });
+  const { scoped: all, shown } = filterOffFlows(offFlows(flows, col.connRefs), { text, flowIds: ids === "failed" ? null : ids, onlyReady: offOnlyReady });
+  const note = ids === "failed" ? h("p", { class: "caption" }, "The solution's cloud flows could not be read: flows of every solution are listed.") : null;
+  if (!all.length) return foldCard(title, 0, h("div", {}, note, emptyState("None", "Every solution cloud flow is on (within the current filters).")), false, { key });
   const ready = all.filter((f) => f.ready);
-  const rows = all.map((f) => {
+  const rows = shown.map((f) => {
     const cb = h("input", { type: "checkbox", "aria-label": `Turn on ${f.name}` }) as HTMLInputElement;
     cb.checked = f.ready && turnOnSel.has(f.flowId);
     cb.disabled = !f.ready;
@@ -809,6 +928,14 @@ function offFlowsCard(col: ColumnData, flows: FlowRecord[], text: string): HTMLE
   });
   const n = ready.filter((f) => turnOnSel.has(f.flowId)).length;
   const actions = h("div", { class: "cons-actions" });
+  const onlyReady = h("input", { type: "checkbox", id: "off-only-ready" }) as HTMLInputElement;
+  onlyReady.checked = offOnlyReady;
+  onlyReady.addEventListener("change", () => {
+    offOnlyReady = onlyReady.checked;
+    saveView(VIEW, "offOnlyReady", offOnlyReady || undefined);
+    renderTable();
+    document.querySelector<HTMLInputElement>("#off-only-ready")?.focus();
+  });
   const selAll = h("button", { class: "btn btn-ghost btn-sm", type: "button" }, "Select all ready");
   selAll.toggleAttribute("disabled", !ready.length);
   selAll.addEventListener("click", () => {
@@ -818,14 +945,20 @@ function offFlowsCard(col: ColumnData, flows: FlowRecord[], text: string): HTMLE
   const go = h("button", { class: "btn btn-primary btn-sm", type: "button", id: "btn-turnon-preview", style: "flex:none" }, `Turn on (${n})…`);
   go.toggleAttribute("disabled", !n);
   go.addEventListener("click", () => void previewTurnOn(col, ready.filter((f) => turnOnSel.has(f.flowId))));
-  actions.append(selAll, go);
-  const table = h(
-    "table",
-    {},
-    h("thead", {}, h("tr", {}, h("th", {}, "On"), h("th", {}, "Flow"), h("th", {}, "Connection references"), h("th", {}, "State"))),
-    h("tbody", {}, ...rows),
-  );
-  return foldCard(title, all.length, h("div", {}, actions, table), true, { key });
+  actions.append(h("label", { class: "check cons-only-ready", title: "Hide flows that are blocked by an unbound or missing reference" }, onlyReady, " Only ready"), selAll, go);
+  const table = rows.length
+    ? h(
+        "table",
+        {},
+        h("thead", {}, h("tr", {}, h("th", {}, "On"), h("th", {}, "Flow"), h("th", {}, "Connection references"), h("th", {}, "State"))),
+        h("tbody", {}, ...rows),
+      )
+    : filteredEmpty("No flow is ready", `All ${all.length} flow${all.length === 1 ? " that is off is" : "s that are off are"} blocked: bind or add their references first.`, () => {
+        offOnlyReady = false;
+        saveView(VIEW, "offOnlyReady", undefined);
+        renderTable();
+      }, "Show blocked flows");
+  return foldCard(title, shown.length === all.length ? all.length : `${shown.length} of ${all.length}`, h("div", {}, note, actions, table), true, { key });
 }
 
 async function previewTurnOn(col: ColumnData, picked: { flowId: string; name: string; refs: string[] }[]): Promise<void> {
@@ -851,10 +984,27 @@ async function previewTurnOn(col: ColumnData, picked: { flowId: string; name: st
   await refresh();
 }
 
-/** Solution of the fit check: the solution filter, when it is set and the view works on the primary. */
-function fitSolution(col: ColumnData): SolutionInfo | null {
-  if (!selectedSolution || !scope || col.meta.target !== "primary") return null;
+/** Selected solution, when the solution filter is set (its scope loaded from the primary). */
+function selectedSol(): SolutionInfo | null {
+  if (!selectedSolution || !scope) return null;
   return solutions.find((x) => x.id === selectedSolution) ?? null;
+}
+
+/** Solution of the fit check: the solution filter, when it is set and the view works on the primary. */
+const fitSolution = (col: ColumnData): SolutionInfo | null => (col.meta.target === "primary" ? selectedSol() : null);
+
+/**
+ * Cloud flow ids of the selected solution, read in the primary like the solution scope. Solution import keeps
+ * workflow ids, so they name the solution's flows in the secondary too. null: no solution filter.
+ */
+function solutionFlowIds(): Set<string> | null | "loading" | "failed" {
+  const sol = selectedSol();
+  const primary = live.find((c) => c.meta.target === "primary" && !c.meta.error);
+  if (!sol || !primary) return null;
+  if (fitCache && fitCache.solutionId === sol.id && fitCache.url === primary.meta.url) return fitCache.flowIds;
+  if (fitFailed === `${sol.id}|${primary.meta.url}`) return "failed";
+  loadFit(primary, sol);
+  return "loading";
 }
 
 function loadFit(col: ColumnData, sol: SolutionInfo): void {
@@ -864,8 +1014,11 @@ function loadFit(col: ColumnData, sol: SolutionInfo): void {
     try {
       const flowIds = await fetchSolutionFlowIds(api, "primary", sol.id);
       fitCache = { solutionId: sol.id, url: col.meta.url, flowIds };
+      fitFailed = null;
     } catch (e) {
       fitCache = null;
+      // remembered, so the re-render below does not read (and notify) again in a loop
+      fitFailed = `${sol.id}|${col.meta.url}`;
       await notify("Solution check failed", (e as Error).message, "warning");
     }
   })().finally(() => {
@@ -877,14 +1030,13 @@ function loadFit(col: ColumnData, sol: SolutionInfo): void {
 function fitCard(col: ColumnData, flows: FlowRecord[]): HTMLElement | null {
   const sol = fitSolution(col);
   if (!sol) return null;
-  if (!fitCache || fitCache.solutionId !== sol.id || fitCache.url !== col.meta.url) {
-    loadFit(col, sol);
-    return card(`Solution check · ${sol.friendlyName}`, h("p", { class: "caption" }, "Reading the solution's cloud flows…"));
-  }
-  const issues = solutionFit(flows, fitCache.flowIds, col.connRefs, scope!);
+  const ids = solutionFlowIds();
+  if (ids === "loading" || ids === null) return card(`Solution check · ${sol.friendlyName}`, h("p", { class: "caption" }, "Reading the solution's cloud flows…"));
+  if (ids === "failed") return card(`Solution check · ${sol.friendlyName}`, h("p", { class: "caption" }, "The solution's cloud flows could not be read. Rescan flows to try again."));
+  const issues = solutionFit(flows, ids, col.connRefs, scope!);
   const title = `Solution check · ${sol.friendlyName}`;
   if (!issues.length)
-    return card(title, h("p", { class: "caption" }, `All connection references used by the solution's ${fitCache.flowIds.size} cloud flow${fitCache.flowIds.size === 1 ? "" : "s"} are in the solution.`));
+    return card(title, h("p", { class: "caption" }, `All connection references used by the solution's ${ids.size} cloud flow${ids.size === 1 ? "" : "s"} are in the solution.`));
   const addable = issues.filter((i) => i.ref).map((i) => i.ref!);
   const table = h(
     "table",
@@ -1287,6 +1439,24 @@ async function loadSnapshot(): Promise<void> {
 // ---------- dialogs ----------
 const targetChip = (m: ColumnMeta): Node => h("span", {}, "Target:", colChip(m, false));
 
+/** Previews with more rows than this hide their skipped rows by default. */
+const HIDE_SKIPPED_OVER = 10;
+
+/**
+ * "Hide skipped (n)" for a copy / bind preview table: hides the rows that are not written (`tr.is-skip`); the
+ * counts and what Apply writes do not change. On by default for a long plan that writes something; a plan that
+ * writes nothing shows every row, since the reasons are then the whole answer.
+ */
+function hideSkippedToggle(table: HTMLElement, total: number, skipped: number, writes: number): HTMLElement | null {
+  if (!skipped) return null;
+  const cb = h("input", { type: "checkbox", id: "hide-skipped" }) as HTMLInputElement;
+  cb.checked = total > HIDE_SKIPPED_OVER && writes > 0;
+  const apply = () => table.querySelectorAll<HTMLElement>("tbody tr.is-skip").forEach((tr) => (tr.hidden = cb.checked));
+  cb.addEventListener("change", apply);
+  apply();
+  return h("div", { class: "dlg-tools" }, h("label", { class: "check", title: "Rows that are not written: already equal, not deployed in the target, secret…" }, cb, ` Hide skipped (${skipped})`));
+}
+
 function planTable(items: WritePlan["items"]): HTMLElement {
   return h(
     "table",
@@ -1298,7 +1468,7 @@ function planTable(items: WritePlan["items"]): HTMLElement {
       ...items.map((i) =>
         h(
           "tr",
-          {},
+          { class: i.action === "skip" ? "is-skip" : undefined },
           h("td", {}, h("span", { class: "mono" }, i.schemaName)),
           h("td", {}, badge(i.action, i.action === "skip" ? "neutral" : i.action === "create" ? "ok" : i.action === "invalid" ? "bad" : "warn")),
           h("td", { class: "mono" }, `${i.currentValue ?? "—"} `, badge(i.currentSource, "neutral")),
@@ -1316,6 +1486,7 @@ async function runPlan(plan: WritePlan): Promise<void> {
   const invalid = plan.items.filter((i) => i.action === "invalid");
   const cautions = writes.filter((i) => i.warning);
   const isProd = /prod/i.test(plan.target.environment);
+  const table = planTable(plan.items);
   const body = h(
     "div",
     {},
@@ -1327,7 +1498,8 @@ async function runPlan(plan: WritePlan): Promise<void> {
     isProd && writes.length ? h("div", { class: "warnings" }, "Target is a Production environment.") : null,
     invalid.length ? h("div", { class: "warnings" }, `${invalid.length} value${invalid.length === 1 ? " does" : "s do"} not match the variable type and will not be written.`) : null,
     cautions.length ? h("div", { class: "warnings" }, `${cautions.length} write${cautions.length === 1 ? "" : "s"} with a caution: see Note.`) : null,
-    planTable(plan.items),
+    hideSkippedToggle(table, plan.items.length, plan.items.filter((i) => i.action === "skip").length, writes.length),
+    table,
   );
   const ok = await showDialog({ title: "Preview changes", target: targetChip(plan.target), body, okLabel: writes.length ? `Apply ${writes.length}` : "", danger: isProd });
   if (!ok || !writes.length) return;
@@ -1507,6 +1679,26 @@ async function runBind(plan: BindPlan): Promise<void> {
   const invalid = plan.items.filter((i) => i.action === "invalid");
   const restart = $<HTMLInputElement>("#bind-restart").checked;
   const isProd = /prod/i.test(plan.target.environment);
+  const table = h(
+    "table",
+    {},
+    h("thead", {}, h("tr", {}, h("th", {}, "Connection reference"), h("th", {}, "Action"), h("th", {}, "Current"), h("th", {}, "New"), h("th", {}, "Note"))),
+    h(
+      "tbody",
+      {},
+      ...plan.items.map((i) =>
+        h(
+          "tr",
+          { class: i.action === "skip" ? "is-skip" : undefined },
+          h("td", { class: "mono" }, i.logicalName),
+          h("td", {}, badge(i.action, i.action === "update" ? "warn" : i.action === "invalid" ? "bad" : "neutral")),
+          h("td", { class: "mono" }, i.current ?? "—"),
+          h("td", { class: "mono" }, i.action === "skip" ? "—" : (i.next ?? "")),
+          h("td", { class: "caption" }, i.reason, i.warning ? h("div", {}, badge("caution", "warn"), " ", i.warning) : null),
+        ),
+      ),
+    ),
+  );
   const body = h(
     "div",
     {},
@@ -1519,26 +1711,8 @@ async function runBind(plan: BindPlan): Promise<void> {
     writes.length ? h("p", { class: "caption" }, "The current bindings are saved to a backup file first; undo with Consolidate → Restore from backup….") : null,
     !plan.source.url ? h("p", { class: "caption" }, "Settings file: connection ids are taken as written for this environment. Check the file targets it.") : null,
     isProd && writes.length ? h("div", { class: "warnings" }, "Target is a Production environment.") : null,
-    h(
-      "table",
-      {},
-      h("thead", {}, h("tr", {}, h("th", {}, "Connection reference"), h("th", {}, "Action"), h("th", {}, "Current"), h("th", {}, "New"), h("th", {}, "Note"))),
-      h(
-        "tbody",
-        {},
-        ...plan.items.map((i) =>
-          h(
-            "tr",
-            {},
-            h("td", { class: "mono" }, i.logicalName),
-            h("td", {}, badge(i.action, i.action === "update" ? "warn" : i.action === "invalid" ? "bad" : "neutral")),
-            h("td", { class: "mono" }, i.current ?? "—"),
-            h("td", { class: "mono" }, i.action === "skip" ? "—" : (i.next ?? "")),
-            h("td", { class: "caption" }, i.reason, i.warning ? h("div", {}, badge("caution", "warn"), " ", i.warning) : null),
-          ),
-        ),
-      ),
-    ),
+    hideSkippedToggle(table, plan.items.length, plan.items.filter((i) => i.action === "skip").length, writes.length),
+    table,
   );
   const ok = await showDialog({ title: "Preview bind", target: targetChip(plan.target), body, okLabel: writes.length ? `Bind ${writes.length}` : "", danger: isProd });
   if (!ok || !writes.length) return;
@@ -1611,6 +1785,8 @@ function wire(): void {
     renderTable();
   });
   for (const id of ["#filter-text", "#filter-diff", "#filter-missing", "#filter-absent"]) $(id).addEventListener("input", renderTable);
+  $("#view-compact").addEventListener("change", syncCompact);
+  syncCompact();
   $("#filter-solution").addEventListener("change", async () => {
     selectedSolution = $<HTMLSelectElement>("#filter-solution").value;
     scope = null;
