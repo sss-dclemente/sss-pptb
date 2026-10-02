@@ -17,6 +17,7 @@
 //           parentrootroleid, and already holding one role, one field security profile and one team;
 //           "share to previous owner on assign" OFF; OwnershipType as the metadata API's flags integer.
 //   v=big   one table with more rows than a single page, so @odata.count saturates at 5 000.
+//   v=sparse the leaver holds no personal chart and no connection: two empty categories.
 //
 // Run: npm run build && node scripts/e2e.mjs   (needs playwright + chromium available)
 // Set E2E_SHOTS=1 to refresh docs/img/*.png from this run.
@@ -172,6 +173,10 @@ const MOCK = `
     { LogicalName: 'sss_config', DisplayName: lbl('Config'), EntitySetName: 'sss_configs', PrimaryIdAttribute: 'sss_configid', OwnershipType: ORG_OWNED, IsIntersect: false, IsPrivate: false, IsLogicalEntity: false },
     { LogicalName: 'accountleads', DisplayName: lbl('Account Leads'), EntitySetName: 'accountleadscollection', PrimaryIdAttribute: 'accountleadid', OwnershipType: NO_OWNER, IsIntersect: true, IsPrivate: false, IsLogicalEntity: false },
   ];
+  if (VARIANT === 'sparse') {
+    sets.userqueryvisualizations.rows = [];
+    sets.connections.rows = [];
+  }
   if (VARIANT === 'big') {
     sets.sss_bigs = { key: 'sss_bigid', rows: Array.from({ length: PAGE_LIMIT + 1 }, (_, i) => ({ sss_bigid: BIG(i), sss_name: 'Big ' + i, _ownerid_value: ANA })) };
     entities.push({ LogicalName: 'sss_big', DisplayName: lbl('Big table'), EntitySetName: 'sss_bigs', PrimaryNameAttribute: 'sss_name', PrimaryIdAttribute: 'sss_bigid', OwnershipType: OWNED, IsIntersect: false, IsPrivate: false, IsLogicalEntity: false });
@@ -297,6 +302,7 @@ assert((await allOpen()).every((o) => !o), "Collapse all closes every inventory 
 await page.click("#tab-inventory .fold-all button:has-text('Expand all')");
 const opened = await allOpen();
 assert(opened.length === 12 && opened.every((o) => o), "Expand all opens every inventory card");
+assert(!(await page.$("#show-empty-cats")) && !(await page.$("#empty-cats-caption")), "no empty-category switch or caption when every category holds something");
 
 // ---- 3. plan ----
 await tab("plan");
@@ -329,6 +335,30 @@ assert(dlg.includes("connection behind them still belongs to the leaver"), "conn
 assert(dlg.includes('"share to previous owner on assign" enabled') && dlg.includes("shared back to the leaver with full rights"), "share-back warning when the organization row has the setting on");
 assert(dlg.includes("deactivates any workflow or business rule currently active on it"), "record moves warn that active workflows and business rules are deactivated");
 assert(dlg.includes("only solution-aware cloud flows can change owner this way") && dlg.includes("remains a co-owner") && dlg.includes("up to 7 days"), "flow moves warn about solution-aware flows, co-ownership and the licensing lag");
+// grouping: warnings first and open, one closed fold per category, then "Skipped (n)" closed
+const pv = await page.$eval("#dlg-body .preview-body", (b) => {
+  const kids = [...b.children];
+  const at = (sel) => kids.findIndex((k) => k.matches(sel));
+  const cats = [...b.querySelectorAll("details.preview-cat")].map((d) => ({ cat: d.dataset.cat, open: d.open, head: d.querySelector("summary").textContent, rows: d.querySelectorAll("table.preview tbody tr").length }));
+  const sk = b.querySelector("details#preview-skipped");
+  const w = b.querySelector("details#preview-warnings");
+  return {
+    order: [at("#preview-warnings"), at(".preview-cats"), at("#preview-skipped")],
+    warnOpen: w?.open, warnHead: w?.querySelector("summary").textContent, warnN: w?.querySelectorAll("li").length,
+    cats, skOpen: sk?.open, skHead: sk?.querySelector("summary").textContent, skN: sk?.querySelectorAll("li").length,
+    showAll: b.querySelectorAll("[data-show-all]").length,
+  };
+});
+assert(pv.order[0] >= 0 && pv.order[0] < pv.order[1] && pv.order[1] < pv.order[2], "preview order: warnings, categories, skipped " + JSON.stringify(pv.order));
+assert(pv.warnOpen === true && pv.warnHead === `Warnings (${pv.warnN})`, "warnings fold open with its count: " + pv.warnHead);
+assert(pv.cats.length > 1 && pv.cats.every((c) => !c.open), "several categories: every category fold starts closed");
+assert(pv.cats.every((c) => c.head === `${c.head.split(" · ")[0]} · ${c.rows} operation${c.rows === 1 ? "" : "s"}`), "category summary reads “Category · N operations” and lists all its operations: " + pv.cats.map((c) => c.head).join(" | "));
+assert(pv.cats.reduce((n, c) => n + c.rows, 0) === planned, "the category folds list every planned operation, no 25 cap");
+assert(pv.cats.find((c) => c.cat === "records")?.head === "Records · 5 operations", "records fold: " + pv.cats.find((c) => c.cat === "records")?.head);
+assert(pv.skOpen === false && pv.skHead === `Skipped (${pv.skN})` && pv.skN >= 2, "skipped items in their own closed “Skipped (n)” fold: " + pv.skHead);
+assert(pv.showAll === 0, "no “Show all” button when no category exceeds 25 operations");
+await page.click("#preview-skipped > summary");
+assert(await page.$eval("#preview-skipped", (d) => d.open && d.textContent.includes("Entra ID and cannot be changed")), "Skipped fold opens on its reasons");
 assert(planned > 0 && estimated === planned, `the estimate matches the plan, Entra group team excluded: ${estimated} vs ${planned}`);
 assert(await page.$eval("#dlg-ok", (b) => b.className.includes("btn-danger")), "confirm button uses danger styling");
 assert((await page.textContent("#dlg-ok")).startsWith("Apply "), "confirm labels the op count");
@@ -431,7 +461,7 @@ await shot("report-dark");
 
 // ---- other fixture variants ----
 /** A fresh page on one fixture variant, walked from the leaver to an open preview dialog. */
-const previewRun = async (variant, { cap = null, options = ["roleRemove", "teamAdd"] } = {}) => {
+const previewRun = async (variant, { cap = null, options = ["roleRemove", "teamAdd"], inspect = null } = {}) => {
   const ctx = await browser.newContext({ viewport: { width: 1400, height: 900 } });
   await ctx.addInitScript(MOCK);
   const p = await ctx.newPage();
@@ -466,8 +496,10 @@ const previewRun = async (variant, { cap = null, options = ["roleRemove", "teamA
   await p.waitForSelector("dialog[open]");
   const body = await p.textContent("#dlg-body");
   const calls = await p.$$eval("table.preview tbody tr td:last-child", (c) => c.map((x) => x.textContent));
+  const okLabel = await p.textContent("#dlg-ok");
+  const inspected = inspect ? await inspect(p) : null;
   await ctx.close();
-  return { scanDialog, rows, body, calls, errs };
+  return { scanDialog, rows, body, calls, okLabel, inspected, errs };
 };
 
 // ---- 5. successor in another business unit: role remapping, duplicates, setting off, int metadata ----
@@ -491,11 +523,77 @@ assert(bu.scanDialog.includes("3 requests"), "OwnershipType as the flags integer
 assert(bu.rows.length === 2 && JSON.stringify(bu.rows) === JSON.stringify(scanRows), "OwnershipType as the flags integer: the scan finds the same tables and counts");
 
 // ---- 6. a table whose @odata.count saturated at the page limit ----
-const big = await previewRun("big", { cap: 5 });
+// cap 30: 30 + 3 accounts + 2 contacts = 35 record operations, past the 25 listed before "Show all"
+const recRows = (p) => p.$$eval("details.preview-cat[data-cat='records'] table.preview tbody tr", (r) => r.length);
+const big = await previewRun("big", {
+  cap: 30,
+  inspect: async (p) => {
+    const before = { rows: await recRows(p), btn: await p.textContent("details.preview-cat[data-cat='records'] [data-show-all]"), head: await p.textContent("details.preview-cat[data-cat='records'] > summary") };
+    await p.click("details.preview-cat[data-cat='records'] > summary");
+    await p.click("details.preview-cat[data-cat='records'] [data-show-all]");
+    return { before, after: await recRows(p), btnGone: !(await p.$("details.preview-cat[data-cat='records'] [data-show-all]")) };
+  },
+});
 assert(big.errs.length === 0, "no errors in the saturated-count run: " + big.errs.join(" | "));
 const bigRow = big.rows.find((r) => r.includes("Big table"));
 assert(!!bigRow && bigRow.includes("5000+"), "a count saturated at the page limit is marked approximate in the inventory, not shown as an exact 5000");
-assert(big.body.includes("Big table: 5000 or more records owned, only the first 5 are in this plan"), "the plan reports a saturated count as “or more”");
+assert(big.body.includes("Big table: 5000 or more records owned, only the first 30 are in this plan"), "the plan reports a saturated count as “or more”");
+const bi = big.inspected;
+assert(bi.before.head === "Records · 35 operations" && bi.before.rows === 25 && bi.before.btn === "Show all 35", "a category over 25 operations lists 25 and offers “Show all 35”: " + JSON.stringify(bi.before));
+assert(bi.after === 35 && bi.btnGone, "“Show all” lists every operation of the category: " + bi.after);
+assert(big.okLabel === `Apply ${opCount(big.body)}`, "the confirm button still counts every planned operation: " + big.okLabel);
+
+// ---- 7. empty categories: hidden behind one caption, switch remembered across a reload ----
+{
+  const ctx = await browser.newContext({ viewport: { width: 1400, height: 900 } });
+  await ctx.addInitScript(MOCK);
+  const p = await ctx.newPage();
+  const errs = [];
+  p.on("pageerror", (e) => errs.push("pageerror: " + e.message));
+  const open = async () => {
+    await p.goto(`file://${TOOL}/dist/index.html?v=sparse`);
+    await p.fill("#leaver-q", "ana");
+    await p.waitForSelector("#leaver-results li button");
+    await p.click("#leaver-results li button");
+    await p.waitForFunction(() => document.querySelector("#leaver-kv")?.textContent.includes("Ana Silva"));
+    await p.click(".tab[data-tab='inventory']");
+    await p.waitForSelector("#inventory-cards");
+  };
+  const view = () =>
+    p.evaluate(() => {
+      const card = (k) => document.querySelector(`#inventory-cards details[data-cat='${k}']`);
+      const cap = document.querySelector("#empty-cats-caption");
+      return {
+        charts: card("usercharts") && !card("usercharts").hidden,
+        conns: card("connections") && !card("connections").hidden,
+        views: !card("userqueries").hidden,
+        caption: cap && !cap.hidden ? cap.textContent : null,
+        checked: document.querySelector("#show-empty-cats")?.checked,
+        chartsHead: card("usercharts")?.querySelector("summary").textContent ?? "",
+      };
+    });
+  await open();
+  let v = await view();
+  assert(!v.charts && !v.conns && v.views, "empty categories hidden by default, others shown");
+  assert(v.caption === "Nothing held in: Personal charts, Connections" && v.checked === false, "one caption names the hidden empty categories: " + v.caption);
+  await p.click("#tab-inventory .fold-all button:has-text('Expand all')");
+  assert(await p.$eval("#inventory-cards details[data-cat='usercharts']", (d) => !d.open), "Expand all leaves hidden empty cards alone");
+  await p.check("#show-empty-cats");
+  v = await view();
+  assert(v.charts && v.conns && v.caption === null && v.chartsHead.includes("0"), "Show empty categories reveals the 0 cards and drops the caption");
+  assert(await p.$eval("#show-empty-cats", (e) => e === document.activeElement), "the switch keeps focus (no re-render)");
+  await p.reload();
+  await open();
+  v = await view();
+  assert(v.checked === true && v.charts && v.conns && v.caption === null, "Show empty categories remembered across a reload");
+  await p.uncheck("#show-empty-cats");
+  await p.reload();
+  await open();
+  v = await view();
+  assert(v.checked === false && !v.charts && !v.conns && v.caption?.startsWith("Nothing held in:"), "switching it off is remembered too");
+  assert(errs.length === 0, "no errors in the empty-categories run: " + errs.join(" | "));
+  await ctx.close();
+}
 
 // ---- no host: the tool still renders ----
 const bareCtx = await browser.newContext();

@@ -1,6 +1,7 @@
 import { mountDebug } from "../../_shared/debug-ui";
 import { $, badge, card, emptyState, filteredEmpty, foldAllButtons, h, keepFold, shownOf, showDialog, table, wireTabs } from "../../_shared/dom";
 import { dataverse, getConnections, initTheme, inToolbox, notify, onConnectionChange, saveText } from "../../_shared/host";
+import { loadView, saveView } from "../../_shared/view-state";
 import { applyPlan, DEFAULT_WRITE_CONCURRENCY } from "./offboard/apply";
 import { inventoryCsv, inventoryJson, resultsCsv, resultsJson, safeFileName } from "./offboard/export";
 import {
@@ -53,7 +54,11 @@ let scanRowFilter = "";
 const selectedTables = new Set<string>();
 const opts = { roleCopy: true, roleRemove: false, profileCopy: true, profileRemove: false, teamRemove: true, teamAdd: false, recordCap: DEFAULT_RECORD_CAP };
 const SCAN_CONCURRENCY = 6;
+/** Operations listed per category in the preview before a "Show all N" button. */
 const PREVIEW_ROWS = 25;
+const TOOL = "offboarding-wizard";
+/** Off by default: a category holding nothing is one name in the "Nothing held in" caption, not a full "0" card. */
+let showEmptyCats = loadView<boolean>(TOOL, "showEmptyCats", false) === true;
 
 const api = (): DataverseLike | null => (dataverse() as unknown as DataverseLike | undefined) ?? null;
 const msg = (e: unknown): string => (e instanceof Error ? e.message : String(e));
@@ -340,13 +345,44 @@ function scanRowsView(scan: NonNullable<Inventory["scan"]>): HTMLElement {
   return h("div", { class: "stack scan-rows" }, all.length ? h("div", { class: "row" }, input, caption) : null, list);
 }
 
+/** A category that read cleanly and holds nothing (a read error is never "empty": it must stay visible). */
+const isEmptyCat = (c: CategoryResult): boolean => !c.error && !c.items.length;
+
+/**
+ * "Nothing held in: …" caption plus the "Show empty categories" switch (remembered per viewer). Toggling
+ * only hides or shows the empty cards, so nothing re-renders and the switch keeps focus.
+ */
+function emptyCatsControls(empty: CategoryResult[], cards: HTMLElement[]): HTMLElement[] {
+  if (!empty.length) return [];
+  const caption = h("span", { class: "caption empty-cats", id: "empty-cats-caption" }, `Nothing held in: ${empty.map((c) => c.label).join(", ")}`);
+  const cb = h("input", { type: "checkbox", id: "show-empty-cats" });
+  cb.checked = showEmptyCats;
+  const sync = (): void => {
+    caption.hidden = showEmptyCats;
+    for (const el of cards) if (el.dataset.empty) el.hidden = !showEmptyCats;
+  };
+  cb.addEventListener("change", () => {
+    showEmptyCats = cb.checked;
+    saveView(TOOL, "showEmptyCats", showEmptyCats || undefined);
+    sync();
+  });
+  sync();
+  return [caption, h("label", { class: "check" }, cb, "Show empty categories")];
+}
+
 function renderInventory(): void {
   const panel = $("#inventory-body");
   panel.replaceChildren();
   if (!inventory) return void panel.append(emptyState("No leaver selected", "Pick the leaver on the first tab."));
+  const empty = inventory.categories.filter(isEmptyCat);
+  const cards = inventory.categories.map((c) => {
+    const el = categoryCard(c);
+    if (isEmptyCat(c)) el.dataset.empty = "true";
+    return el;
+  });
   panel.append(
-    h("div", { class: "row fold-row" }, foldAllButtons(() => document.getElementById("inventory-cards"), "details.card")),
-    h("div", { class: "stack", id: "inventory-cards" }, recordsCard(), ...inventory.categories.map(categoryCard)),
+    h("div", { class: "row fold-row" }, ...emptyCatsControls(empty, cards), foldAllButtons(() => document.getElementById("inventory-cards"), "details.card:not([hidden])")),
+    h("div", { class: "stack", id: "inventory-cards" }, recordsCard(), ...cards),
   );
 }
 
@@ -479,21 +515,46 @@ async function collectRecordIds(a: DataverseLike, inv: Inventory): Promise<Map<s
   return out;
 }
 
-function previewBody(plan: Plan): Node {
-  const big = plan.ops.length > LARGE_PLAN_WARNING;
+const opRows = (ops: Plan["ops"]): (Node | string)[][] => ops.map((op) => [op.label, op.detail, h("span", { class: "mono" }, CALL_TEXT(op.call))]);
+
+/** One category's operations, folded; past PREVIEW_ROWS the rest sit behind a "Show all N" button. */
+function previewCategory(c: Plan["counts"][number], ops: Plan["ops"], open: boolean): HTMLElement {
+  const list = h("div", { class: "preview-ops" }, table(["Target", "Change", "Call"], opRows(ops.slice(0, PREVIEW_ROWS)), undefined, "preview"));
+  if (ops.length > PREVIEW_ROWS) {
+    const more = h("button", { class: "btn btn-ghost btn-sm", type: "button", "data-show-all": c.category }, `Show all ${ops.length}`);
+    const note = h("div", { class: "row preview-more" }, h("span", { class: "count-caption" }, `First ${PREVIEW_ROWS} of ${ops.length} operations`), more);
+    more.addEventListener("click", () => {
+      list.replaceChildren(table(["Target", "Change", "Call"], opRows(ops), undefined, "preview"));
+      note.remove();
+    });
+    list.append(note);
+  }
   return h(
-    "div",
-    {},
-    h("p", {}, `${plan.ops.length} operation${plan.ops.length === 1 ? "" : "s"} against ${envName ?? "this environment"}.`),
-    big ? h("div", { class: "danger-box" }, `This is a large batch (over ${LARGE_PLAN_WARNING} writes). Narrow the table selection, or use the ToolBox "Ownership Mover" for bulk ownership changes.`) : h("span", {}),
-    table(["Category", "#Operations"], plan.counts.map((c) => [c.label, String(c.count)])),
-    plan.warnings.length ? h("div", { class: "warnings" }, h("ul", { class: "notes" }, ...plan.warnings.map((w) => h("li", {}, w)))) : h("span", {}),
-    plan.skipped.length ? h("ul", { class: "notes" }, ...plan.skipped.map((sk) => h("li", { class: "caption" }, sk))) : h("span", {}),
-    h("h3", { style: "margin-top:12px" }, `First ${Math.min(PREVIEW_ROWS, plan.ops.length)} operations`),
-    table(["Target", "Change", "Call"], plan.ops.slice(0, PREVIEW_ROWS).map((op) => [op.label, op.detail, h("span", { class: "mono" }, CALL_TEXT(op.call))]), undefined, "preview"),
+    "details",
+    { class: "preview-cat", "data-cat": c.category, open },
+    h("summary", { class: "chev" }, `${c.label} · ${c.count} operation${c.count === 1 ? "" : "s"}`),
+    list,
   );
 }
 
+/** Warnings first (open), then one fold per category with its operations, then the skipped items with their reasons. */
+function previewBody(plan: Plan): Node {
+  const big = plan.ops.length > LARGE_PLAN_WARNING;
+  const cats = plan.counts; // categories with at least one operation, in category order
+  return h(
+    "div",
+    { class: "preview-body" },
+    h("p", {}, `${plan.ops.length} operation${plan.ops.length === 1 ? "" : "s"} against ${envName ?? "this environment"}.`),
+    big ? h("div", { class: "danger-box" }, `This is a large batch (over ${LARGE_PLAN_WARNING} writes). Narrow the table selection, or use the ToolBox "Ownership Mover" for bulk ownership changes.`) : null,
+    plan.warnings.length
+      ? h("details", { class: "warnings", id: "preview-warnings", open: true }, h("summary", { class: "chev" }, `Warnings (${plan.warnings.length})`), h("ul", { class: "notes" }, ...plan.warnings.map((w) => h("li", {}, w))))
+      : null,
+    h("div", { class: "preview-cats" }, ...cats.map((c) => previewCategory(c, plan.ops.filter((op) => op.category === c.category), cats.length === 1))),
+    plan.skipped.length
+      ? h("details", { class: "skipped", id: "preview-skipped" }, h("summary", { class: "chev" }, `Skipped (${plan.skipped.length})`), h("ul", { class: "notes" }, ...plan.skipped.map((sk) => h("li", { class: "caption" }, sk))))
+      : null,
+  );
+}
 
 /**
  * Roles are business-unit scoped, so a role held by the leaver cannot be granted to a successor in

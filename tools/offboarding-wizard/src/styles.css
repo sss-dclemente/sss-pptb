@@ -95,3 +95,18 @@ table.results td:last-child { min-width: 120px; }
 .err-fold > summary { cursor: pointer; overflow-wrap: anywhere; }
 .err-fold[open] .err-preview { display: none; }
 .err { font-size: var(--fs-micro); color: var(--status-bad-fg); white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; margin-top: var(--s-1); }
+
+/* Inventory: empty categories folded into one caption line */
+.fold-row .empty-cats { margin-right: auto; min-width: 0; }
+.fold-row label.check { display: inline-flex; align-items: center; gap: var(--s-1); font-size: var(--fs-caption); }
+
+/* Preview dialog: warnings, one fold per category, skipped */
+.preview-body { display: flex; flex-direction: column; gap: var(--s-3); }
+.preview-body > p { margin: 0; }
+.preview-cats { display: flex; flex-direction: column; gap: var(--s-2); }
+.preview-body details > summary { cursor: pointer; font-weight: var(--fw-bold); color: var(--fg-primary); font-size: var(--fs-caption); padding: var(--s-1) 0; }
+.preview-body details[open] > summary { margin-bottom: var(--s-1); }
+.preview-cat { border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); padding: var(--s-1) var(--s-3); }
+.preview-ops { max-width: 100%; overflow-x: auto; }
+.preview-more { padding: var(--s-2) 0; }
+.preview-body .notes { margin: 0; }
