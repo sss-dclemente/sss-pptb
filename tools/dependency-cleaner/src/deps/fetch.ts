@@ -164,14 +164,15 @@ export async function fetchSolutionManaged(api: DataverseLike, solutionId: strin
 export async function fetchComponents(api: DataverseLike, solutionId: string): Promise<Component[]> {
   const rows = await queryAll(
     api,
-    `solutioncomponents?$select=solutioncomponentid,objectid,componenttype,rootcomponentbehavior,_rootsolutioncomponentid_value&$filter=_solutionid_value eq ${assertGuid(solutionId, "solution id")}`,
+    `solutioncomponents?$select=solutioncomponentid,objectid,componenttype,rootcomponentbehavior,rootsolutioncomponentid&$filter=_solutionid_value eq ${assertGuid(solutionId, "solution id")}`,
   );
   return rows.map((r) => ({
     rowId: lid(r.solutioncomponentid),
     objectId: lid(r.objectid),
     type: Number(r.componenttype ?? 0),
     behavior: r.rootcomponentbehavior == null ? null : Number(r.rootcomponentbehavior),
-    rootRowId: r._rootsolutioncomponentid_value ? lid(r._rootsolutioncomponentid_value) : null,
+    // a Uniqueidentifier column, not a lookup: selected and returned as `rootsolutioncomponentid` (no _…_value form)
+    rootRowId: r.rootsolutioncomponentid ? lid(r.rootsolutioncomponentid) : null,
   }));
 }
 

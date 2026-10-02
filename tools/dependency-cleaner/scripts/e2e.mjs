@@ -93,7 +93,7 @@ const MOCK = `
   // account / contact: System created them; Sales and Field Service extend them, so they carry rows too
   const owners = { [E.acc]: [SOL.fs, SOL.sys, SOL.sales], [E.contact]: [SOL.sales, SOL.sys, SOL.fs], [E.wo]: [SOL.fs], [E.common]: [SOL.common] };
   let seq = 1000;
-  const row = (objectid, componenttype, behavior, root) => ({ solutioncomponentid: g(seq++), objectid, componenttype, rootcomponentbehavior: behavior, _rootsolutioncomponentid_value: root });
+  const row = (objectid, componenttype, behavior, root) => ({ solutioncomponentid: g(seq++), objectid, componenttype, rootcomponentbehavior: behavior, rootsolutioncomponentid: root });
   const accRow = row(E.acc, 1, 0, null);
   const members = [accRow, ...Object.entries(catalog).map(([id, c]) => row(id, c.type, null, accRow.solutioncomponentid))];
 
@@ -210,6 +210,7 @@ const MOCK = `
   };
   async function answer(q, target) {
       let m;
+      if (q.includes('_rootsolutioncomponentid_value')) throw new Error("Dataverse queryData failed: 0x80060888: Could not find a property named '_rootsolutioncomponentid_value' on type 'Microsoft.Dynamics.CRM.solutioncomponent'.");
       if ((m = q.match(/^RetrieveRequiredComponents\\(ObjectId=([^,]+),ComponentType=(\\d+)\\)$/))) {
         if (!isGuid(m[1])) throw new Error('mock: ObjectId must be an unquoted guid, got ' + m[1]);
         M.rrc++;
@@ -254,7 +255,7 @@ const MOCK = `
       if (req.operationName === 'RemoveSolutionComponent') {
         const r = members.find((x) => x.objectid === p.ComponentId);
         if (!r) throw new Error('mock: not a member ' + p.ComponentId);
-        for (let i = members.length - 1; i >= 0; i--) if (members[i] === r || members[i]._rootsolutioncomponentid_value === r.solutioncomponentid) members.splice(i, 1);
+        for (let i = members.length - 1; i >= 0; i--) if (members[i] === r || members[i].rootsolutioncomponentid === r.solutioncomponentid) members.splice(i, 1);
         return {};
       }
       if (req.operationName === 'AddSolutionComponent') {
