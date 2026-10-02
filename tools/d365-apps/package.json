@@ -1,6 +1,6 @@
 {
   "name": "@simplesmoothsafe/pptb-d365-apps",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "displayName": "SSS D365 Apps Matrix",
   "description": "Dynamics 365 apps across environments: installed version, update available, failed install per app and environment. Tick cells, preview, run: installs are queued per environment, environments run in parallel, status is polled live. Power Platform API; pac script export.",
   "main": "index.html",

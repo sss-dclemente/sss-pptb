@@ -27,6 +27,8 @@ import { CT, typeName, type Component, type NamedComponent, type Row, type Solut
 import { isAppComponentType, type Op } from "./write";
 
 export const UPGRADE_CONCURRENCY = 4;
+/** JavaScript web resources read per request in the runtime-break scan */
+const WR_CHUNK = 5;
 
 /** A component as shown: `kind` refines the type (custom page, component library), `uniqueName` for apps. */
 export interface UComponent extends NamedComponent {
@@ -440,11 +442,30 @@ export async function analyzeUpgrade(o: UpgradeOptions): Promise<UpgradeAnalysis
     step("Scanning web resources and site maps", 0, 2);
     const blocked = new Set(blockers.map((b) => key(b.dependent.type, b.dependent.id)));
     try {
-      const js = await queryAll(tgt, "webresourceset?$select=webresourceid,name,content&$filter=webresourcetype eq 3");
-      for (const w of js) {
-        const text = typeof w.content === "string" ? decodeBase64(w.content) : "";
-        for (const c of canvasGone) if (text.includes(c.uniqueName!)) runtime.push({ component: c, where: String(w.name ?? w.webresourceid), whereType: "JavaScript web resource" });
-      }
+      // ids and names first, then the content a few files at a time: one response with every JS file's content is
+      // too large for the host to parse ("Parse Error: JS Exception" on a real tenant)
+      const list = await queryAll(tgt, "webresourceset?$select=webresourceid,name&$filter=webresourcetype eq 3");
+      const ids = list.map((w) => lid(w.webresourceid)).filter(Boolean);
+      const chunks: string[][] = [];
+      for (let i = 0; i < ids.length; i += WR_CHUNK) chunks.push(ids.slice(i, i + WR_CHUNK));
+      let failed = 0;
+      await pool(
+        chunks,
+        UPGRADE_CONCURRENCY,
+        async (chunk) => {
+          try {
+            const rows = await queryAll(tgt, `webresourceset?$select=webresourceid,name,content&$filter=${chunk.map((id) => `webresourceid eq ${id}`).join(" or ")}`);
+            for (const w of rows) {
+              const text = typeof w.content === "string" ? decodeBase64(w.content) : "";
+              for (const c of canvasGone) if (text.includes(c.uniqueName!)) runtime.push({ component: c, where: String(w.name ?? w.webresourceid), whereType: "JavaScript web resource" });
+            }
+          } catch {
+            failed += chunk.length;
+          }
+        },
+        cancelled,
+      );
+      if (failed) warnings.push(`Web resource scan: ${failed} of ${ids.length} JavaScript files could not be read.`);
     } catch (e) {
       warnings.push(`Web resource scan failed: ${msg(e)}`);
     }

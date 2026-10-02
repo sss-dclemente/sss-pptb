@@ -119,3 +119,12 @@ M–L, about 2 sessions:
 - v2: zip input (XRay parser) instead of Dev connection; target writes (D7); multi-solution release order across several S at once (simulator from the upgrade-planner discussion).
 - v2: import a failed `importjob` and turn its "cannot be deleted" errors into the same table, for when the upgrade already failed.
 - Ownership linter (prevention): components in more than one unmanaged solution in Dev, with custom pages put next to their host app.
+
+## 7. Probe results (real tenant, 2026-10-02, debug logs of 1.1.0 and 1.1.1; Dev sandbox → Prod)
+
+- `fetchComponents` asked for `_rootsolutioncomponentid_value`, which does not exist: `rootsolutioncomponentid` is a Uniqueidentifier, not a lookup. Diagnose and Upgrade blockers both failed on their first query. Fixed in 1.1.1.
+- `RetrieveDependenciesForDelete` through `queryData` works. The response is `{ value: [dependency] }` with `dependentcomponentobjectid`, `dependentcomponenttype`, `dependentcomponentparentid` (all zeros when there is no parent) and `dependentcomponentbasesolutionid`. The parser reads it as is. 48 of 138 calls returned dependents.
+- `msdyn_componentlayers` works with `msdyn_componentid eq '<id>'` (quoted) and `msdyn_solutioncomponentname` = `Workflow`, `SystemForm`, `CanvasApp`, `AppModule`, `SiteMap`, `EntityRelationship`, `SdkMessageProcessingStep`, `AppElement`. It **ignores `$select`** and returns `msdyn_changes` / `msdyn_componentjson` (large). The unmanaged layer is named `Active`, as assumed. `msdyn_order` is ascending from the bottom layer.
+- **Ids differ between environments** for model-driven apps and canvas apps / custom pages: the same app has another `appmoduleid` / `canvasappid` in Dev and Prod. Matching them by unique name (D2) was needed.
+- The runtime-break scan read every JavaScript web resource with its content in one request; the host failed to parse the response (`Parse Error: JS Exception`). 1.1.2 reads ids and names first, then content five files at a time.
+
