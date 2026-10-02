@@ -459,6 +459,35 @@ assert(JSON.stringify(offCards.sort()) === "[1,2]", "offline: grouped by depende
 await page.evaluate(() => document.documentElement.setAttribute("data-theme", "dark"));
 await page.screenshot({ path: resolve(OUT, "04-offline-dark.png"), fullPage: true });
 
+// ---- S5 / S4: only present-in-target findings → filtered empty state; "Show present in target" persisted ----
+await page.click('.tab[data-tab="diagnose"]');
+assert((await page.getAttribute('.tab[data-tab="diagnose"]', "aria-selected")) === "true" && (await page.getAttribute('.tab[data-tab="offline"]', "aria-selected")) === "false", "S6: tabs aria-selected follows the clicked tab");
+// the target gets Field Service and Sales too: every dependency is then present in the target
+await page.reload();
+await page.waitForFunction(() => document.querySelectorAll("#solution option[value]:not([value=''])").length > 0);
+await page.evaluate(() => {
+  const m = window.__mock;
+  for (const u of ["FieldService", "msdynce_Sales"]) m.envs.secondary.solutions.push({ ...m.envs.primary.solutions.find((s) => s.uniquename === u), solutionid: "00000000-0000-0000-0000-0000000009" + (u === "FieldService" ? "92" : "93") });
+  m.emit("connection:updated");
+});
+await page.waitForTimeout(300);
+await page.waitForFunction(() => !document.querySelector("#btn-run").disabled);
+await page.evaluate(() => document.querySelector("#diag-summary").replaceChildren());
+await page.click("#btn-run");
+await page.waitForSelector("#diag-summary .summary");
+const s5 = await page.$eval("#findings", (e) => ({ text: e.textContent, btn: !!e.querySelector(".empty-actions button"), cards: e.querySelectorAll(".finding").length }));
+assert(s5.cards === 0 && s5.btn && s5.text.includes("Tick “Show present in target”"), "S5: every finding present in target → filtered empty state with explanation + button: " + s5.text);
+await page.click("#findings .empty-actions button");
+const s5after = await page.$$eval("#findings .finding", (els) => els.map((e) => e.classList.contains("is-safe")));
+assert((await page.isChecked("#show-safe")) && s5after.length > 0 && s5after.every(Boolean), "S5: the button ticks “Show present in target” and shows the present-in-target findings: " + s5after.length);
+await page.reload();
+await page.waitForFunction(() => document.querySelectorAll("#solution option[value]:not([value=''])").length > 0);
+assert(await page.isChecked("#show-safe"), "S4: “Show present in target” is restored after reload");
+await page.uncheck("#show-safe");
+await page.reload();
+await page.waitForFunction(() => document.querySelectorAll("#solution option[value]:not([value=''])").length > 0);
+assert(!(await page.isChecked("#show-safe")), "S4: unticked again after reload");
+
 // ---- regression cases (fresh page each: the init script resets the mock) ----
 const fresh = async () => {
   await page.reload();

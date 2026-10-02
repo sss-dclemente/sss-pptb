@@ -55,6 +55,7 @@ pre.diff .ctx { display: block; }
 .toolbar .spacer { flex: 1; }
 .ub-section { display: flex; flex-direction: column; gap: var(--s-2); }
 .ub-section h3 { font-size: var(--fs-body); }
+.ub-folds-head { display: flex; justify-content: flex-end; }
 .finding[data-location="dev"] { border-left-color: var(--status-warn-fg); }
 ul.plain { margin: 0; padding-left: var(--s-5); font-size: var(--fs-caption); }
 .dropzone { margin-top: var(--s-4) !important; display: flex; flex-direction: column; gap: var(--s-2); align-items: center; }

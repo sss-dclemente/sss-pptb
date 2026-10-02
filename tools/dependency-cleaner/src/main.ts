@@ -1,5 +1,6 @@
 import { mountDebug } from "../../_shared/debug-ui";
-import { $, append, badge, emptyState, h, showDialog, wireTabs, type Child } from "../../_shared/dom";
+import { $, append, badge, emptyState, filteredEmpty, h, showDialog, wireTabs, type Child } from "../../_shared/dom";
+import { persistControls } from "../../_shared/view-state";
 import { backupFileName, buildBackup, parseBackup, planRestore, type Backup, type RestorePlan } from "./deps/backup";
 import { parseFilter } from "./deps/classify";
 import { Cancelled, diagnose, reqKey } from "./deps/diagnose";
@@ -262,7 +263,15 @@ function renderDiagnosis(): void {
   if (d.errors.length) sum.append(h("div", { class: "warnings" }, `RetrieveRequiredComponents failed for ${d.errors.length} component(s): ${d.errors.slice(0, 3).map((e) => `${e.component} (${e.error})`).join("; ")}`));
   const shown = d.findings.filter((f) => showSafe || f.status === "blocker");
   if (!shown.length) {
-    list.append(emptyState("No blocking dependencies", d.findings.length ? "Everything found is present in the target. Tick “Show present in target” to see it." : "Nothing in this solution depends on the filtered solutions."));
+    list.append(
+      d.findings.length
+        ? filteredEmpty("No blocking dependencies", "Everything found is present in the target. Tick “Show present in target” to see it.", () => {
+            const safeBox = $<HTMLInputElement>("#show-safe");
+            safeBox.checked = true;
+            safeBox.dispatchEvent(new Event("change")); // saves the toggle and re-renders
+          }, "Show present in target")
+        : emptyState("No blocking dependencies", "Nothing in this solution depends on the filtered solutions."),
+    );
   } else list.append(h("ul", { class: "findings" }, ...shown.map(findingCard)));
   renderSelCount();
 }
@@ -618,6 +627,7 @@ async function exportFile(name: string, content: string, mime: string): Promise<
 }
 
 function wire(): void {
+  persistControls("dependency-cleaner", ["show-safe", "ub-scan"]);
   wireTabs(() => undefined);
   $("#btn-run").addEventListener("click", () => void runDiagnosis());
   $("#btn-cancel").addEventListener("click", () => {

@@ -1,5 +1,5 @@
 /** "Upgrade blockers" tab: docs/UPGRADE-BLOCKERS-PLAN.md. Dev = primary connection, target = secondary. */
-import { $, badge, emptyState, foldCard, h, type Child } from "../../_shared/dom";
+import { $, badge, emptyState, foldAllButtons, foldCard, h, type Child } from "../../_shared/dom";
 import { backupFileName, buildUpgradeBackup } from "./deps/backup";
 import { Cancelled } from "./deps/diagnose";
 import { csvCell, safeFileName } from "./deps/export";
@@ -226,9 +226,13 @@ function render(): void {
         list(a.runtime.map((r) => `${r.whereType} ${r.where} → ${cLabel(r.component)}`)),
       ),
     );
-  if (a.resolved.length) body.append(foldCard("Resolved by the new version", a.resolved.length, list(a.resolved.map((r) => `${cLabel(r.dependent)} → ${cLabel(r.required)}`))));
-  if (a.survivors.length) body.append(foldCard("Survives (held by another managed solution)", a.survivors.length, list(a.survivors.map((s) => `${cLabel(s.component)} · ${s.holders.join(", ")}`))));
-  if (a.deleted.length) body.append(foldCard("Deleted by the upgrade", a.deleted.length, list(a.deleted.map(cLabel))));
+  const folds = [
+    a.resolved.length ? foldCard("Resolved by the new version", a.resolved.length, list(a.resolved.map((r) => `${cLabel(r.dependent)} → ${cLabel(r.required)}`)), false, { key: "ub:resolved" }) : null,
+    a.survivors.length ? foldCard("Survives (held by another managed solution)", a.survivors.length, list(a.survivors.map((s) => `${cLabel(s.component)} · ${s.holders.join(", ")}`)), false, { key: "ub:survives" }) : null,
+    a.deleted.length ? foldCard("Deleted by the upgrade", a.deleted.length, list(a.deleted.map(cLabel)), false, { key: "ub:deleted" }) : null,
+  ].filter((x): x is HTMLElement => !!x);
+  if (folds.length >= 2) body.append(h("div", { class: "ub-folds-head", id: "ub-folds-head" }, foldAllButtons(body, "details.card[data-fold-key^='ub:']")));
+  body.append(...folds);
   renderSelection();
   renderPlan();
 }

@@ -203,6 +203,8 @@ const ID = await M(() => window.__mock.ID);
 // ---- load ----
 await page.click('.tab[data-tab="upgrade"]');
 await page.waitForFunction(() => document.querySelectorAll("#ub-solution option[value]:not([value=''])").length > 0);
+const tabAria = await page.$$eval(".tab", (els) => els.map((e) => `${e.dataset.tab}:${e.getAttribute("role")}:${e.getAttribute("aria-selected")}:${e.getAttribute("aria-controls")}`));
+assert(tabAria.includes("upgrade:tab:true:tab-upgrade") && tabAria.includes("diagnose:tab:false:tab-diagnose") && (await page.getAttribute("#tab-upgrade", "role")) === "tabpanel", "tabs: aria-selected follows the active tab, aria-controls + tabpanel: " + tabAria.join(" "));
 const opts = await page.$$eval("#ub-solution option", (els) => els.map((e) => e.textContent));
 assert(opts.length === 1 && opts[0].includes("SssCore") && opts[0].includes("managed 1.0.0.0 in target"), "picker: Dev unmanaged solutions with their version in the target: " + opts.join(" | "));
 
@@ -243,6 +245,19 @@ assert(body.includes("sss_shared") && body.includes("SssApps"), "sss_shared surv
 const rt = await page.textContent("#ub-runtime");
 assert(rt.includes("sss_/js/nav.js") && rt.includes("Ops Hub") && rt.includes("Site map"), "runtime breaks: JS navigateTo and site map name the deleted pages: " + rt);
 
+// ---- fold cards: keyed, expand / collapse all ----
+const foldState = () => page.$$eval("#ub-body details.card[data-fold-key]", (els) => Object.fromEntries(els.map((e) => [e.dataset.foldKey, e.open])));
+let folds = await foldState();
+assert(JSON.stringify(Object.keys(folds)) === '["ub:resolved","ub:survives","ub:deleted"]' && Object.values(folds).every((o) => !o), "S3: Resolved / Survives / Deleted fold cards keyed, closed by default: " + JSON.stringify(folds));
+assert(!!(await page.$("#ub-folds-head .fold-all")), "S2: expand / collapse all shown next to ≥2 fold cards");
+await page.click("#ub-folds-head .fold-all button:has-text('Expand all')");
+folds = await foldState();
+assert(Object.values(folds).every((o) => o), "S2: Expand all opens every fold card");
+await page.click("#ub-folds-head .fold-all button:has-text('Collapse all')");
+folds = await foldState();
+assert(Object.values(folds).every((o) => !o), "S2: Collapse all closes every fold card");
+await page.click("#ub-body details.card[data-fold-key='ub:deleted'] > summary");
+
 // ---- export ----
 await page.click("#ub-export-md");
 await page.click("#ub-export-csv");
@@ -276,6 +291,8 @@ assert(pub && pub.parameters.ParameterXml === `<importexportxml><appmodules><app
 assert(writes.every((e) => e.target === "primary"), "nothing written to the target");
 assert((await page.textContent("#ub-rerun")).includes("3 → 2 blockers"), "analyzed again: 3 → 2 blockers");
 assert(!(await page.$("#ub-dev")), "Dev section gone after the fix");
+folds = await foldState();
+assert(folds["ub:deleted"] === true && folds["ub:resolved"] === false, "S3: fold card opened by the user stays open after the post-fix re-render: " + JSON.stringify(folds));
 
 // ---- restore re-adds the app component ----
 await page.click('.tab[data-tab="restore"]');
@@ -288,5 +305,14 @@ await page.click("#btn-restore-apply");
 await page.click("#dlg-ok");
 await page.waitForFunction(() => window.__mock.notes.some((n) => n.title === "Restored"));
 assert(await M(() => window.__mock.devAppHasPage), "restore put the page back in the app");
+
+// ---- S4: "Scan JS and site maps" survives reopening the tool ----
+await page.click('.tab[data-tab="upgrade"]');
+await page.uncheck("#ub-scan");
+await page.reload();
+await page.waitForFunction(() => document.querySelectorAll("#ub-solution option[value]:not([value=''])").length > 0);
+assert(!(await page.isChecked("#ub-scan")), "S4: #ub-scan unticked is restored after reload");
+await page.click('.tab[data-tab="upgrade"]');
+await page.check("#ub-scan");
 
 await finish();
