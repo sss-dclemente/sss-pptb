@@ -22,6 +22,8 @@
     <nav class="tabs" role="tablist">
       <button class="tab is-active" data-tab="diagnose" role="tab" type="button">Diagnose</button>
       <button class="tab" data-tab="upgrade" role="tab" type="button">Upgrade blockers</button>
+      <button class="tab" data-tab="slim" role="tab" type="button">Slim</button>
+      <button class="tab" data-tab="cycles" role="tab" type="button">Cycles</button>
       <button class="tab" data-tab="fix" role="tab" type="button">Fix</button>
       <button class="tab" data-tab="restore" role="tab" type="button">Restore</button>
       <button class="tab" data-tab="offline" role="tab" type="button">Offline</button>
@@ -76,6 +78,70 @@
           <button id="ub-confirm" class="btn btn-primary btn-sm" type="button" disabled>2. Confirm and apply</button>
         </div>
         <div id="ub-results"></div>
+      </section>
+
+      <section id="tab-slim" class="panel" hidden>
+        <div class="toolbar">
+          <label>Solution <select id="sl-solution"><option value="">Loading…</option></select></label>
+          <label class="check" title="Keep a pristine managed table or environment variable definition whose subcomponent or value stays in the solution"><input type="checkbox" id="sl-parents" checked /> Keep parents of kept components</label>
+          <button id="sl-run" class="btn btn-primary btn-sm" type="button" disabled>Analyze</button>
+          <button id="sl-cancel" class="btn btn-ghost btn-sm" type="button" hidden>Cancel</button>
+          <span class="spacer"></span>
+          <button id="sl-export-md" class="btn btn-ghost btn-sm" type="button" disabled>Markdown</button>
+          <button id="sl-export-csv" class="btn btn-ghost btn-sm" type="button" disabled>CSV</button>
+        </div>
+        <p class="caption">What does not belong in an unmanaged solution: every component that is neither unmanaged (yours) nor a managed component with an unmanaged layer (customized by you) is removed from the solution. Membership only: the environment keeps every component.</p>
+        <p class="caption warnings" id="sl-parents-note" hidden>The option changed: Analyze again to apply it.</p>
+        <div id="sl-progress" class="progress" hidden><progress id="sl-progress-bar" max="1" value="0"></progress><span id="sl-progress-text" class="caption"></span></div>
+        <div id="sl-summary"></div>
+        <div class="find-tools" id="sl-tools" hidden>
+          <input id="sl-find" type="search" placeholder="Find component, table, owner" aria-label="Find a component, table or owning solution" />
+          <select id="sl-type" aria-label="Component type"><option value="">All types</option></select>
+          <span id="sl-shown" class="caption"></span>
+        </div>
+        <div id="sl-body"></div>
+        <div class="actionbar" id="sl-actions" hidden>
+          <span id="sl-sel-count" class="caption"></span>
+          <button id="sl-preview" class="btn btn-primary btn-sm" type="button" disabled>Preview…</button>
+        </div>
+        <div id="sl-plan"></div>
+        <div class="actionbar" id="sl-fix-actions" hidden>
+          <button id="sl-backup" class="btn btn-sm" type="button">1. Download backup</button>
+          <label class="check" id="sl-prod-ack-wrap" hidden><input type="checkbox" id="sl-prod-ack" /> I understand this is Production</label>
+          <button id="sl-confirm" class="btn btn-primary btn-sm" type="button" disabled>2. Confirm and apply</button>
+        </div>
+        <div id="sl-results"></div>
+      </section>
+
+      <section id="tab-cycles" class="panel" hidden>
+        <div class="toolbar">
+          <details class="cy-picker" id="cy-picker">
+            <summary class="chev">Solutions <span id="cy-picked" class="caption">0 selected</span></summary>
+            <div id="cy-solutions" class="cy-list"></div>
+          </details>
+          <label>Base <select id="cy-base" title="The solution that is always imported first: shared and orphan components go here"><option value="">— none (report only) —</option></select></label>
+          <button id="cy-run" class="btn btn-primary btn-sm" type="button" disabled>Analyze</button>
+          <button id="cy-cancel" class="btn btn-ghost btn-sm" type="button" hidden>Cancel</button>
+          <span class="spacer"></span>
+          <button id="cy-undo" class="btn btn-ghost btn-sm" type="button">Undo…</button>
+          <button id="cy-export-md" class="btn btn-ghost btn-sm" type="button" disabled>Markdown</button>
+          <button id="cy-export-csv" class="btn btn-ghost btn-sm" type="button" disabled>CSV</button>
+        </div>
+        <p class="caption">Several unmanaged solutions, shipped managed: which one needs which, the cycles that leave no import order, and the fixes: shared components into the base solution (imported first), a copy into the solution that needs it, or a move of the dependent. Required components no selected solution carries go to the base too. Membership only.</p>
+        <div id="cy-progress" class="progress" hidden><progress id="cy-progress-bar" max="1" value="0"></progress><span id="cy-progress-text" class="caption"></span></div>
+        <div id="cy-summary"></div>
+        <div id="cy-body"></div>
+        <div class="actionbar" id="cy-actions" hidden>
+          <span id="cy-sel-count" class="caption"></span>
+          <button id="cy-preview" class="btn btn-primary btn-sm" type="button" disabled>Preview…</button>
+        </div>
+        <div id="cy-plan"></div>
+        <div class="actionbar" id="cy-fix-actions" hidden>
+          <button id="cy-backup" class="btn btn-sm" type="button">1. Download backup</button>
+          <label class="check" id="cy-prod-ack-wrap" hidden><input type="checkbox" id="cy-prod-ack" /> I understand this is Production</label>
+          <button id="cy-confirm" class="btn btn-primary btn-sm" type="button" disabled>2. Confirm and apply</button>
+        </div>
+        <div id="cy-results"></div>
       </section>
 
       <section id="tab-fix" class="panel" hidden>

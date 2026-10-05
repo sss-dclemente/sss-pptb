@@ -51,6 +51,7 @@ const TYPE_NAMES: Record<number, string> = {
   371: "Connector",
   372: "Connection reference",
   380: "Environment variable",
+  381: "Environment variable value",
 };
 export const typeName = (t: number): string => TYPE_NAMES[t] ?? `Type ${t}`;
 
@@ -88,6 +89,8 @@ export interface NamedComponent {
   name: string;
   /** owning table logical name for columns, forms, views */
   table?: string;
+  /** solutioncomponent row id, when known (RemoveSolutionComponent fallback) */
+  rowId?: string;
 }
 
 export interface RequiredSolution {

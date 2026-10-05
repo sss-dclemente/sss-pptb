@@ -253,6 +253,10 @@ export interface EntityMeta {
   primaryName: string | null;
   /** IsCustomEntity: false for platform tables (account, contact…); null when the host did not return it */
   isCustom: boolean | null;
+  /** IsManaged; null when the host did not return it */
+  isManaged: boolean | null;
+  entitySetName: string | null;
+  primaryId: string | null;
 }
 export interface AttributeMeta {
   id: string;
@@ -260,6 +264,7 @@ export interface AttributeMeta {
   requiredLevel: string;
   /** IsCustomAttribute: false for platform columns; null when the host did not return it */
   isCustom: boolean | null;
+  isManaged: boolean | null;
 }
 const flag = (v: unknown): boolean | null => (typeof v === "boolean" ? v : null);
 
@@ -271,9 +276,20 @@ export class MetaCache {
 
   async entitiesById(api: DataverseLike): Promise<Map<string, EntityMeta>> {
     if (this.entities) return this.entities;
-    const r = await api.getAllEntitiesMetadata(["LogicalName", "MetadataId", "PrimaryNameAttribute", "IsCustomEntity"]);
+    const r = await api.getAllEntitiesMetadata(["LogicalName", "MetadataId", "PrimaryNameAttribute", "IsCustomEntity", "IsManaged", "EntitySetName", "PrimaryIdAttribute"]);
     this.entities = new Map(
-      r.value.map((e) => [lid(e.MetadataId), { id: lid(e.MetadataId), logicalName: String(e.LogicalName ?? ""), primaryName: s(e.PrimaryNameAttribute), isCustom: flag(e.IsCustomEntity) }]),
+      r.value.map((e) => [
+        lid(e.MetadataId),
+        {
+          id: lid(e.MetadataId),
+          logicalName: String(e.LogicalName ?? ""),
+          primaryName: s(e.PrimaryNameAttribute),
+          isCustom: flag(e.IsCustomEntity),
+          isManaged: flag(e.IsManaged),
+          entitySetName: s(e.EntitySetName),
+          primaryId: s(e.PrimaryIdAttribute),
+        },
+      ]),
     );
     return this.entities;
   }
@@ -287,12 +303,13 @@ export class MetaCache {
   async attributesOf(api: DataverseLike, table: string): Promise<AttributeMeta[]> {
     const hit = this.attributes.get(table);
     if (hit) return hit;
-    const r = await api.getEntityRelatedMetadata(table, "Attributes", ["LogicalName", "MetadataId", "RequiredLevel", "IsCustomAttribute"]);
+    const r = await api.getEntityRelatedMetadata(table, "Attributes", ["LogicalName", "MetadataId", "RequiredLevel", "IsCustomAttribute", "IsManaged"]);
     const list = r.value.map((a) => ({
       id: lid(a.MetadataId),
       logicalName: String(a.LogicalName ?? ""),
       requiredLevel: String((a.RequiredLevel as { Value?: string } | undefined)?.Value ?? a.RequiredLevel ?? "None"),
       isCustom: flag(a.IsCustomAttribute),
+      isManaged: flag(a.IsManaged),
     }));
     this.attributes.set(table, list);
     return list;
@@ -310,7 +327,7 @@ export class MetaCache {
 }
 
 /** entity set, id column, name column, table column per component type (record-backed components). */
-const RECORD_TYPES: Record<number, [string, string, string, string?]> = {
+export const RECORD_TYPES: Record<number, [string, string, string, string?]> = {
   [CT.View]: ["savedqueries", "savedqueryid", "name", "returnedtypecode"],
   [CT.Form]: ["systemforms", "formid", "name", "objecttypecode"],
   [CT.Chart]: ["savedqueryvisualizations", "savedqueryvisualizationid", "name", "primaryentitytypecode"],

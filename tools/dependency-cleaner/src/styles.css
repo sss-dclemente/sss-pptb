@@ -100,3 +100,17 @@ dialog::backdrop { background: rgba(15, 23, 42, 0.5); }
 dialog .dlg-head { display: flex; align-items: center; gap: var(--s-2); padding: var(--s-3) var(--s-4); border-bottom: 1px solid var(--border-subtle); }
 dialog .dlg-body { padding: var(--s-3) var(--s-4); max-height: 60vh; overflow: auto; }
 dialog .dlg-foot { display: flex; gap: var(--s-2); justify-content: flex-end; padding: var(--s-3) var(--s-4); border-top: 1px solid var(--border-subtle); }
+
+/* Slim tab: a remove checkbox leads each row */
+.slim-row .head label.check { margin: 0; }
+.slim-row .head .caption + .badge { margin-left: 0; }
+.find-tools #sl-shown { margin-left: auto; }
+
+/* Cycles tab: solution picker + fix rows */
+.cy-picker { position: relative; font-size: var(--fs-caption); }
+.cy-picker > summary { cursor: pointer; color: var(--fg-muted); display: inline-flex; gap: var(--s-2); align-items: center; }
+.cy-list { position: absolute; z-index: 5; margin-top: var(--s-1); min-width: 320px; max-height: 320px; overflow: auto; display: flex; flex-direction: column; gap: var(--s-1); padding: var(--s-2) var(--s-3); background: var(--bg-card); border: 1px solid var(--border-color); border-radius: var(--radius-sm); box-shadow: var(--shadow-md); }
+.cy-list label.check { color: var(--fg-primary); }
+.cy-row .head select.fix { margin-left: auto; }
+.cy-row .head .cy-also { font-size: var(--fs-caption); color: var(--fg-muted); }
+.cy-orphan .head label.check { margin: 0; }

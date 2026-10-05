@@ -76,7 +76,7 @@ Platform notes: PPTB v1.2.5 — private marketplace sources, CSP consent review,
 - **EnvVar + ConnRef Matrix** — rows = env vars / conn refs, columns = environments. Missing values, diff, bulk set, export `deploymentSettings.json`.
 - **Offboarding Wizard** — user leaves → reassign records, flows, personal views, connections, queues in one run.
 - **XRay port** — solution zip analysis: inventory, diff, upgrade risk score, install order. v1.1: live mode (`ExportSolution`) → zip-vs-env pre-import check.
-- **Unmanaged Layer Sweeper** — managed components with active layer → bulk remove. Dry-run + export first.
+- **Unmanaged Layer Sweeper** — managed components with active layer → bulk remove. Dry-run + export first. BUILT as the inverse: Dependency Cleaner 1.3.0 **Slim** tab removes managed components *without* an active layer from the solution (docs/SOLUTION-SLIMMER-PLAN.md); removing the layers themselves (`RemoveActiveCustomizations`) is still open.
 - **Flow ALM Fixer** — post-import: flows off, conn ref unbound, owner = deploy SPN → bulk fix.
 - **Attribute Manager** — column type change / rename with data carry-over. High prestige, data-loss risk.
 - **Audit Center** — audit config + history extract + restore old values.

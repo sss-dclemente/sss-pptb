@@ -261,6 +261,12 @@ const MOCK = `
       const p = req.parameters ?? {};
       if (req.operationName === 'RetrieveRequiredComponents') throw new Error('mock: RetrieveRequiredComponents must go through queryData, not execute');
       if (req.operationName === 'RetrieveCurrentOrganization') return { Detail: { EnvironmentId: 'env-123' } };
+      if (req.operationName === 'RemoveSolutionComponent') {
+        const sc = p.SolutionComponent;
+        if ('ComponentId' in p) throw new Error("mock: The parameter 'ComponentId' in the request payload is not a valid parameter for the operation 'RemoveSolutionComponent'.");
+        if (!sc || sc['@odata.type'] !== 'Microsoft.Dynamics.CRM.solutioncomponent' || !isGuid(sc.solutioncomponentid)) throw new Error('mock: bad SolutionComponent ' + JSON.stringify(sc));
+        p.ComponentId = sc.solutioncomponentid;
+      }
       if (req.operationName === 'RemoveSolutionComponent' || req.operationName === 'AddSolutionComponent') {
         M.log.push(req.operationName);
         if (p.SolutionUniqueName !== 'SssCore') throw new Error('mock: wrong solution ' + p.SolutionUniqueName);
@@ -421,7 +427,7 @@ await page.click("#btn-confirm");
 await page.waitForSelector("#rediag", { timeout: 15000 });
 const log = await M(() => window.__mock.log);
 const ex = await M(() => window.__mock.executes.filter((e) => /SolutionComponent|PublishXml/.test(e.operationName)));
-assert(ex[0].operationName === "RemoveSolutionComponent" && ex[0].parameters.ComponentType === 1 && ex[0].parameters.ComponentId === ids.E.acc && !("DoNotIncludeSubcomponents" in ex[0].parameters), "RemoveSolutionComponent(account)");
+assert(ex[0].operationName === "RemoveSolutionComponent" && ex[0].parameters.ComponentType === 1 && ex[0].parameters.SolutionComponent?.solutioncomponentid === ids.E.acc && !("ComponentId" in ex[0].parameters) && !("DoNotIncludeSubcomponents" in ex[0].parameters), "RemoveSolutionComponent(account)");
 assert(ex[1].operationName === "AddSolutionComponent" && ex[1].parameters.DoNotIncludeSubcomponents === true && ex[1].parameters.AddRequiredComponents === false && ex[1].parameters.SolutionUniqueName === "SssCore", "AddSolutionComponent(account, DoNotIncludeSubcomponents=true, AddRequiredComponents=false)");
 const firstUpdate = log.findIndex((x) => x.startsWith("update:"));
 assert(log.lastIndexOf("AddSolutionComponent") < firstUpdate && log.at(-1) === "PublishXml", "order: membership → form/view updates → PublishXml: " + log.join(","));

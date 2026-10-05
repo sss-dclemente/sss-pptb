@@ -65,7 +65,7 @@ export interface OpResult {
   error?: string;
 }
 
-const named = (c: Component): NamedComponent => ({ type: c.type, id: c.objectId, name: c.name ?? c.objectId, table: c.table });
+const named = (c: Component): NamedComponent => ({ type: c.type, id: c.objectId, name: c.name ?? c.objectId, table: c.table, rowId: c.rowId });
 const reqNames = (f: Finding, type: number): string[] => [...new Set(f.required.filter((r) => r.type === type).map((r) => r.name))];
 
 /** Fetch current form / view XML, compute strips, collect shell subcomponents. */
@@ -165,12 +165,13 @@ export async function prepare(api: DataverseLike, meta: MetaCache, diagnosis: Di
 
 export function buildOps(p: Prepared): Op[] {
   const ops: Op[] = [];
+  const rowIdOf = (c: NamedComponent): string | undefined => p.diagnosis.components.find((x) => x.type === c.type && x.objectId === c.id)?.rowId;
   for (const sh of p.shells) {
-    ops.push({ kind: "remove", component: sh.root, reason: `convert ${sh.root.name} to a shell` });
+    ops.push({ kind: "remove", component: { ...sh.root, rowId: rowIdOf(sh.root) }, reason: `convert ${sh.root.name} to a shell` });
     ops.push({ kind: "add", component: sh.root, doNotIncludeSubcomponents: true, reason: "re-add as shell (no subcomponents)" });
     for (const l of sh.leaving.filter((x) => x.keep)) ops.push({ kind: "add", component: named(l.component), doNotIncludeSubcomponents: false, reason: `keep: ${l.why}` });
   }
-  for (const r of p.removes) ops.push({ kind: "remove", component: r, reason: `remove ${typeName(r.type).toLowerCase()}` });
+  for (const r of p.removes) ops.push({ kind: "remove", component: { ...r, rowId: rowIdOf(r) }, reason: `remove ${typeName(r.type).toLowerCase()}` });
   for (const f of p.forms) ops.push({ kind: "update-form", edit: f });
   for (const v of p.views) ops.push({ kind: "update-view", edit: v });
   const tables = [...new Set([...p.forms.map((f) => f.form.table), ...p.views.map((v) => v.view.table)].filter(Boolean))].sort();
@@ -222,11 +223,30 @@ export function publishAppsXml(appIds: string[]): string {
   return `<importexportxml><appmodules>${appIds.map((id) => `<appmodule>${id.replace(/[^0-9a-f-]/gi, "")}</appmodule>`).join("")}</appmodules></importexportxml>`;
 }
 
+/**
+ * Web API RemoveSolutionComponent takes a `SolutionComponent` entity reference, not a ComponentId (verified on a live
+ * environment: "The parameter 'ComponentId' in the request payload is not a valid parameter"). Its solutioncomponentid
+ * carries the component's own id, as the SDK's ComponentId does; `removeComponent` retries with the row id if that fails.
+ */
 export const removeRequest = (c: { id: string; type: number }, solution: string): DataverseAPI.ExecuteRequest => ({
   operationName: "RemoveSolutionComponent",
   operationType: "action",
-  parameters: { ComponentId: c.id, ComponentType: c.type, SolutionUniqueName: solution },
+  parameters: { SolutionComponent: { "@odata.type": "Microsoft.Dynamics.CRM.solutioncomponent", solutioncomponentid: c.id }, ComponentType: c.type, SolutionUniqueName: solution },
 });
+
+/** RemoveSolutionComponent with the component id; should the server want the solutioncomponent row id, that is tried next. */
+export async function removeComponent(api: DataverseLike, c: NamedComponent, solution: string): Promise<void> {
+  try {
+    await api.execute(removeRequest(c, solution));
+  } catch (e) {
+    if (!c.rowId || c.rowId === c.id) throw e;
+    try {
+      await api.execute(removeRequest({ id: c.rowId, type: c.type }, solution));
+    } catch {
+      throw e;
+    }
+  }
+}
 export const addRequest = (c: { id: string; type: number }, solution: string, doNotIncludeSubcomponents: boolean): DataverseAPI.ExecuteRequest => ({
   operationName: "AddSolutionComponent",
   operationType: "action",
@@ -249,7 +269,7 @@ export async function executeOps(api: DataverseLike, ops: Op[], solution: string
       continue;
     }
     try {
-      if (op.kind === "remove") await api.execute(removeRequest(op.component, solution));
+      if (op.kind === "remove") await removeComponent(api, op.component, solution);
       else if (op.kind === "add") await api.execute(addRequest(op.component, solution, op.doNotIncludeSubcomponents));
       else if (op.kind === "update-form") {
         await api.update("systemform", op.edit.form.id, { formxml: op.edit.after });

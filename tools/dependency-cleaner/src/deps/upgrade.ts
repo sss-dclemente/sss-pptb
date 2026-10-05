@@ -97,7 +97,7 @@ const msg = (e: unknown): string => (e as Error)?.message ?? String(e);
 const odataString = (v: string): string => `'${v.replace(/'/g, "''")}'`;
 
 /** msdyn_componentlayers.msdyn_solutioncomponentname per component type. Dynamic types come from solutioncomponentdefinitions. */
-const LAYER_NAMES: Record<number, string> = {
+export const LAYER_NAMES: Record<number, string> = {
   [CT.Entity]: "Entity",
   [CT.Attribute]: "Attribute",
   [CT.EntityRelationship]: "EntityRelationship",
@@ -111,6 +111,13 @@ const LAYER_NAMES: Record<number, string> = {
   [CT.AppModule]: "AppModule",
   [CT.PluginStep]: "SdkMessageProcessingStep",
   300: "CanvasApp",
+  20: "Role",
+  70: "FieldSecurityProfile",
+  380: "EnvironmentVariableDefinition",
+  381: "EnvironmentVariableValue",
+  91: "PluginAssembly",
+  90: "PluginType",
+  66: "CustomControl",
 };
 
 /** types whose unique name is stable across environments: matched by name when the ids differ */
@@ -118,7 +125,7 @@ const NAME_MATCHED = new Set<number>([CT.AppModule, 300, CT.WebResource]);
 
 const CANVAS_KIND: Record<number, string> = { 0: "Canvas app", 1: "Component library", 2: "Custom page" };
 
-async function componentDefinitions(api: DataverseLike): Promise<Map<number, string>> {
+export async function componentDefinitions(api: DataverseLike): Promise<Map<number, string>> {
   try {
     const rows = await queryAll(api, "solutioncomponentdefinitions?$select=solutioncomponenttype,name");
     return new Map(rows.filter((r) => r.name).map((r) => [Number(r.solutioncomponenttype), String(r.name)]));
