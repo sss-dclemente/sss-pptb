@@ -113,6 +113,10 @@ Real-env test, Upgrade blockers (1.1.0; published to npm 2026-10-02 before this 
 - [ ] Remove from app on the page blocker: backup saved, `RemoveAppComponents` succeeds, the app no longer lists the page after publish, re-analysis drops the blocker. Restore puts the page back.
 - [ ] Runtime breaks: a JS web resource calling `navigateTo` with the page name is listed.
 - [ ] Exports: Markdown checklist and CSV.
+Slim (1.3.0; not yet published): run the probe in docs/SOLUTION-SLIMMER-PLAN.md §4 on a sandbox solution that has a managed table added with all assets, an edited managed form, a connection reference, an environment variable and a security role.
+- [ ] Tick Debug log, Slim → Analyze, Save log: `solutioncomponentdefinitions` returns `primaryentityname`; every `ismanaged` read succeeds; `msdyn_componentlayers` rows come back for `Entity`, `Attribute`, `Role`, `SavedQuery`, `SystemForm`; the edited form shows `Active`. Anything under *Unknown* names the read to fix in `src/deps/slim.ts`.
+- [ ] Preview on the all-assets table: shell conversion + re-add of your columns and the edited form only. Apply: all rows ok, the maker portal shows the table with selected components, the export is smaller and `MissingDependencies` shorter.
+- [ ] Restore from the backup puts the table back to all assets and re-adds the removed components.
 - [x] 1.1.1 (published to npm 2026-10-02): Diagnose and Upgrade blockers failed on their first query with `0x80060888: Could not find a property named '_rootsolutioncomponentid_value'` (first real-environment debug log). `rootsolutioncomponentid` is a Uniqueidentifier column, not a lookup; the e2e mocks now reject the wrong name like Dataverse does.
 
 Publish:

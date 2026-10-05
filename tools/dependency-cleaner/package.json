@@ -1,8 +1,8 @@
 {
   "name": "@simplesmoothsafe/pptb-dependency-cleaner",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "displayName": "SSS Dependency Cleaner",
-  "description": "Why does my solution depend on msdyn_*? Find every dependency of an unmanaged solution on a managed solution the target environment lacks, see the component that causes it, and fix it in place: convert tables to shells, remove components, strip msdyn columns from forms and views. Upgrade blockers: before a managed upgrade, see what it deletes, what blocks each delete (custom pages, canvas apps, model-driven apps) and where to fix it. Preview, backup and restore.",
+  "description": "Why does my solution depend on msdyn_*? Find every dependency of an unmanaged solution on a managed solution the target environment lacks, see the component that causes it, and fix it in place: convert tables to shells, remove components, strip msdyn columns from forms and views. Upgrade blockers: before a managed upgrade, see what it deletes, what blocks each delete (custom pages, canvas apps, model-driven apps) and where to fix it. Slim: remove from an unmanaged solution every managed component you did not customize, convert all-assets tables to shells. Preview, backup and restore.",
   "main": "index.html",
   "icon": "icon.svg",
   "license": "MIT",
@@ -16,7 +16,9 @@
     "alm",
     "msdyn",
     "upgrade",
-    "custom pages"
+    "custom pages",
+    "solution layers",
+    "cleanup"
   ],
   "author": "Simple Smooth Safe",
   "contributors": [
@@ -49,7 +51,7 @@
     "dev-watch": "vite build --mode development --watch",
     "typecheck": "tsc --noEmit",
     "validate": "node node_modules/@pptb/validate/dist/cli.js",
-    "e2e": "node scripts/e2e.mjs && node scripts/upgrade-e2e.mjs",
+    "e2e": "node scripts/e2e.mjs && node scripts/upgrade-e2e.mjs && node scripts/slim-e2e.mjs",
     "xml-test": "node scripts/xml-test.mjs"
   },
   "dependencies": {

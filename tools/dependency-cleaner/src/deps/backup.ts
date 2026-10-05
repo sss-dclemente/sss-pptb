@@ -3,7 +3,7 @@
  * formxml / fetchxml / layoutxml and the full solution membership are saved before any write.
  */
 import { fetchComponents, fetchForms, fetchViews, retrieveRequired, type DataverseLike, type FormRecord, type ViewRecord } from "./fetch";
-import { CT, type Diagnosis, type NamedComponent, type SolutionInfo } from "./types";
+import { CT, type Component, type Diagnosis, type NamedComponent, type SolutionInfo } from "./types";
 import type { UpgradeAnalysis, UpgradePlan } from "./upgrade";
 import { opLabel, type Op, type Prepared } from "./write";
 
@@ -74,6 +74,28 @@ export function buildUpgradeBackup(a: UpgradeAnalysis, plan: UpgradePlan): Backu
     views: [],
     operations: plan.ops.map(opLabel),
     apps: plan.apps,
+  };
+}
+
+/** Backup of a solution's membership alone (Slim tab): what Restore needs to re-add removed components and undo shells. */
+export function buildMembershipBackup(solution: SolutionInfo, environment: { name: string; url: string }, components: Component[], operations: string[]): Backup {
+  const byRow = new Map(components.map((c) => [c.rowId, c]));
+  return {
+    kind: BACKUP_KIND,
+    version: 1,
+    takenAt: new Date().toISOString(),
+    environment: { name: environment.name, url: environment.url },
+    solution: { id: solution.id, uniqueName: solution.uniqueName, friendlyName: solution.friendlyName },
+    membership: components.map((c) => ({
+      objectId: c.objectId,
+      type: c.type,
+      behavior: c.behavior,
+      rootObjectId: c.rootRowId ? (byRow.get(c.rootRowId)?.objectId ?? null) : null,
+      name: c.name ?? c.objectId,
+    })),
+    forms: [],
+    views: [],
+    operations,
   };
 }
 

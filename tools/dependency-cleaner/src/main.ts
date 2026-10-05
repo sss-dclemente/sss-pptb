@@ -10,6 +10,7 @@ import { readSolutionZip, refName, type OfflineGroup, type OfflineResult } from 
 import { CT, DEFAULT_FILTER, typeName, type Diagnosis, type Finding, type FixKind, type SolutionInfo } from "./deps/types";
 import { buildOps, executeOps, opLabel, prepare, xmlDiff, type Op, type OpResult, type Prepared, type ShellPlan } from "./deps/write";
 import { errorList } from "./error-list";
+import { initSlim, slimOnConnections } from "./slim-ui";
 import { initUpgrade, upgradeOnConnections } from "./upgrade-ui";
 import { dataverse, getConnections, initTheme, inToolbox, notify, onConnectionChange, openText, pickBinary, saveText, type LiveConnection } from "./host";
 
@@ -185,6 +186,7 @@ async function loadConnections(): Promise<void> {
   if ([...sel.options].some((o) => o.value === prev)) sel.value = prev;
   $<HTMLButtonElement>("#btn-run").disabled = !pickable.length;
   upgradeOnConnections(changed);
+  slimOnConnections(changed);
 }
 
 // ---------- diagnose ----------
@@ -899,6 +901,7 @@ function wire(): void {
     sameUrl,
     setStatus,
   });
+  initSlim({ api, primary, currentPrimary, devSolutions: () => solutions, isProd, sameUrl, setStatus });
   onConnectionChange(() => void loadConnections().then(renderDiagnosis));
   $("#host-mode").textContent = inToolbox() ? "Running inside Power Platform ToolBox" : "Standalone mode (Offline tab only)";
 }

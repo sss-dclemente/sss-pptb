@@ -17,6 +17,7 @@ Built by [Simple Smooth Safe](https://simplesmoothsafe.com).
   - Relationships, sitemap, apps, ribbon, charts, processes, web resources and plugin steps are report only, with a link to the solution in the maker portal.
 - **Preview → backup → confirm** — the preview lists every operation with a before/after XML diff. Confirm stays disabled until the backup (`dependency-cleaner-backup-<solution>-<timestamp>.json`: original form/view XML and the full solution membership) is saved. Then: membership changes → form/view updates → one `PublishXml` for the touched tables → the diagnosis runs again and shows fixed / still present.
 - **Restore** — load a backup, preview, apply: original XML written back, removed components re-added, tables put back to all assets, then published. A backup only restores into the environment it was taken in (its url is recorded in the file).
+- **Slim** — what does not belong in an unmanaged solution: every component that is neither unmanaged (yours) nor a managed component with an unmanaged layer (customized by you) is removed from the solution. Managed tables added with all assets become shells with only your subcomponents re-added. Preview → backup → confirm; membership only, the environment keeps every component. See *Slim* below.
 - **Upgrade blockers** — before you upgrade a managed solution in Test or Prod (secondary connection), see what the upgrade will delete and what will block each delete ("cannot be deleted, referenced by…"), all in one run instead of one failed import per blocker. See *Upgrade blockers* below.
 - **Offline** — open an exported solution zip and read `solution.xml` `<MissingDependencies>` (the list the import checks), grouped and filtered the same way. No connection needed.
 - **Name lookups that fail** (metadata, form or view names) are shown as a warning above the findings, and every finding that involves such a component is report only: an edit keyed on an unresolved name would change nothing. Reads by id run 4 at a time; a throttled read (HTTP 429) is retried once after its `Retry-After`.
@@ -51,6 +52,20 @@ Pick the Dev solution you are about to ship; the target is the secondary connect
 
 Export the result as a Markdown checklist (release ticket) or CSV. The Restore tab re-adds app components removed by a fix.
 
+## Slim
+
+Pick an unmanaged solution in Dev and Analyze. Each `solutioncomponent` row is classified, first match wins:
+
+1. **Keep: unmanaged** — `ismanaged = false` (table and column metadata, `RelationshipDefinitions`, `GlobalOptionSetDefinitions`, or the `ismanaged` column of the record behind the component; the backing table comes from `solutioncomponentdefinitions.primaryentityname` for types the tool does not know, such as connection references).
+2. **Keep: included by its table** — subcomponent of one of your tables added with all assets (an implicit member).
+3. **Unknown: kept** — the managed flag or the layers could not be read; the error is listed. Nothing is removed on a guess.
+4. **Keep: customized** — managed with an `Active` (unmanaged) layer in `msdyn_componentlayers`, read once per managed component (4 in flight, progress, cancel). The layer is environment-wide, so a component that other unmanaged solutions also contain is flagged *also in …*: tick it to remove anyway.
+5. **Convert to shell** — managed table added with all assets: removed and re-added with `DoNotIncludeSubcomponents`, then the subcomponents classified keep are added back. A table with nothing of yours in it is removed whole.
+6. **Keep: parent** — a pristine managed table or environment variable definition whose subcomponent or value stays (option *Keep parents of kept components*, on by default).
+7. **Remove** — managed, no customization; the owning managed solution (base layer) is shown.
+
+Every row of Remove and Shell can be unticked, every kept row ticked. **Preview** lists the operations (shell conversions first, then subcomponents, then roots), **Download backup** saves the full membership in the Dependency Cleaner backup format, **Confirm and apply** runs them: a failure marks its row and the batch continues, except inside one shell conversion, where the rest of that table's group is skipped. The analysis then runs again. The **Restore** tab re-adds what left and puts shells back to all assets. Export the classification as Markdown (checklist) or CSV. Plan and probe: docs/SOLUTION-SLIMMER-PLAN.md.
+
 ## Screenshots
 
 Synthetic sample data from the e2e harness (mocked ToolBox host). Replace with real captures.
@@ -58,6 +73,8 @@ Synthetic sample data from the e2e harness (mocked ToolBox host). Replace with r
 ![Diagnose: msdyn dependencies grouped by the component that causes them](https://raw.githubusercontent.com/sss-dclemente/sss-pptb/main/tools/dependency-cleaner/docs/img/diagnose.png)
 
 ![Upgrade blockers: what a managed upgrade deletes and what blocks each delete](https://raw.githubusercontent.com/sss-dclemente/sss-pptb/main/tools/dependency-cleaner/docs/img/upgrade-blockers.png)
+
+![Slim: managed components without a customization, tables to convert to shells, kept rows folded](https://raw.githubusercontent.com/sss-dclemente/sss-pptb/main/tools/dependency-cleaner/docs/img/slim.png)
 
 ![Fix preview with before/after XML diff and backup](https://raw.githubusercontent.com/sss-dclemente/sss-pptb/main/tools/dependency-cleaner/docs/img/fix-preview.png)
 
@@ -80,13 +97,14 @@ Then in ToolBox: Debug → *Load Local Tool* → select the `tools/dependency-cl
 ## Usage
 
 1. Primary connection = the dev environment. Optionally a secondary connection = the target environment.
-2. **Diagnose**: pick the solution, adjust the filter, run. Or **Upgrade blockers**: pick the solution you are about to upgrade in the target, Analyze.
+2. **Diagnose**: pick the solution, adjust the filter, run. Or **Slim**: pick the solution, Analyze, untick what must stay. Or **Upgrade blockers**: pick the solution you are about to upgrade in the target, Analyze.
 3. Pick a fix on the findings you want to act on, **Preview fixes…**, review, **Download backup**, **Confirm and apply**.
 4. Export the solution again.
 
 ## Limitations
 
 - **Upgrade blockers, UNVERIFIED against a live environment**: the response shape of `RetrieveDependenciesForDelete` through the host, the `msdyn_componentlayers` filter (`msdyn_componentid` as a quoted string, `msdyn_solutioncomponentname` = `CanvasApp`, `AppModule`, `SystemForm`…) and `"Active"` as the unmanaged layer's name, `AddAppComponents` / `RemoveAppComponents` with `@odata.type` component references (`entity` / `entityid` for a table), and whether imported components keep their ids (apps, canvas apps and web resources are also matched by unique name). Run the probe in docs/UPGRADE-BLOCKERS-PLAN.md §4 first.
+- **Slim, UNVERIFIED against a live environment**: `solutioncomponentdefinitions.primaryentityname`, `ismanaged` on every record-backed type, and the `msdyn_componentlayers` component names for tables, columns, roles and environment variables (`Entity`, `Attribute`, `Role`, `EnvironmentVariableDefinition`…). A read that fails lands the component in *Unknown: kept*. Run the probe in docs/SOLUTION-SLIMMER-PLAN.md §4 first. One layer read per managed component: a solution with 500 managed components means 500 calls, 4 at a time, cancellable.
 - **UNVERIFIED in the PPTB host**: `AddSolutionComponent` / `RemoveSolutionComponent` through `dataverseAPI.execute` (action, JSON body), and restoring a shell table to "all assets" with remove + add. The request shapes follow the Dataverse Web API; try them in a sandbox before relying on them.
 - `RetrieveRequiredComponents` is one call per component: a large solution means hundreds of calls. They run 4 at a time, can be cancelled, and are cached for the session. Its response shape through the host is also **UNVERIFIED**; the tool accepts `EntityCollection` as an array or as `{ Entities }`.
 - Forms with msdyn PCF controls, libraries or event handlers get warnings, not edits. A view whose only filter or sort used msdyn columns gets a warning.
@@ -110,7 +128,7 @@ npm run build       # typecheck + Vite IIFE bundle + dist checks
 npm run dev-watch   # rebuild on change; reload the tool tab in ToolBox
 npm run validate    # @pptb/validate manifest rules
 npm run xml-test    # form / view XML stripping
-npm run e2e         # Playwright tests against dist/ with a mocked ToolBox host (needs playwright + Chromium): Diagnose/Fix/Restore, then Upgrade blockers
+npm run e2e         # Playwright tests against dist/ with a mocked ToolBox host (needs playwright + Chromium): Diagnose/Fix/Restore, Upgrade blockers, Slim
 ```
 
 Stack: TypeScript, Vite, no framework, JSZip (offline tab). Types from `@pptb/types`.
