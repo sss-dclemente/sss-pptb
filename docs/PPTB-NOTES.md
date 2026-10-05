@@ -306,3 +306,27 @@ Bound operations are unaffected: the id goes into the path (`systemusers(<guid>)
 
 Cost us two releases: 0.1.4 fixed the binding (bound → unbound) but still went through `execute`, so it traded "Resource not found for the segment" for this error. 0.1.5 moved it to `queryData`. The access-checker e2e now rejects both wrong shapes.
 
+
+## 13. `features.connections` replaces `multiConnection` / `connectionRequirement` (Desktop 1.2.7, deadline 2027-01-31)
+
+Source: PPTB developer release notice v1.2.7; [toolbox-api#multiple-connections](https://docs.powerplatformtoolbox.com/tool-development/api-reference/toolbox-api#multiple-connections); `@pptb/types@1.2.7-beta.4` `ToolPackageFeatures`.
+
+- `connections`: integer 0–10 (exact) or `{ min, max }`, `0 <= min <= max <= 10`. `min: 0` = can launch connectionless. Cannot coexist with the legacy fields.
+- API: `connections.getConnections(): Promise<Array<Connection | null>>` (slots in order, nulls kept), `getConnection('primary' | 'secondary' | n)`. `getActiveConnection` / `getSecondaryConnection` deprecated.
+- After 2027-01-31 tools still on the legacy fields: Deprecated + hidden from the marketplace.
+
+**Phase A (done).** `_shared/host.getConnections()` prefers `getConnections()` when the host has it, else falls back to the legacy getters. EnvVar Matrix e2e mocks the slot API (legacy getters throw); the other tools' e2e mock the legacy getters, so both paths stay covered.
+
+**Phase B (only after Desktop 1.2.7 is stable — as of 2026-10-05 only `v1.2.7-dev.*` builds exist).** `connections` needs `minAPI: "1.2.7"`, which locks every 1.2.6 user out, so do not ship it earlier. Per tool: drop the legacy pair, set `connections`, set `minAPI: "1.2.7"`, bump `@pptb/types` to 1.2.7, bump the tool version, run `npm run validate`.
+
+| Tool | Legacy | `connections` |
+|---|---|---|
+| access-checker | none / required | `1` |
+| offboarding-wizard | none / required | `1` |
+| d365-apps | none / required | `1` (keep `enabledForPowerPlatformAPI`) |
+| solution-xray | none / optional | `{ "min": 0, "max": 1 }` |
+| audit-matrix | optional / required | `{ "min": 1, "max": 2 }` |
+| dependency-cleaner | optional / required | `{ "min": 1, "max": 2 }` |
+| envvar-matrix | optional / required | `{ "min": 1, "max": 2 }` |
+
+Then the legacy fallback in `host.ts` can go, and the per-tool plan docs (`docs/*-PLAN.md`) and §1 above need the manifest line updated.
