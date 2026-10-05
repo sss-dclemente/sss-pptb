@@ -117,6 +117,9 @@ Slim (1.3.0 probed 2026-10-05 on SL sandbox, PP365ControlFlows; 1.3.1 not yet pu
 - [x] Reads: `primaryentityname`, every `ismanaged`, layer names for tables / columns / roles / views / forms / processes / web resources / choices / apps / site maps.
 - [x] Apply failed on `RemoveSolutionComponent` (`ComponentId` is not a Web API parameter); nothing changed. 1.3.1 sends the `SolutionComponent` reference (also used by Fix and Restore).
 - [ ] 1.3.1, Debug log on: platform badges on account / contact; *customized* only where Layers names a real change; apply two or three rows, then the whole plan; Analyzed again shows them gone; Restore re-adds.
+
+Cycles (1.4.0; not yet published): probe in docs/CYCLES-PLAN.md §4 with two sandbox solutions that need each other and an empty base solution.
+- [ ] Analyze: the cycle and its two rows; orphans plausible. Preview with the defaults: 0 cycles after, order base first. Apply, Analyzed again: 0 cycles; the base holds the column (with its table shell) and the table shell. Undo removes them. Export both managed, import in the shown order: no missing dependencies.
 - [x] 1.1.1 (published to npm 2026-10-02): Diagnose and Upgrade blockers failed on their first query with `0x80060888: Could not find a property named '_rootsolutioncomponentid_value'` (first real-environment debug log). `rootsolutioncomponentid` is a Uniqueidentifier column, not a lookup; the e2e mocks now reject the wrong name like Dataverse does.
 
 Publish:
