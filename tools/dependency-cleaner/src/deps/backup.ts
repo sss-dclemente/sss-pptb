@@ -148,7 +148,7 @@ export async function planRestore(api: DataverseLike, b: Backup, solutions: Solu
       ops.push({ kind: "add", component: comp, doNotIncludeSubcomponents: m.behavior !== 0, reason: "re-add removed component" });
       if (m.type === CT.Entity && m.behavior === 0) allAssetsAgain.add(m.objectId);
     } else if (m.type === CT.Entity && m.behavior === 0 && now.behavior !== 0) {
-      ops.push({ kind: "remove", component: comp, reason: "shell → back to all assets" });
+      ops.push({ kind: "remove", component: { ...comp, rowId: now.rowId }, reason: "shell → back to all assets" });
       ops.push({ kind: "add", component: comp, doNotIncludeSubcomponents: false, reason: "re-add with all subcomponents" });
       allAssetsAgain.add(m.objectId);
     }

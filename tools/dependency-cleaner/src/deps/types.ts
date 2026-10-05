@@ -89,6 +89,8 @@ export interface NamedComponent {
   name: string;
   /** owning table logical name for columns, forms, views */
   table?: string;
+  /** solutioncomponent row id, when known (RemoveSolutionComponent fallback) */
+  rowId?: string;
 }
 
 export interface RequiredSolution {

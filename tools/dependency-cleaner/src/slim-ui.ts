@@ -5,7 +5,7 @@ import { backupFileName, buildMembershipBackup } from "./deps/backup";
 import { Cancelled } from "./deps/diagnose";
 import { csvCell, safeFileName } from "./deps/export";
 import { fetchSolutionManaged, MetaCache, type DataverseLike } from "./deps/fetch";
-import { analyzeSlim, executeSlim, planSlim, slimCsv, slimMarkdown, slimOpLabel, VERDICT_LABEL, type SlimAnalysis, type SlimOpResult, type SlimPlan, type SlimRow, type SlimVerdict } from "./deps/slim";
+import { analyzeSlim, executeSlim, ORIGIN_LABEL, planSlim, slimCsv, slimMarkdown, slimOpLabel, VERDICT_LABEL, type SlimAnalysis, type SlimOpResult, type SlimPlan, type SlimRow, type SlimVerdict } from "./deps/slim";
 import { typeName, type SolutionInfo } from "./deps/types";
 import { errorList } from "./error-list";
 import { notify, saveText, type LiveConnection } from "./host";
@@ -39,13 +39,13 @@ let typesOf: SlimAnalysis | null = null;
 const SYSTEM = new Set(["default", "active", "basic"]);
 /** sections in display order: the actionable ones open, the kept ones folded */
 const SECTIONS: { verdict: SlimVerdict; open: boolean; hint: string }[] = [
-  { verdict: "remove", open: true, hint: "Managed components without an unmanaged layer. Untick a row to keep it." },
-  { verdict: "shell", open: true, hint: "Managed tables added with all assets: removed and re-added without subcomponents, then the kept subcomponents are added back. Untick to leave a table as it is." },
+  { verdict: "remove", open: true, hint: "Managed or platform (System) components you did not customize: no Active layer, or one that changes nothing but bookkeeping. Untick a row to keep it." },
+  { verdict: "shell", open: true, hint: "Managed or platform tables added with all assets: removed and re-added without subcomponents, then the kept subcomponents are added back. Untick to leave a table as it is." },
   { verdict: "unknown", open: true, hint: "State could not be read: kept. Fix the read (Debug log) or remove by hand." },
-  { verdict: "customized", open: false, hint: "Managed components with an unmanaged (Active) layer: the export carries your changes. The layer is environment-wide, so a component also in other unmanaged solutions may belong to them: tick to remove anyway." },
+  { verdict: "customized", open: false, hint: "Managed or platform components whose Active layer changes something real (open Layers to see what): the export carries those changes. The layer is environment-wide, so a component also in other unmanaged solutions may belong to them: tick to remove anyway." },
   { verdict: "parent", open: false, hint: "Pristine managed parents whose children stay. Untick “Keep parents of kept components” to list them under Remove." },
   { verdict: "included", open: false, hint: "Subcomponents of your own tables included with all assets: implicit members." },
-  { verdict: "unmanaged", open: false, hint: "Created in this environment: yours." },
+  { verdict: "unmanaged", open: false, hint: "Created in this environment and not the platform's: yours." },
 ];
 
 function clearPlan(): void {
@@ -133,10 +133,13 @@ function rowEl(r: SlimRow): HTMLElement {
   });
   const sub = r.component.rootRowId && r.verdict !== "shell" ? h("span", { class: "caption" }, "↳") : null;
   const flags: Child[] = [];
-  if (r.owner) flags.push(badge(r.owner, "neutral", "owning managed solution (base layer)"));
+  if (r.origin && r.origin !== "custom") flags.push(badge(ORIGIN_LABEL[r.origin], "neutral", r.origin === "platform" ? "System's: ismanaged false but not custom" : "from a managed solution"));
+  if (r.owner && r.owner !== "System") flags.push(badge(r.owner, "neutral", "owning managed solution (base layer)"));
   if (r.alsoIn.length) flags.push(badge(`also in ${r.alsoIn.join(", ")}`, "warn", "other unmanaged solutions that contain this component"));
   if (r.verdict === "unknown") flags.push(badge("unknown", "warn", r.error));
-  const layers = r.layers.length ? keepFold(h("details", { class: "layers-fold" }, h("summary", { class: "chev" }, "Layers"), h("div", { class: "caption" }, `Top first: ${r.layers.join(" › ")}`)), `sl-layers:${r.key}`) : null;
+  const layers = r.layers.length
+    ? keepFold(h("details", { class: "layers-fold" }, h("summary", { class: "chev" }, "Layers"), h("div", { class: "caption" }, `Top first: ${r.layers.join(" › ")}${r.changes.length ? ` · Active changes: ${r.changes.join(", ")}` : r.layers.some((l) => l.toLowerCase() === "active") ? " · Active layer changes nothing" : ""}`)), `sl-layers:${r.key}`)
+    : null;
   return h(
     "li",
     { class: "finding slim-row", "data-key": r.key, "data-verdict": r.verdict },
@@ -192,7 +195,7 @@ function render(): void {
       badge(`${c.remove} to remove`, c.remove ? "warn" : "ok"),
       badge(`${c.shell} table${c.shell === 1 ? "" : "s"} → shell`, c.shell ? "warn" : "neutral"),
       badge(`${c.customized} customized`, "neutral"),
-      badge(`${c.unmanaged} unmanaged`, "neutral"),
+      badge(`${c.unmanaged} yours`, "neutral"),
       c.parent ? badge(`${c.parent} parent${c.parent === 1 ? "" : "s"} kept`, "neutral") : null,
       c.included ? badge(`${c.included} included`, "neutral") : null,
       c.unknown ? badge(`${c.unknown} unknown`, "bad") : null,

@@ -1,10 +1,11 @@
 // E2E for the Slim tab (docs/SOLUTION-SLIMMER-PLAN.md) on the dist build with a mocked PPTB host.
 // Dev: unmanaged SssCore with
 //   sss_order        unmanaged table, all assets: sss_name (unmanaged), msdyn_foo (managed → included by its table)
-//   account          managed table, all assets: sss_custom (unmanaged, re-added), name (pristine, leaves),
-//                    Account main form (Active layer, re-added), Active Accounts view (pristine, leaves)   → shell
+//   account          platform table (ismanaged false, not custom), all assets: sss_custom (yours, re-added), name (platform,
+//                    Active layer with bookkeeping only, leaves), Account main form (platform, Active layer changes formxml,
+//                    re-added), Active Accounts view (platform, pristine, leaves)                              → shell
 //   msdyn_workorder  managed table, all assets, only msdyn_x (pristine)                                    → removed whole
-//   contact          managed table, behaviour 1, with the pristine form Contact main                       → both removed
+//   contact          platform table, behaviour 1, phantom Active layer, with the pristine form Contact main → both removed
 //   sss_flow (unmanaged), msdyn_managed_flow (Active layer, also in OtherTeam), Salesperson role (pristine, Sales),
 //   sss_shared_office365 connection reference (dynamic type 10050, unmanaged), msdyn_url env var definition
 //   (pristine) + its unmanaged value (→ definition kept as parent), sss_/old.js web resource (layers read fails → unknown).
@@ -18,7 +19,7 @@ const MOCK = `
 (() => {
   const g = (n) => '00000000-0000-0000-0000-' + String(n).padStart(12, '0');
   const ID = {
-    core: g(1), other: g(2), def: g(3), pub: g(11),
+    core: g(1), other: g(2), def: g(3), sys: g(4), pub: g(11),
     E1: g(101), E2: g(102), E3: g(103), E4: g(104), ECR: g(105), EEVV: g(106),
     C1: g(201), C5: g(205), C2: g(202), C3: g(203), C4: g(204),
     F1: g(301), F2: g(302), V1: g(401), W1: g(501), W2: g(502), R1: g(601), CR1: g(701), EV1: g(801), EVV1: g(802), WR1: g(901),
@@ -64,26 +65,27 @@ const MOCK = `
     { solutionid: ID.core, uniquename: 'SssCore', friendlyname: 'SSS Core', version: '1.3.0.0', ismanaged: false, _publisherid_value: ID.pub },
     { solutionid: ID.other, uniquename: 'OtherTeam', friendlyname: 'Other Team', version: '1.0', ismanaged: false, _publisherid_value: ID.pub },
     { solutionid: ID.def, uniquename: 'Default', friendlyname: 'Default Solution', version: '1.0', ismanaged: false, _publisherid_value: ID.pub },
+    { solutionid: ID.sys, uniquename: 'System', friendlyname: 'System', version: '9.2', ismanaged: true, _publisherid_value: ID.pub },
   ];
   const entities = [
     { LogicalName: 'sss_order', MetadataId: ID.E1, PrimaryNameAttribute: 'sss_name', IsCustomEntity: true, IsManaged: false, EntitySetName: 'sss_orders', PrimaryIdAttribute: 'sss_orderid' },
-    { LogicalName: 'account', MetadataId: ID.E2, PrimaryNameAttribute: 'name', IsCustomEntity: false, IsManaged: true, EntitySetName: 'accounts', PrimaryIdAttribute: 'accountid' },
+    { LogicalName: 'account', MetadataId: ID.E2, PrimaryNameAttribute: 'name', IsCustomEntity: false, IsManaged: false, EntitySetName: 'accounts', PrimaryIdAttribute: 'accountid' },
     { LogicalName: 'msdyn_workorder', MetadataId: ID.E3, PrimaryNameAttribute: 'msdyn_name', IsCustomEntity: true, IsManaged: true, EntitySetName: 'msdyn_workorders', PrimaryIdAttribute: 'msdyn_workorderid' },
-    { LogicalName: 'contact', MetadataId: ID.E4, PrimaryNameAttribute: 'fullname', IsCustomEntity: false, IsManaged: true, EntitySetName: 'contacts', PrimaryIdAttribute: 'contactid' },
+    { LogicalName: 'contact', MetadataId: ID.E4, PrimaryNameAttribute: 'fullname', IsCustomEntity: false, IsManaged: false, EntitySetName: 'contacts', PrimaryIdAttribute: 'contactid' },
     { LogicalName: 'connectionreference', MetadataId: ID.ECR, PrimaryNameAttribute: 'connectionreferencelogicalname', IsCustomEntity: false, IsManaged: true, EntitySetName: 'connectionreferences', PrimaryIdAttribute: 'connectionreferenceid' },
     { LogicalName: 'environmentvariablevalue', MetadataId: ID.EEVV, PrimaryNameAttribute: 'schemaname', IsCustomEntity: false, IsManaged: true, EntitySetName: 'environmentvariablevalues', PrimaryIdAttribute: 'environmentvariablevalueid' },
   ];
-  const attr = (name, id, managed) => ({ LogicalName: name, MetadataId: id, RequiredLevel: { Value: 'None' }, IsCustomAttribute: true, IsManaged: managed });
+  const attr = (name, id, managed, custom = true) => ({ LogicalName: name, MetadataId: id, RequiredLevel: { Value: 'None' }, IsCustomAttribute: custom, IsManaged: managed });
   const attrs = {
     sss_order: [attr('sss_name', ID.C1, false), attr('msdyn_foo', ID.C5, true)],
-    account: [attr('sss_custom', ID.C2, false), attr('name', ID.C3, true)],
+    account: [attr('sss_custom', ID.C2, false), attr('name', ID.C3, false, false)],
     msdyn_workorder: [attr('msdyn_x', ID.C4, true)],
     contact: [],
   };
   // record-backed components per entity set: [id column, rows]
   const records = {
-    systemforms: ['formid', [{ formid: ID.F1, name: 'Account main form', objecttypecode: 'account', ismanaged: true }, { formid: ID.F2, name: 'Contact main', objecttypecode: 'contact', ismanaged: true }]],
-    savedqueries: ['savedqueryid', [{ savedqueryid: ID.V1, name: 'Active Accounts', returnedtypecode: 'account', ismanaged: true }]],
+    systemforms: ['formid', [{ formid: ID.F1, name: 'Account main form', objecttypecode: 'account', ismanaged: false }, { formid: ID.F2, name: 'Contact main', objecttypecode: 'contact', ismanaged: false }]],
+    savedqueries: ['savedqueryid', [{ savedqueryid: ID.V1, name: 'Active Accounts', returnedtypecode: 'account', ismanaged: false }]],
     workflows: ['workflowid', [{ workflowid: ID.W1, name: 'sss_flow', primaryentity: 'sss_order', ismanaged: false }, { workflowid: ID.W2, name: 'msdyn_managed_flow', primaryentity: 'account', ismanaged: true }]],
     roles: ['roleid', [{ roleid: ID.R1, name: 'Salesperson', ismanaged: true }]],
     connectionreferences: ['connectionreferenceid', [{ connectionreferenceid: ID.CR1, connectionreferencelogicalname: 'sss_shared_office365', ismanaged: false }]],
@@ -97,13 +99,23 @@ const MOCK = `
     [10050, 'connectionreference', 'connectionreference'],
   ];
   const typeOfId = (id) => { for (const m of members) if (m.objectid === id) return m.componenttype; return [...Object.values(children)].flat().find(([, i]) => i === id)?.[0]; };
-  // layers per component (bottom first as msdyn_order 1..n)
+  // layers per component, bottom first as msdyn_order 1..n: [solution name, attributes the layer changes]
   const layers = {
-    [ID.C5]: ['msdyn_Sales'], [ID.E2]: ['System'], [ID.C3]: ['System'], [ID.F1]: ['Sales', 'Active'], [ID.V1]: ['Sales'],
-    [ID.E3]: ['msdyn_FieldService'], [ID.C4]: ['msdyn_FieldService'], [ID.E4]: ['System'], [ID.F2]: ['System'],
-    [ID.W2]: ['msdyn_Sales', 'Active'], [ID.R1]: ['Sales'], [ID.EV1]: ['msdyn_Sales'],
+    [ID.C5]: [['msdyn_Sales'], ['Active', ['modifiedon', 'overwritetime']]],
+    [ID.E2]: [['System'], ['Active', []]],
+    [ID.C3]: [['System'], ['Active', ['modifiedon']]],
+    [ID.F1]: [['System'], ['Active', ['formxml', 'modifiedon']]],
+    [ID.V1]: [['System']],
+    [ID.E3]: [['msdyn_FieldService'], ['Active', []]],
+    [ID.C4]: [['msdyn_FieldService']],
+    [ID.E4]: [['System'], ['Active', []]],
+    [ID.F2]: [['System']],
+    [ID.W2]: [['msdyn_Sales'], ['Active', ['xaml']]],
+    [ID.R1]: [['Sales']],
+    [ID.EV1]: [['msdyn_Sales']],
   };
-  const holders = { [ID.F1]: [ID.core, ID.def], [ID.W2]: [ID.core, ID.other, ID.def] };
+  // platform records sit in the System solution too
+  const holders = { [ID.F1]: [ID.core, ID.sys, ID.def], [ID.F2]: [ID.core, ID.sys, ID.def], [ID.V1]: [ID.core, ID.sys, ID.def], [ID.W2]: [ID.core, ID.other, ID.def] };
   const idsIn = (q, field) => [...q.matchAll(new RegExp(field + ' eq ([0-9a-f-]{36})', 'g'))].map((m) => m[1]);
   const sel = (q) => (q.match(/[$]select=([^&]+)/)?.[1] ?? '').split(',');
   const project = (o, q) => { const s = sel(q); for (const k of s) if (!(k in o)) throw new Error('mock: ' + q.split('?')[0] + ' has no column ' + k); return Object.fromEntries(s.map((k) => [k, o[k]])); };
@@ -132,7 +144,7 @@ const MOCK = `
       if (name !== expected) throw new Error('mock: layer name ' + name + ' for a ' + expected);
       M.layerQueries.push({ id, name });
       if (id === ID.WR1) throw new Error('mock: msdyn_componentlayers unavailable for web resources');
-      return { value: (layers[id] ?? []).map((s, i) => ({ msdyn_solutionname: s, msdyn_order: i + 1, msdyn_componentjson: '{}' })) };
+      return { value: (layers[id] ?? []).map(([s, ch], i) => ({ msdyn_solutionname: s, msdyn_order: i + 1, msdyn_componentjson: '{}', msdyn_changes: JSON.stringify({ LogicalName: name, Id: id, Attributes: (ch ?? []).map((k) => ({ Key: k, Value: 1 })) }) })) };
     }
     if ((m = q.match(/^RelationshipDefinitions|^GlobalOptionSetDefinitions/))) throw new Error('mock: no relationships or choices in this solution: ' + q);
     const set = q.split('?')[0];
@@ -173,8 +185,11 @@ const MOCK = `
       if (target !== 'primary') throw new Error('mock: write on another target ' + req.operationName);
       if (p.SolutionUniqueName !== 'SssCore') throw new Error('mock: wrong solution ' + p.SolutionUniqueName);
       if (req.operationName === 'RemoveSolutionComponent') {
-        const r = members.find((x) => x.componenttype === p.ComponentType && x.objectid === p.ComponentId);
-        if (!r) throw new Error('mock: not in the solution ' + p.ComponentType + ' ' + p.ComponentId);
+        if ('ComponentId' in p) throw new Error("Dataverse execute failed: 0x80048d19: The parameter 'ComponentId' in the request payload is not a valid parameter for the operation 'RemoveSolutionComponent'.");
+        const sc = p.SolutionComponent;
+        if (!sc || sc['@odata.type'] !== 'Microsoft.Dynamics.CRM.solutioncomponent' || !/^[0-9a-f-]{36}$/.test(sc.solutioncomponentid)) throw new Error('mock: bad SolutionComponent ' + JSON.stringify(sc));
+        const r = members.find((x) => x.componenttype === p.ComponentType && (x.objectid === sc.solutioncomponentid || x.solutioncomponentid === sc.solutioncomponentid));
+        if (!r) throw new Error('mock: not in the solution ' + p.ComponentType + ' ' + sc.solutioncomponentid);
         members = members.filter((x) => x !== r && x.rootsolutioncomponentid !== r.solutioncomponentid);
         return {};
       }
@@ -211,25 +226,29 @@ await page.selectOption("#sl-solution", ID.core);
 await page.click("#sl-run");
 await page.waitForSelector("#sl-counts", { timeout: 15000 });
 const counts = await page.textContent("#sl-counts");
-assert(/19 components/.test(counts) && /6 to remove/.test(counts) && /2 tables → shell/.test(counts) && /2 customized/.test(counts) && /6 unmanaged/.test(counts) && /1 parent kept/.test(counts) && /1 included/.test(counts) && /1 unknown/.test(counts), "counts: 19 components, 6 to remove, 2 shells, 2 customized, 6 unmanaged, 1 parent, 1 included, 1 unknown: " + counts);
+assert(/19 components/.test(counts) && /6 to remove/.test(counts) && /2 tables → shell/.test(counts) && /2 customized/.test(counts) && /6 yours/.test(counts) && /1 parent kept/.test(counts) && /1 included/.test(counts) && /1 unknown/.test(counts), "counts: 19 components, 6 to remove, 2 shells, 2 customized, 6 yours, 1 parent, 1 included, 1 unknown: " + counts);
+assert((await page.textContent("#sl-summary")).includes("2 component(s) carry an Active layer that changes nothing"), "phantom Active layers (name: modifiedon only; contact: empty) are counted as not customized, with a warning");
 assert((await M(() => window.__mock.entityProps)).includes("IsManaged"), "entity metadata asks for IsManaged");
 
 const lq = await M(() => window.__mock.layerQueries);
-assert(lq.length === 13 && new Set(lq.map((x) => x.id)).size === 13, "layers read once per managed component (13), never for unmanaged ones: " + lq.length);
-assert(!lq.some((x) => [ID.E1, ID.C1, ID.C2, ID.W1, ID.CR1, ID.EVV1].includes(x.id)), "no layer read for unmanaged components");
+assert(lq.length === 13 && new Set(lq.map((x) => x.id)).size === 13, "layers read once per managed or platform component (13), never for yours: " + lq.length);
+assert(!lq.some((x) => [ID.E1, ID.C1, ID.C2, ID.W1, ID.CR1, ID.EVV1].includes(x.id)) && lq.some((x) => x.id === ID.E2) && lq.some((x) => x.id === ID.V1), "no layer read for your components; platform ones (account, Active Accounts) are read");
 assert(lq.some((x) => x.id === ID.R1 && x.name === "Role") && lq.some((x) => x.id === ID.F1 && x.name === "SystemForm"), "layer component names from solutioncomponentdefinitions (Role, SystemForm)");
 
 const section = (v) => page.$$eval(`#sl-${v} li.slim-row`, (els) => els.map((e) => ({ name: e.querySelector(".name").textContent, checked: e.querySelector("input").checked, text: e.textContent, badges: [...e.querySelectorAll(".head .badge")].map((b) => b.textContent) })));
 const rem = await section("remove");
 assert(rem.length === 6 && rem.every((r) => r.checked), "Remove: 6 rows, all ticked: " + rem.map((r) => r.name).join(", "));
 assert(rem.map((r) => r.name).sort().join(",") === ["name", "Active Accounts", "msdyn_x", "contact", "Contact main", "Salesperson"].sort().join(","), "Remove lists the pristine managed components: " + rem.map((r) => r.name).join(", "));
-assert(rem.find((r) => r.name === "Salesperson").badges.includes("Sales"), "owning managed solution badge from the base layer");
+assert(rem.find((r) => r.name === "Salesperson").badges.includes("Sales") && rem.find((r) => r.name === "Salesperson").badges.includes("managed"), "owning managed solution badge from the base layer + managed origin");
+assert(rem.find((r) => r.name === "name").badges.includes("platform") && !rem.find((r) => r.name === "name").badges.includes("System") && rem.find((r) => r.name === "name").text.includes("Active layer without changes"), "platform column (ismanaged false, not custom, in System): platform badge, phantom Active layer named: " + JSON.stringify(rem.find((r) => r.name === "name")));
+assert(rem.find((r) => r.name === "Active Accounts").badges.includes("platform") && rem.find((r) => r.name === "Contact main").badges.includes("platform"), "platform view and form (ismanaged false, held by System) are not yours");
 const sh = await section("shell");
 assert(sh.length === 2 && sh.find((r) => r.name === "account").text.includes("2 of 4 subcomponents re-added") && sh.find((r) => r.name === "msdyn_workorder").text.includes("nothing of yours in it"), "Shell: account keeps 2 of 4, msdyn_workorder removed whole: " + sh.map((r) => r.text).join(" | "));
 const unk = await section("unknown");
 assert(unk.length === 1 && unk[0].name === "sss_/old.js" && !unk[0].checked && unk[0].badges.includes("unknown"), "Unknown: the web resource whose layers failed, not ticked (kept)");
 const cus = await section("customized");
 assert(cus.length === 2 && !cus.some((r) => r.checked) && cus.find((r) => r.name === "msdyn_managed_flow").badges.some((b) => b === "also in OtherTeam"), "Customized: form + flow kept, flow flagged as also in OtherTeam: " + JSON.stringify(cus.map((r) => [r.name, r.badges])));
+assert(cus.find((r) => r.name === "Account main form").text.includes("changes formxml") && !cus.find((r) => r.name === "Account main form").text.includes("modifiedon") && cus.find((r) => r.name === "Account main form").badges.includes("platform"), "customized: the real change (formxml) is named, bookkeeping (modifiedon) is not: " + cus.find((r) => r.name === "Account main form").text);
 const par = await section("parent");
 assert(par.length === 1 && par[0].name === "msdyn_url" && par[0].text.includes("definition of 1 kept value"), "Parent: env var definition kept for its unmanaged value");
 const inc = await section("included");
@@ -299,7 +318,7 @@ await page.click("#sl-confirm");
 await page.waitForSelector("#sl-rerun", { timeout: 15000 });
 const writes = (await M(() => window.__mock.executes)).filter((e) => e.operationName !== "RetrieveCurrentOrganization");
 assert(writes.length === 8 && writes.every((e) => e.target === "primary" && e.parameters.SolutionUniqueName === "SssCore"), "8 writes on Dev, all on SssCore");
-assert(writes[0].operationName === "RemoveSolutionComponent" && writes[0].parameters.ComponentType === 1 && writes[0].parameters.ComponentId === ID.E2 && writes[1].parameters.DoNotIncludeSubcomponents === true && writes[2].parameters.ComponentId === ID.C2, "request shapes: ComponentId / ComponentType / DoNotIncludeSubcomponents");
+assert(writes[0].operationName === "RemoveSolutionComponent" && writes[0].parameters.ComponentType === 1 && writes[0].parameters.SolutionComponent?.solutioncomponentid === ID.E2 && writes[0].parameters.SolutionComponent["@odata.type"] === "Microsoft.Dynamics.CRM.solutioncomponent" && !("ComponentId" in writes[0].parameters) && writes[1].parameters.DoNotIncludeSubcomponents === true && writes[2].parameters.ComponentId === ID.C2, "request shapes: SolutionComponent reference for Remove, ComponentId for Add, DoNotIncludeSubcomponents");
 const results = await page.$$eval("#sl-results-table tbody tr", (els) => els.map((e) => e.querySelector("td:last-child").textContent));
 assert(results.length === 8 && results.every((r) => r === "ok"), "results: 8 ok");
 assert((await page.textContent("#sl-rerun")).includes("8 → 0 to remove"), "analyzed again: 8 → 0 to remove: " + (await page.textContent("#sl-rerun")));

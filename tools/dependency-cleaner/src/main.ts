@@ -159,9 +159,11 @@ async function loadConnections(): Promise<void> {
   if (s) wrap.append(...connChip(s, "target"));
   if (!p) wrap.append(h("span", { class: "caption" }, inToolbox() ? "No connection. Pick a primary (dev) connection in ToolBox." : "Standalone: Offline tab only."));
   const a = api();
-  solutions = [];
-  targetSolutions = null;
-  targetSolutionList = null;
+  if (changed) {
+    solutions = [];
+    targetSolutions = null;
+    targetSolutionList = null;
+  }
   if (a && p) {
     setStatus("Loading solutions…");
     try {
