@@ -107,20 +107,22 @@ Submit: `@simplesmoothsafe/pptb-access-checker`, categories **Users & Security, 
 
 ## 4. SSS Dependency Cleaner — `tools/dependency-cleaner`
 
+> **1.5.0 published to npm 2026-10-06, before the real-environment checks below.** npm went 1.2.0 → 1.5.0: 1.3.0, 1.3.1 and 1.4.0 were never published on their own, so 1.5.0 is the first npm release with Slim, Cycles and Failed import. Fixes for any of them go in 1.5.1; do not unpublish.
+
 Real-env test, Upgrade blockers (1.1.0; published to npm 2026-10-02 before this check, fixes go in 1.1.1). Sandbox only: primary = Dev with the unmanaged solution, secondary = Test with it installed managed, a custom page still listed by a model-driven app.
 - [ ] Tick Debug log, Upgrade blockers → Analyze, Save log. The log answers the probe in docs/UPGRADE-BLOCKERS-PLAN.md §4: `RetrieveDependenciesForDelete` response shape, `msdyn_componentlayers` rows (and the unmanaged layer's name), `canvasappid` / `appmoduleid` equal or not between Dev and Test. Send the .txt; adjust `src/deps/upgrade.ts` if a shape differs.
 - [ ] Counts (removed / deleted / survive / blockers) match what a real stage-and-upgrade of the same solution reports in the target.
 - [ ] Remove from app on the page blocker: backup saved, `RemoveAppComponents` succeeds, the app no longer lists the page after publish, re-analysis drops the blocker. Restore puts the page back.
 - [ ] Runtime breaks: a JS web resource calling `navigateTo` with the page name is listed.
 - [ ] Exports: Markdown checklist and CSV.
-Slim (1.3.0 probed 2026-10-05 on SL sandbox, PP365ControlFlows; 1.3.1 not yet published): results and the second-run checklist in docs/SOLUTION-SLIMMER-PLAN.md §4.
+Slim (1.3.0 probed 2026-10-05 on SL sandbox, PP365ControlFlows; the 1.3.1 fix shipped in 1.5.0, published to npm 2026-10-06 before this check, fixes go in 1.5.1): results and the second-run checklist in docs/SOLUTION-SLIMMER-PLAN.md §4.
 - [x] Reads: `primaryentityname`, every `ismanaged`, layer names for tables / columns / roles / views / forms / processes / web resources / choices / apps / site maps.
 - [x] Apply failed on `RemoveSolutionComponent` (`ComponentId` is not a Web API parameter); nothing changed. 1.3.1 sends the `SolutionComponent` reference (also used by Fix and Restore).
-- [ ] 1.3.1, Debug log on: platform badges on account / contact; *customized* only where Layers names a real change; apply two or three rows, then the whole plan; Analyzed again shows them gone; Restore re-adds.
+- [ ] 1.3.1 (in 1.5.0), Debug log on: platform badges on account / contact; *customized* only where Layers names a real change; apply two or three rows, then the whole plan; Analyzed again shows them gone; Restore re-adds.
 
-Cycles (1.4.0; not yet published): probe in docs/CYCLES-PLAN.md §4 with two sandbox solutions that need each other and an empty base solution.
+Cycles (1.4.0, shipped in 1.5.0; published to npm 2026-10-06 before this check, fixes go in 1.5.1): probe in docs/CYCLES-PLAN.md §4 with two sandbox solutions that need each other and an empty base solution.
 - [ ] Analyze: the cycle and its two rows; orphans plausible. Preview with the defaults: 0 cycles after, order base first. Apply, Analyzed again: 0 cycles; the base holds the column (with its table shell) and the table shell. Undo removes them. Export both managed, import in the shown order: no missing dependencies.
-Failed import (1.5.0; not yet published). Sandbox only: a managed solution whose new version drops a connection reference that an unmanaged flow (or an Active layer of a managed flow) in Test still uses; import the new version, let it fail.
+Failed import (1.5.0; published to npm 2026-10-06 before this check, fixes go in 1.5.1). Sandbox only: a managed solution whose new version drops a connection reference that an unmanaged flow (or an Active layer of a managed flow) in Test still uses; import the new version, let it fail.
 - [ ] Debug log on, Failed import → Scan solution history: the failed run is listed (`msdyn_solutionhistories` filter accepted or the unfiltered fallback), the connection reference is named, its references are placed by layer.
 - [ ] Re-point the unmanaged flow: backup saved, the flow is off → updated → on, Checked again drops it; Undo flow changes puts it back.
 - [ ] Remove active customizations on the managed flow's Active layer: `RemoveActiveCustomizations` through `queryData` succeeds (or note which `ComponentId` form works), the layer is gone in See solution layers, Checked again drops it. Import again: the upgrade passes.
