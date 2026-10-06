@@ -1,5 +1,5 @@
 /**
- * Debug mode for SSS tools: while on, every host call (dataverseAPI, powerplatformAPI, toolboxAPI), its result or
+ * Debug mode for these tools: while on, every host call (dataverseAPI, powerplatformAPI, toolboxAPI), its result or
  * error, notifications, connection events and uncaught errors go to an in-memory log the user saves as a .txt file.
  * Off by default; the switch is remembered per tool (localStorage) and `?debug=1` in the URL turns it on.
  * Secrets are redacted by key name, long strings, arrays and binary payloads are truncated. No imports: host.ts uses it.
@@ -117,7 +117,7 @@ export function dlog(level: DebugLevel, category: string, message: string, data?
 /** The log as text, with a header. `context` lines (connections, host) go at the top. */
 export function debugText(context: Record<string, unknown> = {}): string {
   const head = [
-    `SSS ${tool} ${toolVersion()} debug log`,
+    `${tool} ${toolVersion()} debug log`,
     `saved ${new Date().toISOString()}, ${lines.length} lines${dropped ? `, ${dropped} oldest dropped (8 MB cap)` : ""}`,
     ...Object.entries(context).map(([k, v]) => `${k}: ${format(v)}`),
     "Secrets are redacted by key name; record data in responses is included (truncated). Review before sharing.",
