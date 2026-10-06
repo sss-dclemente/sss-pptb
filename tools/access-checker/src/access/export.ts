@@ -13,7 +13,7 @@ export const csv = (rows: unknown[][]): string => rows.map((r) => r.map(csvCell)
 export function checkJson(d: CheckData, x: Explanation, environment: string | null): string {
   return JSON.stringify(
     {
-      tool: "SSS Access Checker",
+      tool: "Access Checker",
       exportedAt: new Date().toISOString(),
       environment,
       user: { id: d.user.id, name: d.user.fullName, domainName: d.user.domainName, businessUnit: d.userBu?.name ?? null, disabled: d.user.isDisabled },

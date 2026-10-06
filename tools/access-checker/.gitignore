@@ -3,3 +3,4 @@ dist/
 *.tsbuildinfo
 scripts/.e2e-out/
 scripts/.e2e-out/
+docs/img-synthetic/
