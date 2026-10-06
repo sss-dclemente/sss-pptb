@@ -151,6 +151,8 @@ export function showDialog(o: DialogOptions): Promise<boolean> {
   ok.className = `btn ${o.danger ? "btn-danger" : "btn-primary"}`;
   ok.style.flex = "none";
   ok.hidden = !o.okLabel;
+  // An info dialog (no OK) has nothing to cancel: "Cancel" there reads as undoing what just ran.
+  $("#dlg-cancel").textContent = o.okLabel ? "Cancel" : "Close";
   return new Promise((resolve) => {
     let settled = false;
     const done = (v: boolean) => {

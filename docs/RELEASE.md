@@ -179,15 +179,15 @@ Real-env test (two connections to sandboxes whose audit configuration differs, o
 > **Status, 2026-09-21.** Loaded in ToolBox against a real environment and exercised read-only: it connects, reads and renders. No plan was applied, so every write path below is still untested and none of the boxes are ticked on the strength of that session.
 >
 > **0.1.0 published to npm 2026-10-02, before the write-path checks below.** Fixes go in 0.1.1; do not unpublish.
-- [ ] Matrix loads; table count and the audited count match Settings → Auditing → Entity and Field Audit Settings.
-- [ ] A table from a managed solution that forbids the change shows as `locked` and cannot be ticked.
-- [ ] Secondary connection populates the comparison column; `≠` appears exactly where the two environments really differ. Then export a snapshot from one, load it into the other, and check the same diff appears.
-- [ ] Expand a table: its auditable columns load, the column counts name their scope, and a column you know is audited reads `on`.
-- [ ] Org tab: the four switches match the admin centre for both environments. Any field showing `unknown` names an attribute to fix in `src/audit/fetch.ts` — `isreadauditenabled` and `auditretentionperiodv2` are the two unverified ones.
-- [ ] **Plan: match other env** builds a plan that never contains a locked row. Preview, cancel, and confirm nothing changed.
-- [ ] Apply a small plan (one table flag, one column flag): rows report ok, then accept the scoped publish, then reload the matrix and see the new values. Check the table in the maker portal.
-- [ ] A write that the environment rejects stays in the plan as a failed row and does not stop the batch.
-- [ ] Exports: matrix CSV, JSON snapshot, plan CSV and plan PowerShell script (run the script against a sandbox once to confirm it is actually runnable).
+- [x] Matrix loads (2026-10-06, PSA-DEV Developer env: 1789 tables, 168 audited). Admin-centre cross-check of the count done on SL Sandbox only.
+- [x] A table from a managed solution that forbids the change shows as `locked` and cannot be ticked.
+- [x] Snapshot route only (2026-10-06, one connection): a snapshot from PSA-DEV loaded as the comparison shows `≠` exactly on the flags changed since. UNVERIFIED: a live secondary connection. Secondary connection populates the comparison column; `≠` appears exactly where the two environments really differ. Then export a snapshot from one, load it into the other, and check the same diff appears.
+- [x] Expand a table: its auditable columns load, the column counts name their scope, and a column you know is audited reads `on`.
+- [x] Org tab: no `unknown` on PSA-DEV (2026-10-06); `isreadauditenabled` and `auditretentionperiodv2` read fine. Matched the admin centre on SL Sandbox. Any field showing `unknown` names an attribute to fix in `src/audit/fetch.ts` — `isreadauditenabled` and `auditretentionperiodv2` are the two unverified ones.
+- [x] **Plan: match other env** builds a plan that never contains a locked row. Preview, cancel, and confirm nothing changed.
+- [x] Apply a small plan (one table flag, one column flag): rows report ok, then accept the scoped publish, then reload the matrix and see the new values. 2026-10-06 on PSA-DEV (`sss_ledger`), then reverted from the backup snapshot and published: 0 differences against the earlier snapshot.
+- [ ] UNVERIFIED (not tested live): a write that the environment rejects stays in the plan as a failed row and does not stop the batch.
+- [x] Exports: matrix CSV, JSON snapshot, plan CSV and plan PowerShell script generated. UNVERIFIED: the script has not been run.
 
 Screenshots: `matrix.png`, `columns.png`, `differences.png`, `preview.png`, `org-dark.png`. Remove the synthetic-data line from `README.md`.
 

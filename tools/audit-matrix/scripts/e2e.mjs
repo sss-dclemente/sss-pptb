@@ -379,6 +379,10 @@ assert((await page.textContent("#apply-target")).includes("SSS Dev"), "plan targ
 await page.click("#btn-apply");
 await page.waitForSelector("dialog[open]");
 assert((await page.textContent("#dlg-title")) === "Preview changes", "preview dialog");
+{
+  const whyWidth = await page.evaluate(() => document.querySelector("#dlg-body table.plan-items td:last-child")?.getBoundingClientRect().width ?? 0);
+  assert(whyWidth > 80, "preview: Why column is not squeezed to one word per line — width " + whyWidth);
+}
 assert((await page.textContent("#dlg-body")).includes("3 metadata writes"), "preview counts the writes");
 const previewTarget = await page.textContent("#preview-target");
 assert(previewTarget.includes("SSS Dev (Dev)") && previewTarget.includes("https://sss-dev.crm4.dynamics.com"), "preview names the target environment and its URL — " + previewTarget);
@@ -407,6 +411,7 @@ assert(
 await page.waitForFunction(() => document.querySelector("#dlg-title").textContent === "Results");
 const results = await page.textContent("#dlg-body");
 assert(results.includes("simulated failure"), "failing write surfaces as a failed row");
+assert((await page.textContent("#dlg-cancel")) === "Close", "results dialog closes with Close, not Cancel");
 await page.click("#dlg-cancel");
 
 // ---- scoped publish behind its own confirm

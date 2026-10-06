@@ -121,7 +121,7 @@ dialog .target { display: inline-flex; align-items: center; gap: var(--s-2); }
 .plan-groups { display: flex; flex-direction: column; gap: var(--s-2); }
 .plan-groups .card-head h3 { font-family: var(--font-mono); }
 .plan-groups .card-head .count { display: inline-flex; align-items: center; gap: var(--s-2); }
-table.plan-items td:last-child { width: 1%; }
+table.plan-items td:has(> button[data-remove]) { width: 1%; }
 .result-err { display: inline-flex; flex-wrap: wrap; align-items: baseline; gap: var(--s-2); }
 .result-err .caption { white-space: normal; word-break: break-word; }
 /* The apply preview's backup step: on by default, and set apart so it is read before Apply. */
