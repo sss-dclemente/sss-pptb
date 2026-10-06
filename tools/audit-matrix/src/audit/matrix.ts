@@ -10,7 +10,7 @@ export function lockReason(flag: ManagedFlag | null): string | null {
   return `Can't change: CanBeChanged is false${flag.managedPropertyLogicalName ? ` (managed property ${flag.managedPropertyLogicalName})` : ""}`;
 }
 
-function columnRows(table: string, mine: ColumnAudit[], theirs: ColumnAudit[] | null, capturing: boolean): MatrixColumnRow[] {
+function columnRows(table: string, mine: ColumnAudit[], theirs: ColumnAudit[] | null, capturing: boolean, partial = false): MatrixColumnRow[] {
   const byName = new Map<string, ColumnAudit>();
   for (const c of theirs ?? []) byName.set(c.logicalName.toLowerCase(), c);
   return mine.map((c) => {
@@ -28,7 +28,8 @@ function columnRows(table: string, mine: ColumnAudit[], theirs: ColumnAudit[] | 
       lockReason: lockReason(c.audit),
       state: state(c),
       otherState,
-      differs: !!theirs && otherState !== state(c),
+      // a backup snapshot records only the columns a plan wrote: one it does not carry is not a difference
+      differs: !!theirs && otherState !== state(c) && !(partial && !other),
       inert: state(c) === "on" && !capturing,
     };
   });
@@ -66,7 +67,8 @@ export function buildMatrix(primary: EnvData | null, other: EnvData | null): Mat
       const otherCols = other ? (other.columns[head.logicalName] ?? null) : null;
       // A column is only captured when the organization, the table and the column are all on.
       const capturing = orgOn !== false && state(p) === "on";
-      const cols = myCols ? columnRows(head.logicalName, myCols, other ? otherCols : null, capturing) : null;
+      const partial = !!other?.meta.partial;
+      const cols = myCols ? columnRows(head.logicalName, myCols, other ? otherCols : null, capturing, partial) : null;
       const otherState: FlagState = other ? state(o) : "absent";
       return {
         key,
@@ -80,7 +82,7 @@ export function buildMatrix(primary: EnvData | null, other: EnvData | null): Mat
         lockReason: lockReason(p?.audit ?? null),
         state: state(p),
         otherState,
-        differs: !!other && otherState !== state(p),
+        differs: !!other && otherState !== state(p) && !(partial && !o),
         columns: cols,
         stats: cols ? stats(cols) : null,
       };

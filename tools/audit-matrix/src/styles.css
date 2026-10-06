@@ -124,3 +124,14 @@ dialog .target { display: inline-flex; align-items: center; gap: var(--s-2); }
 table.plan-items td:last-child { width: 1%; }
 .result-err { display: inline-flex; flex-wrap: wrap; align-items: baseline; gap: var(--s-2); }
 .result-err .caption { white-space: normal; word-break: break-word; }
+/* The apply preview's backup step: on by default, and set apart so it is read before Apply. */
+.backup-step {
+  margin: var(--s-2) 0;
+  padding: var(--s-2) var(--s-3);
+  border-left: 3px solid var(--status-ok-fg);
+  background: var(--status-ok-bg);
+  border-radius: var(--radius-sm);
+}
+.backup-step p {
+  margin: var(--s-1) 0 0;
+}

@@ -66,6 +66,11 @@ export interface EnvMeta {
   environment: string;
   color?: string;
   takenAt: string;
+  /**
+   * A backup snapshot saved before Apply: it records only the tables and columns a plan was about to
+   * write, so a table or column missing from it is "not recorded", not "not present", and never differs.
+   */
+  partial?: boolean;
 }
 
 export interface EnvData {
