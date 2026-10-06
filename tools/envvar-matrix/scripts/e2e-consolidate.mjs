@@ -199,6 +199,10 @@ await page.waitForSelector("#btn-fit-add", { timeout: 10000 });
 }
 await page.click("#btn-fit-add");
 await page.waitForSelector("dialog[open]");
+{
+  const b = await page.textContent("#dlg-body");
+  assert(b.includes("2 connection references to add to") && b.includes("in SSS Dev") && b.includes("does not remove solution components"), "add-to-solution preview: count, environment, no way back stated");
+}
 await page.click("#dlg-ok");
 await page.waitForFunction(() => document.querySelector("#dlg-title").textContent === "Results" && document.querySelector("dialog").open, null, { timeout: 10000 });
 {
@@ -224,7 +228,7 @@ await page.screenshot({ path: resolve(TOOL, "scripts/.e2e-out/09-consolidate-gro
 await page.click("#btn-merge-preview");
 await page.waitForSelector("dialog[open]");
 const pv = await page.textContent("#dlg-body");
-assert(pv.includes("4 flows to update"), "preview: 4 flows to update (f1 already uses the kept reference)");
+assert(pv.includes("4 flows to update in SSS Dev") && pv.includes("backup file of every touched flow"), "preview: 4 flows to update in the named environment, backup stated");
 assert(pv.includes("key shared_office365_1 → shared_office365 (3 uses)"), "duplicate key collapse shown with use count");
 assert(pv.includes("duplicate key kept: shared_office365_1: used in a form"), "collapse refused when an unrecognised use of the key remains");
 assert(pv.includes("shared_office365_1: sss_o365_c → sss_o365_a"), "per-key rewrite shown");
@@ -290,6 +294,7 @@ await page.getByRole("button", { name: "Restore from backup…" }).click();
 await page.waitForSelector("dialog[open]");
 const rp = await page.textContent("#dlg-body");
 assert(rp.includes("Recreated first: sss_o365_b, sss_o365_c"), "restore recreates deleted references");
+assert(rp.includes("In SSS Dev: 2 references to recreate") && rp.includes("cannot be undone from this tool"), "restore preview names environment, scope and non-reversibility");
 await page.click("#dlg-ok");
 await page.waitForFunction(() => document.querySelector("#dlg-title").textContent === "Results" && document.querySelector("dialog").open, null, { timeout: 10000 });
 {
@@ -483,6 +488,7 @@ await page.waitForFunction(() => document.querySelector("#dlg-title").textConten
 {
   const b = await page.textContent("#dlg-body");
   assert(b.includes("2 flows to turn on") && b.includes("start running on their triggers"), "turn-on preview warns about triggers");
+  assert(b.includes("does not turn flows off again"), "turn-on preview states there is no way back from the tool");
 }
 await page.screenshot({ path: resolve(TOOL, "scripts/.e2e-out/14-turn-on.png") });
 await page.click("#dlg-ok");
@@ -510,7 +516,7 @@ assert(true, "turned-on flow leaves the off list; the failed one stays");
   await page.evaluate((b) => { window.__mock.writes = []; window.__mock.nextOpen = b; }, backups[1].content);
   await page.getByRole("button", { name: "Restore from backup…" }).click();
   await page.waitForFunction(() => document.querySelector("#dlg-title").textContent === "Restore bindings" && document.querySelector("dialog").open, null, { timeout: 10000 });
-  assert((await page.textContent("#dlg-body")).includes("2 bindings to put back"), "bind backup detected, restore previewed");
+  assert((await page.textContent("#dlg-body")).includes("2 bindings to put back in SSS Dev") && (await page.textContent("#dlg-body")).includes("not backed up first"), "bind backup detected, restore previewed with target and no-backup note");
   await page.click("#dlg-ok");
   await page.waitForFunction(() => document.querySelector("#dlg-title").textContent === "Results" && document.querySelector("dialog").open, null, { timeout: 10000 });
   let cr = (await page.evaluate(() => window.__mock.writes)).filter((x) => x.entity === "connectionreference").map((x) => x.id + "=" + x.rec.connectionid).sort();

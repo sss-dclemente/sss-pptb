@@ -191,6 +191,7 @@ assert(preview.includes("update") && preview.includes("create") && preview.inclu
 assert(preview.includes("from source default"), "preview labels copy of a source default");
 assert(preview.includes("value row is managed") && preview.includes("caution"), "preview warns on managed value row update");
 assert(preview.includes("secret variables are read-only") && !preview.includes("kv-ref"), "preview skips secrets and never shows their value");
+assert(preview.includes("cannot be undone from this tool") && preview.includes("no backup file is saved"), "preview says plainly that value writes have no backup");
 const dlgBox = await page.locator("dialog[open]").boundingBox();
 assert(dlgBox && Math.abs(dlgBox.x + dlgBox.width / 2 - 700) < 20, "dialog centred horizontally");
 await page.screenshot({ path: resolve(OUT, "03-preview.png") });

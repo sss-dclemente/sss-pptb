@@ -1,12 +1,12 @@
-// Marketplace screenshots of the real dist build against a mocked PPTB host with fictional sandbox data
-// (Contoso Dev / Contoso UAT + a Contoso PROD snapshot file). Writes docs/img/{envvars,preview,connrefs,snapshot-dark}.png.
+// Synthetic screenshots of the real dist build against a mocked PPTB host with fictional sandbox data
+// (Contoso Dev / Contoso UAT + a Contoso PROD snapshot file). Writes docs/img-synthetic/{envvars,preview,connrefs,snapshot-dark}.png (gitignored: synthetic, never for the README).
 // Run: npm run build && npm run screenshots   (needs playwright + chromium available, see ../../_shared/e2e-loader.mjs)
 import { existsSync, mkdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { launchPage } from "../../_shared/e2e-loader.mjs";
 
 const TOOL = new URL("..", import.meta.url).pathname.replace(/\/$/, "");
-const OUT = resolve(TOOL, "docs/img");
+const OUT = resolve(TOOL, "docs/img-synthetic");
 mkdirSync(OUT, { recursive: true });
 if (!existsSync(resolve(TOOL, "dist/index.html"))) {
   console.error("dist/index.html missing: run npm run build first");
@@ -163,7 +163,7 @@ const shot = async (name) => {
   await page.mouse.move(0, 0);
   await page.waitForTimeout(150);
   await page.screenshot({ path: resolve(OUT, name) });
-  console.log("wrote docs/img/" + name);
+  console.log("wrote docs/img-synthetic/" + name);
 };
 
 // 1. env vars, light, both columns
