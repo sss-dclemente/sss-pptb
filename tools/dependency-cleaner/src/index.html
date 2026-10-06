@@ -22,6 +22,7 @@
     <nav class="tabs" role="tablist">
       <button class="tab is-active" data-tab="diagnose" role="tab" type="button">Diagnose</button>
       <button class="tab" data-tab="upgrade" role="tab" type="button">Upgrade blockers</button>
+      <button class="tab" data-tab="failed" role="tab" type="button">Failed import</button>
       <button class="tab" data-tab="slim" role="tab" type="button">Slim</button>
       <button class="tab" data-tab="cycles" role="tab" type="button">Cycles</button>
       <button class="tab" data-tab="fix" role="tab" type="button">Fix</button>
@@ -78,6 +79,42 @@
           <button id="ub-confirm" class="btn btn-primary btn-sm" type="button" disabled>2. Confirm and apply</button>
         </div>
         <div id="ub-results"></div>
+      </section>
+
+      <section id="tab-failed" class="panel" hidden>
+        <div class="toolbar">
+          <label>Environment <select id="fi-env" aria-label="Environment the import failed in"><option value="">Loading…</option></select></label>
+          <button id="fi-scan" class="btn btn-primary btn-sm" type="button" disabled>Scan solution history</button>
+          <button id="fi-cancel" class="btn btn-ghost btn-sm" type="button" hidden>Cancel</button>
+          <span class="spacer"></span>
+          <button id="fi-undo" class="btn btn-ghost btn-sm" type="button">Undo flow changes…</button>
+          <button id="fi-export-md" class="btn btn-ghost btn-sm" type="button" disabled>Markdown</button>
+        </div>
+        <p class="caption">An upgrade failed with “The &lt;component&gt;(&lt;id&gt;) component cannot be deleted because it is referenced by N other components”: find what still references it in the environment the import failed in, where that reference lives (solution layers), and fix it there.</p>
+        <details class="fi-paste" id="fi-paste-wrap">
+          <summary class="chev">Paste an error instead</summary>
+          <textarea id="fi-paste" rows="5" aria-label="Error text" placeholder="Paste the Failure details / Operation details of the failed import"></textarea>
+          <div class="toolbar">
+            <label>Solution <input id="fi-solution" type="text" placeholder="unique name, optional" aria-label="Solution unique name" /></label>
+            <button id="fi-check-paste" class="btn btn-sm" type="button" disabled>Check</button>
+          </div>
+        </details>
+        <div id="fi-progress" class="progress" hidden><progress id="fi-progress-bar" max="1" value="0"></progress><span id="fi-progress-text" class="caption"></span></div>
+        <div id="fi-runs"></div>
+        <div id="fi-summary"></div>
+        <div id="fi-body"></div>
+        <div class="actionbar" id="fi-actions" hidden>
+          <span id="fi-sel-count" class="caption"></span>
+          <button id="fi-preview" class="btn btn-primary btn-sm" type="button" disabled>Preview fixes…</button>
+        </div>
+        <div id="fi-plan"></div>
+        <div class="actionbar" id="fi-fix-actions" hidden>
+          <button id="fi-backup" class="btn btn-sm" type="button">1. Download backup</button>
+          <label class="check" id="fi-irrev-wrap" hidden><input type="checkbox" id="fi-irrev" /> I understand removing active customizations cannot be undone</label>
+          <label class="check" id="fi-prod-ack-wrap" hidden><input type="checkbox" id="fi-prod-ack" /> I understand this is Production</label>
+          <button id="fi-confirm" class="btn btn-primary btn-sm" type="button" disabled>2. Confirm and apply</button>
+        </div>
+        <div id="fi-results"></div>
       </section>
 
       <section id="tab-slim" class="panel" hidden>

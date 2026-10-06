@@ -12,7 +12,8 @@ import { buildOps, executeOps, opLabel, prepare, xmlDiff, type Op, type OpResult
 import { errorList } from "./error-list";
 import { cyclesOnConnections, initCycles } from "./cycles-ui";
 import { initSlim, slimOnConnections } from "./slim-ui";
-import { initUpgrade, upgradeOnConnections } from "./upgrade-ui";
+import { failedOnConnections, initFailed } from "./failed-ui";
+import { initUpgrade, runUpgradeFor, upgradeOnConnections } from "./upgrade-ui";
 import { dataverse, getConnections, initTheme, inToolbox, notify, onConnectionChange, openText, pickBinary, saveText, type LiveConnection } from "./host";
 
 // ---------- state ----------
@@ -189,6 +190,7 @@ async function loadConnections(): Promise<void> {
   if ([...sel.options].some((o) => o.value === prev)) sel.value = prev;
   $<HTMLButtonElement>("#btn-run").disabled = !pickable.length;
   upgradeOnConnections(changed);
+  failedOnConnections(changed);
   slimOnConnections(changed);
   cyclesOnConnections(changed);
 }
@@ -904,6 +906,15 @@ function wire(): void {
     isProd,
     sameUrl,
     setStatus,
+  });
+  initFailed({
+    api,
+    connection: (t) => (t === "primary" ? primary() : secondary()),
+    devSolutions: () => solutions,
+    isProd,
+    sameUrl,
+    setStatus,
+    runPreflight: runUpgradeFor,
   });
   initSlim({ api, primary, currentPrimary, devSolutions: () => solutions, isProd, sameUrl, setStatus });
   initCycles({ api, primary, currentPrimary, devSolutions: () => solutions, reqCache, isProd, sameUrl, setStatus });

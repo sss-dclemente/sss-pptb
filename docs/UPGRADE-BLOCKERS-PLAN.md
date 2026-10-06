@@ -117,7 +117,7 @@ M–L, about 2 sessions:
 ## 6. Later
 
 - v2: zip input (XRay parser) instead of Dev connection; target writes (D7); multi-solution release order across several S at once (simulator from the upgrade-planner discussion).
-- v2: import a failed `importjob` and turn its "cannot be deleted" errors into the same table, for when the upgrade already failed.
+- ~~v2: import a failed `importjob` and turn its "cannot be deleted" errors into the same table, for when the upgrade already failed.~~ BUILT in 1.5.0 as the **Failed import** tab (`src/deps/failed.ts`, `src/failed-ui.ts`, `scripts/failed-e2e.mjs`): reads `msdyn_solutionhistories` (the Solution history page's source) or pasted error text instead of `importjob`, needs one connection only, and brings the D7 target write (`RemoveActiveCustomizations`) plus a re-point of unmanaged cloud flows to another connection reference of the same connector (undoable).
 - Ownership linter (prevention): components in more than one unmanaged solution in Dev, with custom pages put next to their host app.
 
 ## 7. Probe results (real tenant, 2026-10-02, debug logs of 1.1.0 and 1.1.1; Dev sandbox → Prod)

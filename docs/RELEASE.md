@@ -120,6 +120,11 @@ Slim (1.3.0 probed 2026-10-05 on SL sandbox, PP365ControlFlows; 1.3.1 not yet pu
 
 Cycles (1.4.0; not yet published): probe in docs/CYCLES-PLAN.md §4 with two sandbox solutions that need each other and an empty base solution.
 - [ ] Analyze: the cycle and its two rows; orphans plausible. Preview with the defaults: 0 cycles after, order base first. Apply, Analyzed again: 0 cycles; the base holds the column (with its table shell) and the table shell. Undo removes them. Export both managed, import in the shown order: no missing dependencies.
+Failed import (1.5.0; not yet published). Sandbox only: a managed solution whose new version drops a connection reference that an unmanaged flow (or an Active layer of a managed flow) in Test still uses; import the new version, let it fail.
+- [ ] Debug log on, Failed import → Scan solution history: the failed run is listed (`msdyn_solutionhistories` filter accepted or the unfiltered fallback), the connection reference is named, its references are placed by layer.
+- [ ] Re-point the unmanaged flow: backup saved, the flow is off → updated → on, Checked again drops it; Undo flow changes puts it back.
+- [ ] Remove active customizations on the managed flow's Active layer: `RemoveActiveCustomizations` through `queryData` succeeds (or note which `ComponentId` form works), the layer is gone in See solution layers, Checked again drops it. Import again: the upgrade passes.
+- [ ] Paste the raw Failure details text: one component, same result.
 - [x] 1.1.1 (published to npm 2026-10-02): Diagnose and Upgrade blockers failed on their first query with `0x80060888: Could not find a property named '_rootsolutioncomponentid_value'` (first real-environment debug log). `rootsolutioncomponentid` is a Uniqueidentifier column, not a lookup; the e2e mocks now reject the wrong name like Dataverse does.
 
 Publish:

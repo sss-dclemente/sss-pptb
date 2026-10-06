@@ -89,7 +89,13 @@ pre.diff .ctx { display: block; }
 /* upgrade blockers */
 .toolbar .spacer { flex: 1; }
 .ub-section { display: flex; flex-direction: column; gap: var(--s-2); }
-#ub-body { display: flex; flex-direction: column; gap: var(--s-3); }
+#ub-body, #fi-body { display: flex; flex-direction: column; gap: var(--s-3); }
+#fi-paste { width: 100%; font-family: var(--font-mono); font-size: var(--fs-caption); }
+details.fi-paste { margin: var(--s-2) 0; }
+details.fi-paste > summary { cursor: pointer; width: fit-content; font-size: var(--fs-caption); color: var(--fg-muted); }
+.fi-run { display: flex; flex-wrap: wrap; gap: var(--s-2); align-items: center; }
+.fi-run > button { margin-left: auto; }
+#fi-components { margin: var(--s-2) 0; }
 .ub-folds-head { display: flex; justify-content: flex-end; }
 .finding[data-location="dev"] { border-left-color: var(--status-warn-fg); }
 ul.plain { margin: 0; padding-left: var(--s-5); font-size: var(--fs-caption); }
