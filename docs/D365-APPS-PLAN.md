@@ -75,7 +75,7 @@ Use a connection with the Power Platform API enabled, Debug log on, and one envi
 
 - [ ] Does the `NotInstalled` list contain the same `uniqueName` with the newer version (D5)? If not, what in either response marks the update (`state`, `instancePackageId`, a second entry in `Installed`)?
 - [ ] Does `version` hold the package version in both lists?
-- [ ] Install response: 200 with `lastOperation.operationId`, or 202 with no body?
+- [x] Install response: 200 with `lastOperation.operationId`, or 202 with no body? 200 with `lastOperation.operationId` (2026-10-06, PSA-DEV Sandbox, Storage Advisor Components 1.0.0.2 → 1.0.0.3, Succeeded in about 2.5 min).
 - [ ] `operations/{id}`: the `status` values seen through a full install.
 - [ ] Is `@odata.nextLink` used on either list, and in which casing?
 

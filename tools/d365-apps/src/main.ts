@@ -1,7 +1,7 @@
 import { mountDebug } from "../../_shared/debug-ui";
 import { $, append, badge, emptyState, filteredEmpty, foldAllButtons, h, showDialog, shownOf, type BadgeKind, type Child } from "../../_shared/dom";
 import { loadView, persistControls, saveView } from "../../_shared/view-state";
-import { errText, isSetupError, listEnvironments, listPackages, type PpLike } from "./apps/api";
+import { errText, isSetupError, isThrottled, listEnvironments, listPackages, type PpLike } from "./apps/api";
 import { matrixCsv, pacScript, resultsCsv } from "./apps/export";
 import { buildMatrix, cellKey, counts, emptyEnvIds, envMatches, envTypes, failedKeys, IRREVERSIBLE_NOTE, isProduction, PLAN_FOLD_OVER, planGroupOpen, planInstalls, planScope, planScopeText, rowHasState, STATE_KINDS, updateKeys, visibleEnvs, type StateKind } from "./apps/matrix";
 import { runInstalls, runProblems, toRunItems } from "./apps/run";
@@ -191,7 +191,7 @@ async function loadPackages(only?: string[]): Promise<void> {
           const r = await listPackages(p, env.id);
           fresh.push({ env, ...r, error: null, setupError: false });
         } catch (e) {
-          fresh.push({ env, installed: [], available: [], error: errText(e), setupError: isSetupError(e) });
+          fresh.push({ env, installed: [], available: [], error: isThrottled(e) ? "Throttled by the Power Platform API (HTTP 429) after 4 retries. Refresh later." : errText(e), setupError: isSetupError(e) });
         }
         setStatus(`Reading apps ${++done} / ${targets.length} environments…`);
       }
@@ -521,7 +521,7 @@ function planNode(plan: PlannedInstall[], shownCols: Set<string>): HTMLElement {
     h(
       "div",
       { class: "plan-head" },
-      h("p", { class: "caption" }, `One install at a time per environment, up to ${Math.min(3, byEnv.size)} environments in parallel. Each install is followed until it finishes; that can take an hour.`),
+      h("p", { class: "caption" }, `One install at a time per environment${byEnv.size > 1 ? `, up to ${Math.min(3, byEnv.size)} environments in parallel` : ""}. Each install is followed until it finishes; that can take an hour.`),
       byEnv.size > PLAN_FOLD_OVER ? foldAllButtons(() => document.querySelector("#plan"), "details.plan-env") : null,
     ),
     // one fold per environment: past PLAN_FOLD_OVER they start closed, except Production and installs in a hidden column

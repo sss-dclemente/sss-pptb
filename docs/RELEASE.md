@@ -179,7 +179,7 @@ Real-env test (two connections to sandboxes whose audit configuration differs, o
 > **Status, 2026-09-21.** Loaded in ToolBox against a real environment and exercised read-only: it connects, reads and renders. No plan was applied, so every write path below is still untested and none of the boxes are ticked on the strength of that session.
 >
 > **0.1.0 published to npm 2026-10-02, before the write-path checks below.** Fixes go in 0.1.1; do not unpublish.
-- [x] Matrix loads (2026-10-06, PSA-DEV Developer env: 1789 tables, 168 audited). Admin-centre cross-check of the count done on SL Sandbox only.
+- [x] Matrix loads (2026-10-06, PSA-DEV Sandbox env: 1789 tables, 168 audited). Admin-centre cross-check of the count done on SL Sandbox only.
 - [x] A table from a managed solution that forbids the change shows as `locked` and cannot be ticked.
 - [x] Snapshot route only (2026-10-06, one connection): a snapshot from PSA-DEV loaded as the comparison shows `≠` exactly on the flags changed since. UNVERIFIED: a live secondary connection. Secondary connection populates the comparison column; `≠` appears exactly where the two environments really differ. Then export a snapshot from one, load it into the other, and check the same diff appears.
 - [x] Expand a table: its auditable columns load, the column counts name their scope, and a column you know is audited reads `on`.

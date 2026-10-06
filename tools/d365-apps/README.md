@@ -47,6 +47,18 @@ Installs and updates of Dynamics 365 apps are **irreversible**: there is no roll
 
 **Nothing else.** The tool never uninstalls apps, never deletes or edits records, solutions, components, security roles or environment settings, and never changes environment configuration.
 
+## Screenshots
+
+Captured in Power Platform ToolBox against a Dataverse Sandbox environment.
+
+![Matrix filtered to updates and failed installs; the custom-upgrade package is flagged](https://raw.githubusercontent.com/sss-dclemente/sss-pptb/main/tools/d365-apps/docs/img/matrix.png)
+
+![Preview before running: target environment, the update, and the no-undo warning](https://raw.githubusercontent.com/sss-dclemente/sss-pptb/main/tools/d365-apps/docs/img/preview.png)
+
+![After a run: the update succeeded and left the updates list](https://raw.githubusercontent.com/sss-dclemente/sss-pptb/main/tools/d365-apps/docs/img/run.png)
+
+![Matrix, dark theme](https://raw.githubusercontent.com/sss-dclemente/sss-pptb/main/tools/d365-apps/docs/img/matrix-dark.png)
+
 ## Setup
 
 The tool uses the [Power Platform API](https://learn.microsoft.com/rest/api/power-platform/) through ToolBox (version **1.2.6 or later**), not Dataverse.
@@ -70,9 +82,13 @@ One connection is enough: the token covers every environment the account can see
 
 ## Limitations
 
-- **Not yet verified against a live tenant** (built before the probe in [docs/D365-APPS-PLAN.md](https://github.com/sss-dclemente/sss-pptb/blob/main/docs/D365-APPS-PLAN.md) §5):
-  - **"Update available" is derived.** The API has no such state: the tool compares the installed version with the newest version of the same app in the environment's not-installed list. If an update doesn't show where PPAC shows one, save a debug log (below) and open an issue.
-  - Whether the install response carries an operation id. When it doesn't, the tool follows the app's state in the environment instead.
+- **Tested on 2026-10-06 against a Dataverse Sandbox environment** (one environment): reading installed and available apps, the update / failed / custom-upgrade cells, the preview for an update and for a retry, one update run end to end (Storage Advisor Components 1.0.0.2 → 1.0.0.3: the install response carried an operation id, the tool followed it to Succeeded, and the re-read showed 1.0.0.3 with the update gone), Results CSV, Matrix CSV, light and dark theme. A throttled read (HTTP 429) is retried four times and then shown on that environment's column only.
+- **Not yet verified against a live environment:**
+  - **"Update available" is derived.** The API has no such state: the tool compares the installed version with the newest version of the same app in the environment's not-installed list. It has not been compared with the PPAC list. If an update doesn't show where PPAC shows one, save a debug log (below) and open an issue.
+  - A retry of a failed install, a first-time install, and runs across several environments in parallel (the two other environments tried were throttled by the API).
+  - The **pac script** has been generated but not run.
+  - **Unused apps**: on the tested environment it mapped very few packages to their solutions (most rows read "Solutions not found"), so its verdicts are not reliable yet.
+  - A connection without the Power Platform API permissions, and an expired connection.
 - Installs can't be cancelled from the API; Stop waiting only stops following them.
 - **Unused apps is a lead, not a verdict.** There's no usage telemetry in these APIs: an app whose tables are empty may still be needed (for example, it holds configuration another app reads). It covers only the connection's environment: switch the ToolBox connection to report on another one. It needs read access to solutions, solution history and table metadata (System Administrator or System Customizer).
 - **No uninstall.** The Power Platform API has no uninstall. Remove an app by deleting its solutions in the environment (Solutions page), anchor first; the report lists them.
@@ -117,7 +133,7 @@ Stack: TypeScript, Vite, no framework. Types from `@pptb/types`.
 
 ## AI Assistance
 
-Substantial parts of this tool's code and documentation were generated with Claude Code (Anthropic) and reviewed and maintained by the contributors listed in `package.json`. Testing status against real Dataverse environments is stated per feature under Limitations.
+Substantial parts of this tool's code and documentation were generated with Claude Code (Anthropic) and reviewed, tested and maintained by the contributors listed in `package.json`. Testing status against real Dataverse environments is stated per feature under Limitations.
 
 ## Credits
 

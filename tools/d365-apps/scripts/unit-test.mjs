@@ -435,3 +435,20 @@ test("confirmation scope: each target environment with its app count; the no-und
   assert.match(M.IRREVERSIBLE_NOTE, /cannot uninstall/);
   assert.match(M.IRREVERSIBLE_NOTE, /backup or copy of the environment/);
 });
+
+test("getWithRetry: retries a throttled read with backoff, gives up after 4 retries, never on other errors", async () => {
+  const waits = [];
+  const wait = async (ms) => { waits.push(ms); };
+  let calls = 0;
+  const flaky = { Get: async () => { if (++calls < 3) throw new Error("Power Platform request failed: HTTP 429"); return { value: [1] }; } };
+  assert.deepEqual(await M.getWithRetry(flaky, "x", wait), { value: [1] });
+  assert.deepEqual(waits, [2000, 4000]);
+  const always = { Get: async () => { throw new Error("HTTP 429"); } };
+  waits.length = 0;
+  await assert.rejects(M.getWithRetry(always, "x", wait), /429/);
+  assert.deepEqual(waits, [2000, 4000, 8000, 16000]);
+  const denied = { Get: async () => { throw new Error("HTTP 403"); } };
+  waits.length = 0;
+  await assert.rejects(M.getWithRetry(denied, "x", wait), /403/);
+  assert.deepEqual(waits, []);
+});

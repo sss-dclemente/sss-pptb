@@ -50,7 +50,7 @@ Reverting restores the flags, not audit history: whatever happened while a table
 
 ## Screenshots
 
-Captured in Power Platform ToolBox against a Dataverse Developer environment, compared with a snapshot taken from it before a test change.
+Captured in Power Platform ToolBox against a Dataverse Sandbox environment, compared with a snapshot taken from it before a test change.
 
 ![Matrix: one environment against a snapshot, with the differing table and column marked](https://raw.githubusercontent.com/sss-dclemente/sss-pptb/main/tools/audit-matrix/docs/img/matrix.png)
 
@@ -94,7 +94,7 @@ Notes:
 - Intersect, private and logical tables are filtered out, as are attributes that cannot be audited.
 - Metadata reads and writes are slow. Expect a few seconds per table on a large plan, and use the progress and Cancel in the status bar.
 - Metadata collections are not paged; environments with extremely large metadata could be truncated.
-- The backup taken before Apply and the revert path through it were tested against a Dataverse Developer environment on 2026-10-06: apply a table and a column flag, publish, revert from the backup, publish, and the environment matched its earlier snapshot again.
+- The backup taken before Apply and the revert path through it were tested against a Dataverse Sandbox environment on 2026-10-06: apply a table and a column flag, publish, revert from the backup, publish, and the environment matched its earlier snapshot again.
 - The exported PowerShell script has not yet been run against a live environment.
 - Not yet verified against a live environment (mocked end-to-end test only): a connection user without the privilege to change metadata, an expired or removed connection, and a write the environment rejects (it should stay in the plan as a failed row).
 
