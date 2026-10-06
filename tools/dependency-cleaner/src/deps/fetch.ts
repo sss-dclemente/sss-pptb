@@ -273,6 +273,14 @@ export class MetaCache {
   entities: Map<string, EntityMeta> | null = null;
   attributes = new Map<string, AttributeMeta[]>();
   names = new Map<string, NamedComponent>();
+  componentTables: Promise<Map<number, string>> | null = null;
+
+  /** solution component type → backing table (`solutioncomponentdefinitions.primaryentityname`), for per-org types such as connection references */
+  tablesByComponentType(api: DataverseLike): Promise<Map<number, string>> {
+    return (this.componentTables ??= queryAll(api, "solutioncomponentdefinitions?$select=solutioncomponenttype,name,primaryentityname")
+      .then((rows) => new Map(rows.filter((r) => r.primaryentityname).map((r) => [Number(r.solutioncomponenttype), String(r.primaryentityname)])))
+      .catch(() => new Map<number, string>()));
+  }
 
   async entitiesById(api: DataverseLike): Promise<Map<string, EntityMeta>> {
     if (this.entities) return this.entities;
@@ -418,6 +426,30 @@ export async function resolveNames(api: DataverseLike, cache: MetaCache, reqs: N
       for (const row of rows) put({ type, id: lid(row[idCol]), name: s(row[nameCol]) ?? lid(row[idCol]), table: tableCol ? (s(row[tableCol]) ?? undefined) : undefined });
     }),
   );
+  // per-org types (connection references, other solution-aware tables): the backing table's primary name column
+  const fixed = new Set<number>([CT.Entity, CT.Attribute, CT.Relationship, CT.EntityRelationship]);
+  const dyn = todo.filter((x) => !out.has(key(x.type, x.id)) && !fixed.has(x.type));
+  if (dyn.length) {
+    const tables = await cache.tablesByComponentType(api);
+    const byTable = new Map<string, NameRequest[]>();
+    for (const r of dyn) {
+      const t = tables.get(r.type);
+      if (t) byTable.set(t, [...(byTable.get(t) ?? []), r]);
+    }
+    await Promise.all(
+      [...byTable].map(async ([table, list]) => {
+        const e = await cache.entityByName(api, table).catch(() => undefined);
+        if (!e?.entitySetName || !e.primaryId) return;
+        const nameCol = e.primaryName;
+        const rows = await queryByIds(api, list.map((r) => r.id), e.primaryId, (f) => `${e.entitySetName}?$select=${[e.primaryId, nameCol].filter(Boolean).join(",")}&$filter=${f}`).catch(() => [] as Row[]);
+        for (const row of rows) {
+          const id = lid(row[e.primaryId!]);
+          const r = list.find((x) => x.id === id);
+          if (r) put({ type: r.type, id, name: (nameCol ? s(row[nameCol]) : null) ?? id, table });
+        }
+      }),
+    );
+  }
   // relationships: one metadata read each
   for (const r of todo.filter((x) => x.type === CT.EntityRelationship || x.type === CT.Relationship)) {
     try {

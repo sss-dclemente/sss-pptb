@@ -20,6 +20,7 @@ Built by [Simple Smooth Safe](https://simplesmoothsafe.com).
 - **Slim** — what does not belong in an unmanaged solution: every component that is neither unmanaged (yours) nor a managed component with an unmanaged layer (customized by you) is removed from the solution. Managed tables added with all assets become shells with only your subcomponents re-added. Preview → backup → confirm; membership only, the environment keeps every component. See *Slim* below.
 - **Cycles** — tick the unmanaged solutions you ship and the base solution that is always imported first: which solution needs which, the cycles that leave no import order, and the fixes: shared components into the base, a copy into the solution that needs them, or a move of the dependent. Required components no selected solution carries go to the base too. Preview simulates the result before anything is written; Undo reverses an apply. See *Cycles* below.
 - **Upgrade blockers** — before you upgrade a managed solution in Test or Prod (secondary connection), see what the upgrade will delete and what will block each delete ("cannot be deleted, referenced by…"), all in one run instead of one failed import per blocker. See *Upgrade blockers* below.
+- **Failed import** — the upgrade already failed with "The connectionreference(…) component cannot be deleted because it is referenced by N other components": read the error from solution history (or paste it), see what still references the component in that environment, where each reference lives, and fix it there. See *Failed import* below.
 - **Offline** — open an exported solution zip and read `solution.xml` `<MissingDependencies>` (the list the import checks), grouped and filtered the same way. No connection needed.
 - **Name lookups that fail** (metadata, form or view names) are shown as a warning above the findings, and every finding that involves such a component is report only: an edit keyed on an unresolved name would change nothing. Reads by id run 4 at a time; a throttled read (HTTP 429) is retried once after its `Retry-After`.
 - **Export** — findings as JSON or CSV (cells a spreadsheet would read as a formula are prefixed with `'`).
@@ -52,6 +53,23 @@ Pick the Dev solution you are about to ship; the target is the secondary connect
 5. **Runtime breaks** — deleted custom pages and canvas apps whose unique name appears in the target's JavaScript web resources (`navigateTo({ pageType: "custom", name })`) or site maps. Not tracked as dependencies: the upgrade succeeds and these fail afterwards.
 
 Export the result as a Markdown checklist (release ticket) or CSV. The Restore tab re-adds app components removed by a fix.
+
+## Failed import
+
+For when the import already failed. One connection is enough: the environment the import failed in (the secondary connection with Dev as primary, or the primary alone).
+
+1. **Find the error** — *Scan solution history* reads the last failed operations (`msdyn_solutionhistories`, `msdyn_result = false`; if the virtual table refuses the filter, the newest 100 rows are filtered here) and keeps those whose message names a component that "cannot be deleted because it is referenced by N other components". The newest one is checked at once. Or open *Paste an error instead*, paste the Failure details / Operation details text (the repeated fault XML counts once) and, optionally, the solution's unique name.
+2. **Component** — the table name in the message gives the component type: `solutioncomponentdefinitions.primaryentityname` for per-org types (a connection reference's type is its table's ObjectTypeCode), a fixed map for the platform types. Shown with its name, or "no longer exists" / "nothing references it now" (import again).
+3. **References** — `RetrieveDependenciesForDelete` in that environment, then each dependent's layers (`msdyn_componentlayers`, solution membership as fallback, flagged):
+   - **Fix in this environment** — the top layer is unmanaged (`Active`).
+     - Active layer on top of a managed solution (a flow edited or re-bound in Test/Prod): **Remove active customizations** (`RemoveActiveCustomizations`). The managed definition takes over. Cannot be undone: the backup keeps the layer's `msdyn_componentjson` as a record.
+     - A cloud flow that names the connection reference in its `clientdata`: **Re-point flow to** another connection reference of the same connector in that environment. Off → `clientdata` → on, only `connectionReferenceLogicalName` changes. **Undo flow changes…** writes the old `clientdata` back from the backup.
+     - Unmanaged only, anything else: report (edit or delete it there).
+   - **Fix in Dev** — the failed solution's own layer still references it. With Dev as the primary connection, **Run Upgrade blockers** opens the pre-flight on that solution, which lists every such reference and offers the Dev fixes.
+   - **Release first** — another managed solution references it: ship it without the reference and upgrade it first; the release order is shown.
+4. **Preview → backup → confirm** — the preview lists the operations; Confirm needs the backup, a tick for *cannot be undone* when an active customization is removed, and a tick when the environment looks like Production. Operations are independent: a failure marks its row, the rest runs. Then the check runs again (`4 → 2 references`); at zero, import again.
+
+Export the result as a Markdown checklist.
 
 ## Slim
 
@@ -111,12 +129,13 @@ Then in ToolBox: Debug → *Load Local Tool* → select the `tools/dependency-cl
 ## Usage
 
 1. Primary connection = the dev environment. Optionally a secondary connection = the target environment.
-2. **Diagnose**: pick the solution, adjust the filter, run. Or **Slim**: pick the solution, Analyze, untick what must stay. Or **Cycles**: tick the solutions you ship, pick the base, Analyze. Or **Upgrade blockers**: pick the solution you are about to upgrade in the target, Analyze.
+2. **Diagnose**: pick the solution, adjust the filter, run. Or **Failed import**: pick the environment the import failed in, Scan solution history (or paste the error). Or **Slim**: pick the solution, Analyze, untick what must stay. Or **Cycles**: tick the solutions you ship, pick the base, Analyze. Or **Upgrade blockers**: pick the solution you are about to upgrade in the target, Analyze.
 3. Pick a fix on the findings you want to act on, **Preview fixes…**, review, **Download backup**, **Confirm and apply**.
 4. Export the solution again.
 
 ## Limitations
 
+- **Failed import, UNVERIFIED against a live environment**: `msdyn_solutionhistories` through the host (filter on `msdyn_result`, `$orderby`/`$top` on a virtual table; the unfiltered fallback reads the newest 100 rows), `RemoveActiveCustomizations(SolutionComponentName='Workflow',ComponentId=<guid>)` through `queryData` (Learn writes `ComponentId=(<guid>)`, tried second), and the classification of a flow whose Active layer comes from a re-bind in the target. Each failed import names the first component it cannot delete: after a fix, the next import may stop on another one; scan again.
 - **Upgrade blockers, UNVERIFIED against a live environment**: the response shape of `RetrieveDependenciesForDelete` through the host, the `msdyn_componentlayers` filter (`msdyn_componentid` as a quoted string, `msdyn_solutioncomponentname` = `CanvasApp`, `AppModule`, `SystemForm`…) and `"Active"` as the unmanaged layer's name, `AddAppComponents` / `RemoveAppComponents` with `@odata.type` component references (`entity` / `entityid` for a table), and whether imported components keep their ids (apps, canvas apps and web resources are also matched by unique name). Run the probe in docs/UPGRADE-BLOCKERS-PLAN.md §4 first.
 - **Slim** (verified on a live environment, 1.3.0 → 1.3.1): the reads all answer (`primaryentityname`, `ismanaged` on every record-backed type, the layer component names). What the first run taught: platform components are `IsManaged = false` (hence the custom / System test) and Active layers are mostly phantom (hence the `msdyn_changes` test). One layer read per component that is not yours: a solution with 500 of them means 500 calls, 4 at a time, cancellable. The layer names of environment variables (`EnvironmentVariableDefinition`, `EnvironmentVariableValue`) are still UNVERIFIED: a type whose rows never come back lands in *Unknown: kept*.
 - **Cycles, UNVERIFIED against a live environment** beyond the reads Diagnose and Slim verified: one `RetrieveRequiredComponents` per member of every selected solution (hundreds of calls for large solutions, 4 at a time, cached, cancellable). A required component that the base solution contains is taken as satisfied: that holds when the base is installed first, which the tool assumes and the import order shows.
@@ -143,7 +162,7 @@ npm run build       # typecheck + Vite IIFE bundle + dist checks
 npm run dev-watch   # rebuild on change; reload the tool tab in ToolBox
 npm run validate    # @pptb/validate manifest rules
 npm run xml-test    # form / view XML stripping
-npm run e2e         # Playwright tests against dist/ with a mocked ToolBox host (needs playwright + Chromium): Diagnose/Fix/Restore, Upgrade blockers, Slim, Cycles
+npm run e2e         # Playwright tests against dist/ with a mocked ToolBox host (needs playwright + Chromium): Diagnose/Fix/Restore, Upgrade blockers, Slim, Cycles, Failed import
 ```
 
 Stack: TypeScript, Vite, no framework, JSZip (offline tab). Types from `@pptb/types`.

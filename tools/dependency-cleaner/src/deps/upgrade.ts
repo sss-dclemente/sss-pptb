@@ -94,7 +94,7 @@ export interface UpgradeOptions {
 
 const key = (type: number, id: string): string => `${type}:${id}`;
 const msg = (e: unknown): string => (e as Error)?.message ?? String(e);
-const odataString = (v: string): string => `'${v.replace(/'/g, "''")}'`;
+export const odataString = (v: string): string => `'${v.replace(/'/g, "''")}'`;
 
 /** msdyn_componentlayers.msdyn_solutioncomponentname per component type. Dynamic types come from solutioncomponentdefinitions. */
 export const LAYER_NAMES: Record<number, string> = {
@@ -134,6 +134,16 @@ export async function componentDefinitions(api: DataverseLike): Promise<Map<numb
   }
 }
 
+/** Solution layers of a component, top first (`msdyn_componentlayers`, highest `msdyn_order` on top); null when no row comes back. */
+export async function componentLayers(api: DataverseLike, id: string, layerName: string): Promise<string[] | null> {
+  const rows = await queryAll(api, `msdyn_componentlayers?$select=msdyn_solutionname,msdyn_order&$filter=msdyn_componentid eq ${odataString(assertGuid(id))} and msdyn_solutioncomponentname eq ${odataString(layerName)}`);
+  if (!rows.length) return null;
+  return rows
+    .map((r) => ({ s: String(r.msdyn_solutionname ?? ""), o: Number(r.msdyn_order ?? 0) }))
+    .sort((a, b) => b.o - a.o)
+    .map((x) => x.s);
+}
+
 /** Canvas app kind (page, library) and app module unique names, for display and for matching across environments. */
 async function enrich(api: DataverseLike, comps: UComponent[]): Promise<void> {
   const canvas = comps.filter((c) => c.type === 300);
@@ -155,7 +165,7 @@ async function enrich(api: DataverseLike, comps: UComponent[]): Promise<void> {
     }
 }
 
-async function named(api: DataverseLike, meta: MetaCache, reqs: NameRequest[]): Promise<Map<string, UComponent>> {
+export async function named(api: DataverseLike, meta: MetaCache, reqs: NameRequest[]): Promise<Map<string, UComponent>> {
   const out = await resolveNames(api, meta, reqs);
   const copy = new Map<string, UComponent>();
   for (const [k, v] of out) copy.set(k, { ...v });
@@ -316,18 +326,8 @@ export async function analyzeUpgrade(o: UpgradeOptions): Promise<UpgradeAnalysis
       const ln = layerName(d.dependentType);
       if (!ln) return;
       try {
-        const rows = await queryAll(
-          tgt,
-          `msdyn_componentlayers?$select=msdyn_solutionname,msdyn_order&$filter=msdyn_componentid eq ${odataString(assertGuid(d.dependentId))} and msdyn_solutioncomponentname eq ${odataString(ln)}`,
-        );
-        if (rows.length)
-          layers.set(key(d.dependentType, d.dependentId), {
-            list: rows
-              .map((r) => ({ s: String(r.msdyn_solutionname ?? ""), o: Number(r.msdyn_order ?? 0) }))
-              .sort((a, b) => b.o - a.o)
-              .map((x) => x.s),
-            source: "layers",
-          });
+        const list = await componentLayers(tgt, d.dependentId, ln);
+        if (list) layers.set(key(d.dependentType, d.dependentId), { list, source: "layers" });
       } catch {
         layerFailures++;
       }

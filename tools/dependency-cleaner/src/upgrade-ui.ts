@@ -125,6 +125,15 @@ async function run(solutionId?: string): Promise<void> {
   render();
 }
 
+/** Open this tab on a Dev solution and analyze it (the Failed import tab's "Run Upgrade blockers"). */
+export function runUpgradeFor(uniqueName: string): void {
+  const sol = ctx.devSolutions().find((x) => x.uniqueName.toLowerCase() === uniqueName.toLowerCase());
+  if (!sol) return;
+  document.querySelector<HTMLButtonElement>('.tab[data-tab="upgrade"]')?.click();
+  $<HTMLSelectElement>("#ub-solution").value = sol.id;
+  void run(sol.id);
+}
+
 // ---------- render ----------
 
 function blockerCard(b: Blocker): HTMLElement {
