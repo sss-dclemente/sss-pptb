@@ -211,6 +211,13 @@ const MOCK = `
 const { page, assert, finish } = await launchPage(import.meta.url, { initScript: MOCK });
 await page.goto("file://" + TOOL + "/dist/index.html");
 const M = (fn, arg) => page.evaluate(fn, arg);
+// the last confirmation before a write names the environment, the scope and the way back
+const okWrite = async (env, url, scope, wayBack = /backup/i) => {
+  await page.waitForSelector("#dlg[open] #dlg-write");
+  const t = await page.textContent("#dlg-write");
+  assert(t.includes(env) && t.includes(url) && t.includes(scope) && wayBack.test(t), "write confirmation names environment, scope and way back: " + t);
+  await page.click("#dlg-ok");
+};
 const ID = await M(() => window.__mock.ID);
 
 // ---- load ----
@@ -269,8 +276,8 @@ assert((await page.textContent("#sl-shown")) === "2 of 19 components", "type fil
 await page.selectOption("#sl-type", "");
 assert((await page.textContent("#sl-shown")) === "19 components", "filters cleared: 19 components");
 
-// E2E_SHOTS=1 refreshes the README screenshot (docs/img/slim.png)
-if (process.env.E2E_SHOTS) await page.screenshot({ path: resolve(TOOL, "docs/img/slim.png"), fullPage: false });
+// E2E_SHOTS=1 writes a synthetic screenshot (docs/img-synthetic/slim.png, gitignored; not for the README)
+if (process.env.E2E_SHOTS) await page.screenshot({ path: resolve(TOOL, "docs/img-synthetic/slim.png"), fullPage: false });
 
 // ---- export ----
 await page.click("#sl-export-md");
@@ -315,6 +322,7 @@ const backup = saved.at(-1);
 const bk = JSON.parse(backup.content);
 assert(bk.kind === "sss-dependency-cleaner-backup" && bk.membership.length === 19 && bk.operations.length === 8 && bk.environment.url === "https://sss-dev.crm4.dynamics.com", "backup: full membership (19) + the 8 operations");
 await page.click("#sl-confirm");
+await okWrite("SSS Dev", "https://sss-dev.crm4.dynamics.com", "8 operations on solution SssCore: 7 components leave the solution, 2 tables converted to shells");
 await page.waitForSelector("#sl-rerun", { timeout: 15000 });
 const writes = (await M(() => window.__mock.executes)).filter((e) => e.operationName !== "RetrieveCurrentOrganization");
 assert(writes.length === 8 && writes.every((e) => e.target === "primary" && e.parameters.SolutionUniqueName === "SssCore"), "8 writes on Dev, all on SssCore");
@@ -334,7 +342,7 @@ await page.waitForSelector("#restore-ops li");
 const rops = await page.$$eval("#restore-ops > li .mono", (els) => els.map((e) => e.textContent));
 assert(rops.some((o) => o.startsWith("RemoveSolutionComponent Table account")) && rops.some((o) => o === "AddSolutionComponent Table account") && rops.some((o) => o === "AddSolutionComponent Table msdyn_workorder") && rops.some((o) => o === "AddSolutionComponent Table contact (DoNotIncludeSubcomponents)") && rops.some((o) => o.includes("Contact main")) && rops.some((o) => o.includes("Salesperson")), "restore plan: account back to all assets, tables and components re-added: " + rops.join(" | "));
 await page.click("#btn-restore-apply");
-await page.click("#dlg-ok");
+await okWrite("SSS Dev", "https://sss-dev.crm4.dynamics.com", "on solution SssCore, back to the backup of");
 await page.waitForFunction(() => window.__mock.notes.some((n) => n.title === "Restored"));
 const restored = await M(() => window.__mock.members());
 assert(restored.length === 19 && restored.find((m) => m.objectid === ID.E2).rootcomponentbehavior === 0, "membership restored: 19 rows, account with all assets");

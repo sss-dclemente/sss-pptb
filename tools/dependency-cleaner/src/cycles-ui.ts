@@ -7,6 +7,7 @@ import { Cancelled } from "./deps/diagnose";
 import { csvCell } from "./deps/export";
 import { fetchSolutionManaged, MetaCache, type DataverseLike, type DependencyRow } from "./deps/fetch";
 import { typeName, type SolutionInfo } from "./deps/types";
+import { confirmWrite, plural } from "./confirm-write";
 import { errorList } from "./error-list";
 import { notify, openText, saveText, type LiveConnection } from "./host";
 
@@ -341,21 +342,31 @@ function resultsTable(results: CycleOpResult[], id: string): HTMLElement {
   );
 }
 
-async function guardWrite(ops: CycleOp[]): Promise<boolean> {
+/** The current connection when it is the one the plan was made on and every touched solution is still unmanaged. */
+async function guardWrite(ops: CycleOp[]): Promise<LiveConnection | null> {
   const a = ctx.api();
   const now = await ctx.currentPrimary();
   if (!a || !now || !planConn || now.conn.id !== planConn.id || !ctx.sameUrl(now.conn.url, planConn.url)) {
     await notify("Refused", `The plan was made on ${planConn?.url ?? "?"}, the connection is now ${now?.conn.url ?? "none"}. Nothing was written.`, "error");
-    return false;
+    return null;
   }
   for (const sol of new Map(ops.map((op) => [op.solution.id, op.solution])).values()) {
     const fresh = await fetchSolutionManaged(a, sol.id).catch(() => null);
     if (!fresh || fresh.isManaged) {
       await notify("Refused", `${sol.uniqueName} is managed (or could not be read). Nothing was written.`, "error");
-      return false;
+      return null;
     }
   }
-  return true;
+  return now;
+}
+
+/** "5 operations on solutions Base, Sales: 4 components added (AddSolutionComponent), 1 removed (RemoveSolutionComponent)" */
+function cyclesScope(ops: CycleOp[]): string {
+  const sols = [...new Set(ops.map((op) => op.solution.uniqueName))];
+  const adds = ops.filter((op) => op.kind === "add").length;
+  const removes = ops.length - adds;
+  const parts = [adds && `${plural(adds, "component")} added (AddSolutionComponent)`, removes && `${plural(removes, "component")} removed (RemoveSolutionComponent)`].filter(Boolean);
+  return `${plural(ops.length, "operation")} on ${sols.length === 1 ? "solution" : "solutions"} ${sols.join(", ")}: ${parts.join(", ")}. Membership only: nothing is deleted from the environment.`;
 }
 
 async function confirm(): Promise<void> {
@@ -364,11 +375,22 @@ async function confirm(): Promise<void> {
   applying = true;
   updateConfirm();
   try {
-    if (!(await guardWrite(plan.ops))) {
+    const now = await guardWrite(plan.ops);
+    if (!now) {
       clearPlan();
       renderPlan();
       return;
     }
+    const go = await confirmWrite({
+      title: "Apply cycle fixes",
+      conn: now,
+      scope: cyclesScope(plan.ops),
+      wayBack:
+        "Way back: the backup you saved for this plan. Undo… on this tab loads it and runs the inverse operations, only in this environment. A table shell that came along with a column or form stays in the base after an undo.",
+      okLabel: `Apply ${plan.ops.length}`,
+      danger: ctx.isProd(now),
+    });
+    if (!go) return;
     const before = analysis.cycles.length;
     const results = await executeCycles(a, plan.ops, (i, n) => ctx.setStatus(i < n ? `Applying ${i + 1} / ${n}…` : null));
     ctx.setStatus(null);
@@ -409,7 +431,20 @@ async function undo(): Promise<void> {
       applying = true;
       planConn = { id: p.conn.id, url: p.conn.url };
       try {
-        if (!(await guardWrite(ops))) return;
+        const now = await guardWrite(ops);
+        if (!now) return;
+        const ok = await confirmWrite({
+          title: "Apply undo",
+          conn: now,
+          scope: `Reverse ${f.name}. ${cyclesScope(ops)}`,
+          wayBack: "No new backup is taken before an undo. To go forward again, run the Cycles fixes again.",
+          okLabel: `Undo ${ops.length}`,
+          danger: ctx.isProd(now),
+        });
+        if (!ok) {
+          go.disabled = false;
+          return;
+        }
         const results = await executeCycles(a, ops, (i, n) => ctx.setStatus(i < n ? `Undoing ${i + 1} / ${n}…` : null));
         ctx.setStatus(null);
         const failed = results.filter((r) => !r.ok).length;

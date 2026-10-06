@@ -1,8 +1,6 @@
-# SSS Dependency Cleaner
+# Dependency Cleaner
 
 Why does my solution depend on `msdyn_*`, and how do I get rid of it? Inside [Power Platform ToolBox](https://www.powerplatformtoolbox.com): pick an unmanaged solution in dev, see every dependency on a managed solution the target environment does not have (Field Service, Sales, Customer Service, Project Operations…), see which component in *your* solution causes it, and fix it in place. Then export again and the import works.
-
-Built by [Simple Smooth Safe](https://simplesmoothsafe.com).
 
 ## What it does
 
@@ -15,7 +13,7 @@ Built by [Simple Smooth Safe](https://simplesmoothsafe.com).
   - *Edit form*: remove the cells/controls bound to the msdyn columns, hidden fields (`<hiddencontrols>`) bound to them, and subgrids / quick views on msdyn tables (quick views are read from the entity-escaped `<QuickForms>` text real formxml uses); never the primary name or a required column, which are reported instead; drop empty sections.
   - *Edit view*: strip the msdyn attributes, conditions, orders and link-entities from fetchxml and the matching cells from layoutxml.
   - Relationships, sitemap, apps, ribbon, charts, processes, web resources and plugin steps are report only, with a link to the solution in the maker portal.
-- **Preview → backup → confirm** — the preview lists every operation with a before/after XML diff. Confirm stays disabled until the backup (`dependency-cleaner-backup-<solution>-<timestamp>.json`: original form/view XML and the full solution membership) is saved. Then: membership changes → form/view updates → one `PublishXml` for the touched tables → the diagnosis runs again and shows fixed / still present.
+- **Preview → backup → confirm** — the preview lists every operation with a before/after XML diff. Confirm stays disabled until the backup (`dependency-cleaner-backup-<solution>-<timestamp>.json`: original form/view XML and the full solution membership) is saved; a last confirmation names the environment (connection name and url), the number of operations and the way back. Then: membership changes → form/view updates → one `PublishXml` for the touched tables → the diagnosis runs again and shows fixed / still present.
 - **Restore** — load a backup, preview, apply: original XML written back, removed components re-added, tables put back to all assets, then published. A backup only restores into the environment it was taken in (its url is recorded in the file).
 - **Slim** — what does not belong in an unmanaged solution: every component that is neither unmanaged (yours) nor a managed component with an unmanaged layer (customized by you) is removed from the solution. Managed tables added with all assets become shells with only your subcomponents re-added. Preview → backup → confirm; membership only, the environment keeps every component. See *Slim* below.
 - **Cycles** — tick the unmanaged solutions you ship and the base solution that is always imported first: which solution needs which, the cycles that leave no import order, and the fixes: shared components into the base, a copy into the solution that needs them, or a move of the dependent. Required components no selected solution carries go to the base too. Preview simulates the result before anything is written; Undo reverses an apply. See *Cycles* below.
@@ -24,6 +22,73 @@ Built by [Simple Smooth Safe](https://simplesmoothsafe.com).
 - **Offline** — open an exported solution zip and read `solution.xml` `<MissingDependencies>` (the list the import checks), grouped and filtered the same way. No connection needed.
 - **Name lookups that fail** (metadata, form or view names) are shown as a warning above the findings, and every finding that involves such a component is report only: an edit keyed on an unresolved name would change nothing. Reads by id run 4 at a time; a throttled read (HTTP 429) is retried once after its `Retry-After`.
 - **Export** — findings as JSON or CSV (cells a spreadsheet would read as a formula are prefixed with `'`).
+
+## What this tool changes
+
+Diagnose, Offline and every analysis (Upgrade blockers, Slim, Cycles, Failed import before you apply) only read. Dataverse is written only by **Confirm and apply** on the Fix, Upgrade blockers, Slim, Cycles and Failed import tabs, by **Apply restore**, **Undo…** (Cycles) and **Undo flow changes…** (Failed import). Each of these runs only after a preview that lists every operation, and the apply buttons stay disabled until the backup is saved. A last confirmation dialog then names the environment (connection name and url), the number of operations and what they change, and the way back, or says plainly that there is none. A connection that looks like Production needs an extra tick. Writes are refused when the connection changed since the preview or when the solution turns out to be managed.
+
+### Dataverse writes, by tab
+
+**Diagnose → Fix** (primary connection, the unmanaged solution you diagnosed). The fixes run in this order: membership changes, then form and view updates, then one `PublishXml`. The first failure stops the rest. `PublishXml` still runs if a form or view was already updated.
+
+| Fix | API | What changes | Way back |
+|---|---|---|---|
+| Convert table to shell | `RemoveSolutionComponent` (table), `AddSolutionComponent` with `DoNotIncludeSubcomponents = true`, then `AddSolutionComponent` for each subcomponent ticked to keep | Solution membership: the unticked subcomponents leave the solution. The table and its columns, forms and views stay in the environment. | Restore puts the table back with all assets |
+| Remove from solution | `RemoveSolutionComponent` | One table, column, form or view leaves the solution. It stays in the environment. | Restore re-adds it |
+| Edit form | `systemform` update of `formxml` | The form itself, in the environment (every solution that contains it sees the change): cells, controls, hidden fields, subgrids and quick views bound to the filtered columns or tables are removed, and sections left empty are dropped | The backup holds the original `formxml`. Restore writes it back |
+| Edit view | `savedquery` update of `fetchxml` and `layoutxml` | The view itself, in the environment: filtered attributes, conditions, orders, link-entities and their layout cells are removed | The backup holds the original XML. Restore writes it back |
+| (after edits) | `PublishXml` for the touched tables | Publishes customizations of those tables | None needed |
+
+**Restore** (primary connection). Loads a backup saved by Fix, Upgrade blockers or Slim, compares it with the environment and previews the operations. Then it re-adds removed components (`AddSolutionComponent`), puts shell tables back to all assets (`RemoveSolutionComponent` + `AddSolutionComponent`), writes the backed-up `formxml` / `fetchxml` / `layoutxml` back, re-adds app components (`AddAppComponents`) and publishes (`PublishXml`). Limits:
+- A backup restores only into the environment whose url it records, and only into an unmanaged solution.
+- Restore takes no new backup. Form and view edits made after the backup are overwritten.
+- A form or view deleted since the backup is not restored (listed as a note).
+- A component that no longer exists in the environment cannot be re-added; its row fails.
+- Restore cannot bring back an active customization removed in Failed import.
+
+**Upgrade blockers** (writes only in Dev, the primary connection. The target, the secondary connection, is only read):
+
+| Fix | API | What changes | Way back |
+|---|---|---|---|
+| Remove from the app | `RemoveAppComponents` on the Dev model-driven app, then `PublishXml` for the app | The app no longer lists the custom page, table, form, view or chart | The backup lists the removed app components. Restore re-adds them with `AddAppComponents` and publishes |
+| Remove from the solution too | `RemoveSolutionComponent` in the Dev solution | Membership only: the dependent leaves the solution, so the upgrade deletes it as well | Restore re-adds it |
+
+Layers in the target are never removed from this tab: *Target unmanaged* rows are report only.
+
+**Slim** (primary connection, the selected unmanaged solution). Uses `RemoveSolutionComponent` for every row ticked for removal. Uses `RemoveSolutionComponent` + `AddSolutionComponent` (`DoNotIncludeSubcomponents = true`) + `AddSolutionComponent` for the kept subcomponents of each table converted to a shell. Membership only: nothing is deleted from the environment. A failure skips the rest of that table's steps; other operations still run. Way back: the backup holds the full membership. Restore re-adds what left and puts shells back to all assets.
+
+**Cycles** (primary connection, the unmanaged solutions you ticked and the base solution). Uses `AddSolutionComponent` into the base solution or into the solution that needs the component (tables go in as shells with `DoNotIncludeSubcomponents`). Uses `RemoveSolutionComponent` from the solution that has it, for *also remove* and *Move the dependents*. Membership only. Way back: the backup lists the operations. **Undo…** runs the inverse operations, only in the environment the backup records. A table shell that came along with a column or form stays in the base after an undo.
+
+**Failed import** (the environment the import failed in, often Test or Production. You pick it as the primary or the secondary connection):
+
+| Fix | API | What changes | Way back |
+|---|---|---|---|
+| Remove active customizations | `RemoveActiveCustomizations(SolutionComponentName, ComponentId)` | Deletes the unmanaged (Active) layer of that component. The managed definition underneath takes over | **None. This is not reversible, by this tool or by the platform.** The backup keeps the layer's `msdyn_componentjson` as a record only, so you can re-create the customization by hand. Confirm needs an extra *cannot be undone* tick |
+| Re-point flow to another connection reference | `workflow` update: `statecode` off (if the flow was on), `clientdata` with the new `connectionReferenceLogicalName`, `statecode` back on | The cloud flow's connection reference | The backup holds the previous `clientdata`. **Undo flow changes…** writes it back (off, update, on) |
+
+The operations are independent: a failure marks its row and the rest runs.
+
+### Files saved to disk
+
+Files are saved only through the ToolBox save dialog, where you choose:
+- **Backups.** `dependency-cleaner-backup-<solution>-<timestamp>.json` from Fix, Upgrade blockers and Slim. `dependency-cleaner-backup-cycles-<timestamp>.json` from Cycles. `dependency-cleaner-failed-import-<solution>-<timestamp>.json` from Failed import. They contain component ids and names, solution membership, form and view XML, flow `clientdata` and Active layer JSON.
+- **Exports.** Findings JSON or CSV, and Markdown or CSV from Upgrade blockers, Slim, Cycles and Failed import.
+- **Debug log.** Only when you save it.
+
+### Browser storage
+
+`localStorage` of the tool's page, per viewer:
+- The view settings: find text, type filters, *Show present in target*, *Scan JS and site maps*, *Keep parents of kept components* and the Cycles base solution (`sss-view:dependency-cleaner`).
+- The Debug log switch (`sss-debug:dependency-cleaner`).
+
+### Nothing else
+
+The tool never:
+- deletes a component, record or solution from an environment. The only deletion is the Active layer removed by *Remove active customizations*.
+- writes to a managed solution.
+- imports, exports, upgrades or uninstalls solutions.
+- changes business data records, security roles, users, teams, ownership or environment settings.
+- writes to the target environment from Diagnose or Upgrade blockers.
 
 ## How ownership is decided
 
@@ -96,25 +161,9 @@ Dependencies are environment-wide facts (a form needs a column); solutions only 
 
 Export the result as a Markdown checklist (import order, cycle rows, orphans) or CSV. Plan and probe: docs/CYCLES-PLAN.md.
 
-## Screenshots
-
-Synthetic sample data from the e2e harness (mocked ToolBox host). Replace with real captures.
-
-![Diagnose: msdyn dependencies grouped by the component that causes them](https://raw.githubusercontent.com/sss-dclemente/sss-pptb/main/tools/dependency-cleaner/docs/img/diagnose.png)
-
-![Upgrade blockers: what a managed upgrade deletes and what blocks each delete](https://raw.githubusercontent.com/sss-dclemente/sss-pptb/main/tools/dependency-cleaner/docs/img/upgrade-blockers.png)
-
-![Cycles: Sales and Service need each other; fixes into the base solution, simulated import order](https://raw.githubusercontent.com/sss-dclemente/sss-pptb/main/tools/dependency-cleaner/docs/img/cycles.png)
-
-![Slim: managed components without a customization, tables to convert to shells, kept rows folded](https://raw.githubusercontent.com/sss-dclemente/sss-pptb/main/tools/dependency-cleaner/docs/img/slim.png)
-
-![Fix preview with before/after XML diff and backup](https://raw.githubusercontent.com/sss-dclemente/sss-pptb/main/tools/dependency-cleaner/docs/img/fix-preview.png)
-
-![Offline zip analysis, dark theme](https://raw.githubusercontent.com/sss-dclemente/sss-pptb/main/tools/dependency-cleaner/docs/img/offline-dark.png)
-
 ## Install
 
-**From the ToolBox marketplace** — search for "SSS Dependency Cleaner" once listed.
+**From the ToolBox marketplace** — search for "Dependency Cleaner" once listed.
 
 **From source**
 
@@ -130,7 +179,7 @@ Then in ToolBox: Debug → *Load Local Tool* → select the `tools/dependency-cl
 
 1. Primary connection = the dev environment. Optionally a secondary connection = the target environment.
 2. **Diagnose**: pick the solution, adjust the filter, run. Or **Failed import**: pick the environment the import failed in, Scan solution history (or paste the error). Or **Slim**: pick the solution, Analyze, untick what must stay. Or **Cycles**: tick the solutions you ship, pick the base, Analyze. Or **Upgrade blockers**: pick the solution you are about to upgrade in the target, Analyze.
-3. Pick a fix on the findings you want to act on, **Preview fixes…**, review, **Download backup**, **Confirm and apply**.
+3. Pick a fix on the findings you want to act on, **Preview fixes…**, review, **Download backup**, **Confirm and apply**, then check the environment, the operation count and the way back in the last confirmation before you click Apply.
 4. Export the solution again.
 
 ## Limitations
@@ -166,6 +215,14 @@ npm run e2e         # Playwright tests against dist/ with a mocked ToolBox host 
 ```
 
 Stack: TypeScript, Vite, no framework, JSZip (offline tab). Types from `@pptb/types`.
+
+## AI Assistance
+
+Substantial parts of this tool's code and documentation were generated with Claude Code (Anthropic) and reviewed and maintained by the contributors listed in `package.json`. Testing status against real Dataverse environments is stated per feature under Limitations.
+
+## Credits
+
+Built and maintained by Duarte Clemente ([Simple Smooth Safe](https://simplesmoothsafe.com)).
 
 ## License
 

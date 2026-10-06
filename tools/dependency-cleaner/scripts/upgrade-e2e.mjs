@@ -208,6 +208,13 @@ const MOCK = `
 const { page, assert, finish } = await launchPage(import.meta.url, { initScript: MOCK });
 await page.goto("file://" + TOOL + "/dist/index.html");
 const M = (fn, arg) => page.evaluate(fn, arg);
+// the last confirmation before a write names the environment, the scope and the way back
+const okWrite = async (env, url, scope, wayBack = /backup/i) => {
+  await page.waitForSelector("#dlg[open] #dlg-write");
+  const t = await page.textContent("#dlg-write");
+  assert(t.includes(env) && t.includes(url) && t.includes(scope) && wayBack.test(t), "write confirmation names environment, scope and way back: " + t);
+  await page.click("#dlg-ok");
+};
 const ID = await M(() => window.__mock.ID);
 
 // ---- load ----
@@ -256,8 +263,8 @@ assert(body.includes("sss_shared") && body.includes("SssApps"), "sss_shared surv
 const rt = await page.textContent("#ub-runtime");
 assert(rt.includes("sss_/js/nav.js") && rt.includes("Ops Hub") && rt.includes("Site map"), "runtime breaks: JS navigateTo and site map name the deleted pages: " + rt);
 
-// E2E_SHOTS=1 refreshes the README screenshot of this screen (docs/img/upgrade-blockers.png)
-if (process.env.E2E_SHOTS) await page.screenshot({ path: resolve(TOOL, "docs/img/upgrade-blockers.png"), fullPage: false });
+// E2E_SHOTS=1 writes a synthetic screenshot of this screen (docs/img-synthetic/, gitignored; not for the README)
+if (process.env.E2E_SHOTS) await page.screenshot({ path: resolve(TOOL, "docs/img-synthetic/upgrade-blockers.png"), fullPage: false });
 
 // ---- D8: layers behind a keyed fold, open only for the membership fallback; report-only blockers labelled ----
 const layerFolds = () => page.$$eval("#ub-body .finding", (els) => Object.fromEntries(els.map((e) => {
@@ -319,6 +326,7 @@ const backup = saved.at(-1);
 const bk = JSON.parse(backup.content);
 assert(bk.kind === "sss-dependency-cleaner-backup" && bk.apps?.[0]?.id === ID.APP1d && bk.apps[0].components[0].id === ID.P1d && bk.membership.length === 4, "backup: Dev membership + app components to re-add (Dev ids)");
 await page.click("#ub-confirm");
+await okWrite("SSS Dev", "https://sss-dev.crm4.dynamics.com", "2 operations in Dev on solution SssCore: 1 component removed from 1 model-driven app (RemoveAppComponents), then PublishXml");
 await page.waitForSelector("#ub-rerun", { timeout: 15000 });
 const writes = (await M(() => window.__mock.executes)).filter((e) => e.operationName !== "RetrieveCurrentOrganization");
 const rac = writes.find((e) => e.operationName === "RemoveAppComponents");
@@ -341,7 +349,7 @@ await page.waitForSelector("#restore-ops li");
 const rops = await page.$$eval("#restore-ops > li .mono", (els) => els.map((e) => e.textContent));
 assert(rops.length === 2 && rops[0].startsWith("AddAppComponents Sales Hub") && rops[1].startsWith("PublishXml app"), "restore plan: AddAppComponents + publish: " + rops.join(" | "));
 await page.click("#btn-restore-apply");
-await page.click("#dlg-ok");
+await okWrite("SSS Dev", "https://sss-dev.crm4.dynamics.com", "2 operations on solution SssCore");
 await page.waitForFunction(() => window.__mock.notes.some((n) => n.title === "Restored"));
 assert(await M(() => window.__mock.devAppHasPage), "restore put the page back in the app");
 

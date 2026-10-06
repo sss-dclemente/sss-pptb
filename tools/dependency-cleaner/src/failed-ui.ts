@@ -3,7 +3,7 @@
  * Reads the error from solution history (or pasted text) in the environment the import failed in, finds what still
  * references each component, and fixes it there. Logic in deps/failed.ts.
  */
-import { $, badge, emptyState, foldCard, h, keepFold, showDialog, type Child } from "../../_shared/dom";
+import { $, badge, emptyState, foldCard, h, keepFold, type Child } from "../../_shared/dom";
 import { Cancelled } from "./deps/diagnose";
 import { safeFileName } from "./deps/export";
 import { MetaCache, onTarget, type DataverseLike } from "./deps/fetch";
@@ -29,6 +29,7 @@ import {
 } from "./deps/failed";
 import { typeName, type SolutionInfo, type Target } from "./deps/types";
 import type { UComponent } from "./deps/upgrade";
+import { confirmWrite, plural } from "./confirm-write";
 import { getConnections, notify, openText, saveText, type LiveConnection } from "./host";
 
 export interface FailedContext {
@@ -397,6 +398,26 @@ async function confirm(): Promise<void> {
       await notify("Refused", `The plan was made on ${was}, the connection is now ${now?.conn.url ?? "none"}. Nothing was written.`, "error");
       return;
     }
+    const active = plan.ops.filter((o) => o.kind === "remove-active").length;
+    const flows = plan.ops.length - active;
+    const what = [
+      active && `${plural(active, "active customization")} removed (RemoveActiveCustomizations)`,
+      flows && `${plural(flows, "cloud flow")} re-pointed to another connection reference (turned off, clientdata updated, turned back on)`,
+    ].filter(Boolean);
+    const go = await confirmWrite({
+      title: "Apply fixes",
+      conn: now,
+      scope: `${plural(plan.ops.length, "operation")} written to this environment: ${what.join(", ")}.`,
+      warnings: active
+        ? ["Removing an active customization cannot be undone, by this tool or by the platform: the unmanaged layer is deleted and the managed definition takes over. The backup keeps the layer's JSON as a record only; re-create the customization by hand if you need it back."]
+        : [],
+      wayBack: flows
+        ? "Way back for flows: the backup you saved for this plan. Undo flow changes… writes each flow's previous clientdata back."
+        : "The backup you saved for this plan is a record only: nothing in it can be put back.",
+      okLabel: `Apply ${plan.ops.length}`,
+      danger: true,
+    });
+    if (!go) return;
     const before = check.blockers.length;
     const results = await executeFailedOps(onTarget(a, planConn.target), plan.ops, (i, n) => ctx.setStatus(i < n ? `Applying ${i + 1} / ${n}…` : null));
     ctx.setStatus(null);
@@ -427,9 +448,12 @@ async function undo(): Promise<void> {
     const conn = [ctx.connection("secondary"), ctx.connection("primary")].find((c) => c && ctx.sameUrl(c.conn.url, b.environment.url));
     if (!conn) throw new Error(`The backup was taken in ${b.environment.url}; no connection points there.`);
     if (!b.flows.length) throw new Error(`Nothing to undo: the backup has no flow changes${b.activeLayers.length ? " (removed active customizations cannot be put back)" : ""}.`);
-    const ok = await showDialog({
+    const ok = await confirmWrite({
       title: "Undo flow changes",
-      body: h("div", {}, h("p", {}, `Write back the clientdata of ${b.flows.length} flow(s) in ${conn.conn.name}:`), h("ul", { class: "plain" }, ...b.flows.map((f) => h("li", { class: "mono" }, f.name)))),
+      conn,
+      scope: `Write back the clientdata of ${plural(b.flows.length, "flow")} from the backup of ${b.takenAt} (each one turned off, updated and turned back on if it was on): ${b.flows.map((f) => f.name).join(", ")}.`,
+      warnings: b.activeLayers.length ? [`${plural(b.activeLayers.length, "removed active customization")} in this backup cannot be put back.`] : [],
+      wayBack: "No new backup is taken before an undo: the flows' current clientdata is overwritten. To go forward again, re-point the flows again from this tab.",
       okLabel: "Undo",
       danger: true,
     });

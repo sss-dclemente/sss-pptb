@@ -7,6 +7,7 @@ import { fetchSolutionManaged, MetaCache, type DataverseLike } from "./deps/fetc
 import { typeName, type SolutionInfo } from "./deps/types";
 import { analyzeUpgrade, locationLabel, planUpgradeFixes, upgradeMarkdown, type Blocker, type BlockerFix, type BlockerLocation, type UComponent, type UpgradeAnalysis, type UpgradePlan } from "./deps/upgrade";
 import { executeOps, opLabel, type OpResult } from "./deps/write";
+import { confirmWrite, opsBreakdown, plural } from "./confirm-write";
 import { errorList } from "./error-list";
 import { notify, saveText, type LiveConnection } from "./host";
 
@@ -364,6 +365,16 @@ async function confirm(): Promise<void> {
       await notify("Refused", `${sol.uniqueName} is managed in Dev (or could not be read). Nothing was written.`, "error");
       return;
     }
+    const go = await confirmWrite({
+      title: "Apply Dev fixes",
+      conn: now,
+      scope: `${plural(plan.ops.length, "operation")} in Dev on solution ${fresh.uniqueName}: ${opsBreakdown(plan.ops)}. The target environment is only read, never written.`,
+      wayBack:
+        "Way back: the backup you saved for this plan. The Restore tab re-adds the removed app components (then publishes the apps) and the components removed from the solution; only in this environment.",
+      okLabel: `Apply ${plan.ops.length}`,
+      danger: ctx.isProd(now),
+    });
+    if (!go) return;
     const before = analysis.blockers.length;
     const results = await executeOps(a, plan.ops, fresh.uniqueName, (i, n) => ctx.setStatus(i < n ? `Applying ${i + 1} / ${n}…` : null));
     ctx.setStatus(null);
