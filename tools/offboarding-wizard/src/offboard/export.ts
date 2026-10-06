@@ -1,6 +1,6 @@
 /** JSON / CSV exports for the audit trail. Pure. */
 import { categoryLabel } from "./plan";
-import { CALL_TEXT, type Inventory, type OpResult, type Plan, type UserInfo } from "./types";
+import { CALL_TEXT, type Inventory, type OpResult, type Plan, type PlannedOp, type UserInfo } from "./types";
 
 export const safeFileName = (s: string): string => s.replace(/[^a-z0-9._-]+/gi, "_").replace(/^_+|_+$/g, "") || "export";
 
@@ -13,10 +13,33 @@ export const csv = (rows: unknown[][]): string => rows.map((r) => r.map(csvCell)
 const userOut = (u: UserInfo | null): Record<string, unknown> | null =>
   u ? { id: u.id, name: u.fullName, domainName: u.domainName, email: u.email, disabled: u.isDisabled, accessMode: u.accessMode } : null;
 
+/**
+ * The value an operation replaces, so a run can be reversed by hand from the export. Every record and
+ * asset in a plan is owned by the leaver and every direct report has the leaver as manager (that is how
+ * the inventory selects them), so the previous value is known before anything is written. Grants to the
+ * successor have no previous value: undoing one means removing it again.
+ */
+export function previousValue(op: PlannedOp, leaver: UserInfo): string {
+  const who = `${leaver.fullName} (systemuser ${leaver.id})`;
+  if (op.kind === "reassign-record" || op.kind === "reassign-asset") return `owner: ${who}`;
+  if (op.kind === "manager-reassign") return `manager: ${who}`;
+  if (op.kind === "role-remove" || op.kind === "profile-remove") return `held by ${who}`;
+  if (op.kind === "team-remove") return `member: ${who}`;
+  return "";
+}
+
+/** The confirmed plan before anything is written: one row per operation with the value it replaces. */
+export function planCsv(plan: Plan, leaver: UserInfo): string {
+  return csv([
+    ["category", "kind", "entity", "id", "target", "detail", "call", "previous"],
+    ...plan.ops.map((op) => [categoryLabel(op.category), op.kind, op.call.entity, op.call.id, op.label, op.detail, CALL_TEXT(op.call), previousValue(op, leaver)]),
+  ]);
+}
+
 export function inventoryJson(inv: Inventory, environment: string | null): string {
   return JSON.stringify(
     {
-      tool: "SSS Offboarding Wizard",
+      tool: "Offboarding Wizard",
       exportedAt: new Date().toISOString(),
       environment,
       leaver: { ...userOut(inv.leaver.user), businessUnit: inv.leaver.businessUnitName, manager: userOut(inv.leaver.manager) },
@@ -70,7 +93,7 @@ export function inventoryCsv(inv: Inventory): string {
 export function resultsJson(inv: Inventory, plan: Plan, results: OpResult[], successor: UserInfo, environment: string | null): string {
   return JSON.stringify(
     {
-      tool: "SSS Offboarding Wizard",
+      tool: "Offboarding Wizard",
       exportedAt: new Date().toISOString(),
       environment,
       leaver: userOut(inv.leaver.user),
@@ -84,6 +107,7 @@ export function resultsJson(inv: Inventory, plan: Plan, results: OpResult[], suc
         target: r.op.label,
         detail: r.op.detail,
         call: CALL_TEXT(r.op.call),
+        previous: previousValue(r.op, inv.leaver.user),
         ok: r.ok,
         error: r.error,
       })),
@@ -93,9 +117,9 @@ export function resultsJson(inv: Inventory, plan: Plan, results: OpResult[], suc
   );
 }
 
-export function resultsCsv(results: OpResult[]): string {
+export function resultsCsv(results: OpResult[], leaver: UserInfo): string {
   return csv([
-    ["category", "kind", "target", "detail", "call", "result", "error"],
-    ...results.map((r) => [categoryLabel(r.op.category), r.op.kind, r.op.label, r.op.detail, CALL_TEXT(r.op.call), r.ok ? "ok" : "failed", r.error ?? ""]),
+    ["category", "kind", "target", "detail", "call", "previous", "result", "error"],
+    ...results.map((r) => [categoryLabel(r.op.category), r.op.kind, r.op.label, r.op.detail, CALL_TEXT(r.op.call), previousValue(r.op, leaver), r.ok ? "ok" : "failed", r.error ?? ""]),
   ]);
 }

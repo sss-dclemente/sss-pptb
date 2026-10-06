@@ -22,13 +22,13 @@
 //           sharing one note, and no field security profile (so the profile options are moot).
 //
 // Run: npm run build && node scripts/e2e.mjs   (needs playwright + chromium available)
-// Set E2E_SHOTS=1 to refresh docs/img/*.png from this run.
+// Set E2E_SHOTS=1 to write docs/img-synthetic/*.png from this run (gitignored: synthetic data, never published).
 import { mkdirSync } from "node:fs";
 import { launchPage } from "../../_shared/e2e-loader.mjs";
 import { checkDebugLog } from "../../_shared/e2e-debug.mjs";
 
 const TOOL = new URL("..", import.meta.url).pathname.replace(/\/$/, "");
-const SHOTS = process.env.E2E_SHOTS ? `${TOOL}/docs/img` : null;
+const SHOTS = process.env.E2E_SHOTS ? `${TOOL}/docs/img-synthetic` : null;
 if (SHOTS) mkdirSync(SHOTS, { recursive: true });
 
 const MOCK = `
@@ -78,7 +78,7 @@ const MOCK = `
   const sets = {
     systemusers: { key: 'systemuserid', rows: users },
     businessunits: { key: 'businessunitid', rows: [{ businessunitid: BU_SALES, name: 'Sales' }, { businessunitid: BU_OPS, name: 'Operations' }] },
-    organizations: { key: 'organizationid', rows: [{ organizationid: ORG, name: 'SSS Dev', sharetopreviousowneronassign: !OTHER_BU }] },
+    organizations: { key: 'organizationid', rows: [{ organizationid: ORG, name: 'Contoso Dev', sharetopreviousowneronassign: !OTHER_BU }] },
     teams: { key: 'teamid', rows: [
       { teamid: T_EU, name: 'Sales EU', teamtype: 0, isdefault: false, _businessunitid_value: BU_SALES },
       { teamid: T_AAD, name: 'Entra Sales', teamtype: 2, isdefault: false, _businessunitid_value: BU_SALES },
@@ -210,7 +210,7 @@ const MOCK = `
     execute: async () => { throw new Error('mock: execute must not be used'); },
   };
   window.toolboxAPI = {
-    connections: { getActiveConnection: async () => ({ id: 'c1', name: 'SSS Dev', url: 'https://sss-dev.crm4.dynamics.com', environment: 'Dev', environmentColor: '#0f766e' }), getSecondaryConnection: async () => null },
+    connections: { getActiveConnection: async () => ({ id: 'c1', name: 'Contoso Dev', url: 'https://contoso-dev.crm4.dynamics.com', environment: 'Dev', environmentColor: '#0f766e' }), getSecondaryConnection: async () => null },
     utils: { getCurrentTheme: async () => 'light', showNotification: async (o) => { (window.__notes ??= []).push(o); } },
     events: { on: (h) => window.__handlers.push(h) },
     fileSystem: { selectPath: async () => null, readBinary: async () => new Uint8Array(), readText: async () => '', saveFile: async (name, content) => { window.__saved.push({ name, content }); return '/tmp/' + name; } },
@@ -230,7 +230,7 @@ const shot = async (name) => {
 const opCount = (s) => Number((s.match(/(\d+) operation/) ?? [])[1] ?? NaN);
 
 assert((await text("#host-mode")).includes("inside Power Platform ToolBox"), "toolbox host detected");
-assert((await text("#conn")).includes("SSS Dev"), "connection chip");
+assert((await text("#conn")).includes("Contoso Dev"), "connection chip");
 assert((await text("#tab-leaver")).includes("No leaver selected"), "leaver empty state");
 
 // ---- 1. leaver ----
@@ -426,6 +426,26 @@ assert(planned > 0 && estimated === planned, `the estimate matches the plan, Ent
 assert(await page.$eval("#dlg-ok", (b) => b.className.includes("btn-danger")), "confirm button uses danger styling");
 assert((await page.textContent("#dlg-ok")).startsWith("Apply "), "confirm labels the op count");
 assert((await page.evaluate(() => window.__writes.length)) === 0, "nothing written before confirm");
+// the confirmation names environment, leaver, successor, where records go, counts per kind of write, and the way back
+assert((await text("#dlg-target")).includes("Contoso Dev (Dev)"), "dialog header names the environment: " + (await text("#dlg-target")));
+const scope = await page.$eval("#preview-scope", (s) => ({
+  kv: Object.fromEntries([...s.querySelectorAll("dt")].map((dt) => [dt.textContent, dt.nextElementSibling.textContent])),
+  kinds: [...s.querySelectorAll("#preview-kinds li")].map((li) => li.textContent),
+  undo: s.querySelector("#preview-undo").textContent,
+}));
+assert(scope.kv.Environment === "Contoso Dev (Dev) · https://contoso-dev.crm4.dynamics.com", "scope names the environment and its URL: " + scope.kv.Environment);
+assert(scope.kv.Leaver.startsWith("Ana Silva") && scope.kv.Successor.startsWith("Bruno Costa") && scope.kv["Records go to"] === "Bruno Costa", "scope names leaver, successor and record target: " + JSON.stringify(scope.kv));
+assert(scope.kinds.includes("Records: change owner: 5") && scope.kinds.some((k) => k.startsWith("Security roles: remove from the leaver: ")), "scope counts each kind of write: " + scope.kinds.join(" | "));
+assert(scope.kinds.reduce((n, k) => n + Number(k.split(": ").pop()), 0) === planned, "the per-kind counts add up to the plan");
+assert(scope.undo.includes("cannot be undone from this tool") && scope.undo.includes("previous owner (Ana Silva)"), "the confirmation says plainly it cannot be undone and where the way back is");
+assert(dlg.includes("Assign cascade rule") && dlg.includes("not counted in this plan"), "cascaded owner changes are disclosed as outside the counted scope");
+await page.click("#btn-export-plan");
+await page.waitForFunction(() => window.__saved.length === 1);
+const planOut = await page.evaluate(() => window.__saved[0]);
+assert(planOut.name === "ana_sss.test.offboarding-plan.csv" && planOut.content.startsWith("category,kind,entity,id,target,detail,call,previous"), "plan export before apply: " + planOut.name);
+assert(planOut.content.trim().split("\n").length === planned + 1 && planOut.content.includes(`owner: Ana Silva (systemuser ${await page.evaluate(() => window.__ids.ANA)})`), "plan export lists every operation with the previous owner");
+assert((await page.evaluate(() => window.__writes.length)) === 0, "exporting the plan writes nothing");
+await page.evaluate(() => (window.__saved.length = 0));
 
 // cancel first: still nothing written
 await page.click("#dlg-cancel");
@@ -502,7 +522,7 @@ const saved = await page.evaluate(() => window.__saved);
 const invJson = JSON.parse(saved[0].content);
 const cat = (k) => invJson.categories.find((c) => c.key === k);
 assert(saved[0].name === "ana_sss.test.offboarding-inventory.json", "inventory JSON file name: " + saved[0].name);
-assert(invJson.leaver.name === "Ana Silva" && invJson.environment.includes("SSS Dev"), "inventory JSON header");
+assert(invJson.leaver.name === "Ana Silva" && invJson.environment.includes("Contoso Dev"), "inventory JSON header");
 assert(invJson.recordScan.withRecords.length === 2 && invJson.recordScan.notScanned[0].table === "sss_locked", "inventory JSON scan section");
 assert(cat("workflows").items.length === 2 && cat("connections").items.length === 1, "inventory JSON categories");
 assert(invJson.categories.every((c) => c.error === null), "every inventory category read cleanly");
@@ -511,7 +531,8 @@ assert(saved[1].content.includes("records,account,,Account,3 owned,") && saved[1
 const resJson = JSON.parse(saved[2].content);
 assert(resJson.summary.failed === 1 && resJson.summary.ok === writes.length - 1 && resJson.successor.name === "Bruno Costa", "results JSON summary");
 assert(resJson.operations.some((o) => o.call.startsWith("associate systemuser(") && o.ok), "results JSON keeps the exact call");
-assert(saved[3].content.startsWith("category,kind,target,detail,call,result,error") && saved[3].content.includes("privilege denied on Account 3"), "results CSV");
+assert(saved[3].content.startsWith("category,kind,target,detail,call,previous,result,error") && saved[3].content.includes("privilege denied on Account 3"), "results CSV");
+assert(resJson.operations.filter((o) => o.kind === "reassign-record").every((o) => o.previous === `owner: Ana Silva (systemuser ${ids.ANA})`), "results JSON names the previous owner of every reassigned record");
 assert(resJson.operations.length === writes.length && resJson.operations.find((o) => !o.ok).error.endsWith("PrivilegeCacheLoader.LoadCacheData"), "results JSON: every row and the full error");
 assert(saved[3].content.trim().split("\n").length === writes.length + 1 && saved[3].content.includes("PrivilegeCacheLoader.LoadCacheData"), "results CSV: every row and the full error");
 assert(JSON.stringify(JSON.parse(saved[4].content).operations) === JSON.stringify(resJson.operations) && saved[5].content === saved[3].content, "results exports identical whichever view (Failed / All) is shown");
