@@ -1,8 +1,9 @@
 /**
  * "Unused apps" report (read-only), for the connection's environment. See docs/D365-APPS-PLAN.md §7–8.
  *
- * package → solutions:  msdyn_solutionhistories (Import rows carry msdyn_packagename) ∩ installed managed solutions,
- *                       plus the anchor solution whose uniquename is the package's uniqueName.
+ * package → solutions:  msdyn_solutionhistories Import rows ∩ installed managed solutions: by msdyn_packagename when set,
+ *                       else by msdyn_correlationid (one install run: the package's anchor and the solutions it brought),
+ *                       plus the anchor solution whose uniquename is the package's uniqueName (anchors are hidden: isvisible false).
  * solution → tables:    solutioncomponents type 1 (objectid = EntityMetadata.MetadataId) → EntityDefinitions.
  * solution → apps:      solutioncomponents type 80 (objectid = appmoduleid) → appmodules + appmoduleroles_association.
  * table → rows:         RetrieveTotalRecordCount (snapshot < 24 h), every 0 / missing double-checked with $top=1.
@@ -141,20 +142,34 @@ const orFilter = (field: string, ids: string[]) => ids.map((id) => `${field} eq 
 
 // ---------- package → solutions ----------
 
-/** packagename (lower) → solution uniquenames (lower) from successful or unknown-result Import rows. */
+/**
+ * packagename (lower) → solution uniquenames (lower) from successful or unknown-result Import rows.
+ * msdyn_packagename was "" on every row of a real environment (2026-10-06), so the rows are also grouped by
+ * msdyn_correlationid (one install run; the all-zero id is a catch-all) and every solution in a run is a key for the
+ * whole run: looked up by package uniqueName, the anchor's runs give the package's solutions.
+ */
 export function historyMap(rows: Row[]): Map<string, Set<string>> {
   const out = new Map<string, Set<string>>();
+  const add = (k: string, sol: string) => {
+    if (!out.has(k)) out.set(k, new Set());
+    out.get(k)!.add(sol);
+  };
+  const runs = new Map<string, Set<string>>();
   for (const r of rows) {
     const op = r.msdyn_operation;
     if (op !== undefined && op !== null && Number(op) !== 0) continue;
     if (r.msdyn_result === false) continue;
+    const sol = str(r.msdyn_name)?.toLowerCase();
+    if (!sol) continue;
     const pkgName = str(r.msdyn_packagename);
-    const sol = str(r.msdyn_name);
-    if (!pkgName || !sol) continue;
-    const k = pkgName.toLowerCase();
-    if (!out.has(k)) out.set(k, new Set());
-    out.get(k)!.add(sol.toLowerCase());
+    if (pkgName) add(pkgName.toLowerCase(), sol);
+    const run = lid(r.msdyn_correlationid);
+    if (GUID.test(run) && /[1-9a-f]/.test(run)) {
+      if (!runs.has(run)) runs.set(run, new Set());
+      runs.get(run)!.add(sol);
+    }
   }
+  for (const sols of runs.values()) for (const k of sols) for (const s of sols) add(k, s);
   return out;
 }
 
@@ -242,7 +257,7 @@ export async function analyzeUnused(o: AnalyzeOptions): Promise<UnusedReport> {
   const packages = o.installed.filter((p) => p.state === "" || /^(installed|none)$/i.test(p.state) || /failed$/i.test(p.state));
 
   say("Reading solutions…");
-  const solRows = await queryAll(dv, "solutions?$select=solutionid,uniquename,friendlyname,version&$filter=ismanaged eq true and isvisible eq true");
+  const solRows = await queryAll(dv, "solutions?$select=solutionid,uniquename,friendlyname,version&$filter=ismanaged eq true");
   const solutions = new Map<string, SolutionRef>();
   for (const r of solRows) {
     const u = str(r.uniquename);
@@ -253,11 +268,11 @@ export async function analyzeUnused(o: AnalyzeOptions): Promise<UnusedReport> {
   let history = true;
   let histRows: Row[] = [];
   try {
-    histRows = await queryAll(dv, "msdyn_solutionhistories?$select=msdyn_name,msdyn_packagename,msdyn_operation,msdyn_result&$filter=msdyn_operation eq 0 and msdyn_packagename ne null");
+    histRows = await queryAll(dv, "msdyn_solutionhistories?$select=msdyn_name,msdyn_packagename,msdyn_operation,msdyn_result,msdyn_correlationid&$filter=msdyn_operation eq 0");
   } catch (e) {
     try {
       // virtual table: some filters are not supported by its provider; filter here instead
-      histRows = await queryAll(dv, "msdyn_solutionhistories?$select=msdyn_name,msdyn_packagename,msdyn_operation,msdyn_result");
+      histRows = await queryAll(dv, "msdyn_solutionhistories?$select=msdyn_name,msdyn_packagename,msdyn_operation,msdyn_result,msdyn_correlationid");
     } catch (e2) {
       history = false;
       warnings.push(`Solution history unreadable (${(e2 as Error)?.message ?? e2}); only anchor solutions were mapped.`);
