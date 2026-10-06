@@ -318,10 +318,18 @@ export async function analyzeUnused(o: AnalyzeOptions): Promise<UnusedReport> {
   say(`Counting rows in ${toCount.length} tables…`);
   const snap = new Map<string, number>();
   await pool(chunks(toCount.map((d) => d.logicalName), COUNT_CHUNK), CONCURRENCY, async (names) => {
-    try {
-      for (const [k, v] of parseCounts(await dv.queryData(countPath(names)))) snap.set(k, v);
-    } catch (e) {
-      warnings.push(`Record count failed for ${names.length} tables (${(e as Error)?.message ?? e}); checked one by one.`);
+    while (names.length) {
+      try {
+        for (const [k, v] of parseCounts(await dv.queryData(countPath(names)))) snap.set(k, v);
+        return;
+      } catch (e) {
+        // one table the count refuses fails the batch ("Entity x is not valid for read", "… is a virtual entity"),
+        // and metadata does not flag it: drop it (checked one by one below), count the rest
+        const msg = String((e as Error)?.message ?? e).toLowerCase();
+        const bad = names.find((n) => msg.includes(`entity ${n.toLowerCase()} `));
+        if (bad) names = names.filter((n) => n !== bad);
+        else return void warnings.push(`Record count failed for ${names.length} tables (${(e as Error)?.message ?? e}); checked one by one.`);
+      }
     }
   });
   await pool(toCount, CONCURRENCY, async (d) => {

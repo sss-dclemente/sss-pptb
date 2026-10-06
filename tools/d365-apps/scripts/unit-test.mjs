@@ -299,6 +299,9 @@ function fakeDv(o = {}) {
       if (q.startsWith("EntityDefinitions?")) return page(defs);
       if (q.startsWith("RetrieveTotalRecordCount(")) {
         const names = JSON.parse(decodeURIComponent(q.split("@p1=")[1]));
+        const bad = names.find((n) => o.countRefuses?.[n]);
+        if (bad) throw new Error(`400 {"error":{"code":"0x80040203","message":"Entity ${bad} ${o.countRefuses[bad]}"}}`);
+        if (o.countDown) throw new Error("503 Service Unavailable");
         const keys = names.filter((n) => n in snapshot);
         return { EntityRecordCountCollection: { Count: keys.length, Keys: keys, Values: keys.map((k) => snapshot[k]) } };
       }
@@ -364,6 +367,21 @@ test("analyzeUnused: shared solutions and tables excluded, zeros re-checked live
   assert.ok(!dv.calls.some((q) => q.startsWith("msdyn_shareds?")) && !dv.calls.some((q) => q.includes("msdyn_shared%22")), "shared tables are not counted");
   const csv = M.unusedCsv(r, "Dev");
   assert.match(csv.split("\r\n")[1], /^Dev,Gamification,Gamification,1\.0,Probably unused,0,1,,msdyn_Gami,msdyn_Common,Gamification \(0 roles\),history$/);
+});
+
+test("analyzeUnused: a table the count API refuses is dropped from its batch, the rest keep their snapshot", async () => {
+  const dv = fakeDv({ countRefuses: { msdyn_badge: "is not valid for read", msdyn_opp: "is a virtual entity, which is not supported" } });
+  const r = await M.analyzeUnused({ dv, installed: installedPkgs });
+  const by = Object.fromEntries(r.packages.map((p) => [p.pkg.uniqueName, p]));
+  assert.deepEqual(r.warnings, [], "refused tables are expected, no warning");
+  assert.equal(by.SeedPkg.verdict, "light", "3 rows from the snapshot, not a $top=1 lower bound");
+  assert.equal(by.SeedPkg.tables[0].atLeast, false);
+  assert.ok(!dv.calls.some((q) => q.startsWith("msdyn_seedcfgs?")), "counted table not re-queried");
+  assert.ok(dv.calls.includes("msdyn_badges?$select=msdyn_badgeid&$top=1"), "refused table checked live");
+  assert.equal(by.Gamification.verdict, "unused");
+  const down = await M.analyzeUnused({ dv: fakeDv({ countDown: true }), installed: installedPkgs });
+  assert.equal(down.warnings.length, 1, "an error naming no table: one warning, no retry storm");
+  assert.match(down.warnings[0], /Record count failed for 4 tables \(503/);
 });
 
 test("unusedShown: pressed verdicts (any, not found as no signal) override Show all; name filter on top", () => {
