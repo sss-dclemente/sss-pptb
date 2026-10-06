@@ -34,10 +34,9 @@ type SlotApi = { getConnections?: () => Promise<Array<ToolBoxAPI.Connection | nu
 export async function getConnections(): Promise<LiveConnection[]> {
   const tb = toolbox();
   if (!tb?.connections) return [];
-  const slots = (tb.connections as SlotApi).getConnections;
-  const [p, s] = slots
-    ? await slots().catch(() => [] as Array<ToolBoxAPI.Connection | null>)
-    : [await tb.connections.getActiveConnection().catch(() => null), await tb.connections.getSecondaryConnection?.().catch(() => null)];
+  // Bound call: the host may rely on `this`. A rejected slot call falls back to the legacy getters.
+  const slots = await (tb.connections as SlotApi).getConnections?.().catch(() => undefined);
+  const [p, s] = slots ?? [await tb.connections.getActiveConnection().catch(() => null), await tb.connections.getSecondaryConnection?.().catch(() => null)];
   const out: LiveConnection[] = [];
   if (p) out.push({ target: "primary", conn: p });
   if (s) out.push({ target: "secondary", conn: s });

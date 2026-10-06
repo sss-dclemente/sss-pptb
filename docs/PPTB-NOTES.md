@@ -317,7 +317,7 @@ Source: PPTB developer release notice v1.2.7; [toolbox-api#multiple-connections]
 
 **Phase A (done).** `_shared/host.getConnections()` prefers `getConnections()` when the host has it, else falls back to the legacy getters. EnvVar Matrix e2e mocks the slot API (legacy getters throw); the other tools' e2e mock the legacy getters, so both paths stay covered.
 
-**Phase B (only after Desktop 1.2.7 is stable — as of 2026-10-05 only `v1.2.7-dev.*` builds exist).** `connections` needs `minAPI: "1.2.7"`, which locks every 1.2.6 user out, so do not ship it earlier. Per tool: drop the legacy pair, set `connections`, set `minAPI: "1.2.7"`, bump `@pptb/types` to 1.2.7, bump the tool version, run `npm run validate`.
+**Phase B (only after Desktop 1.2.7 is stable — as of 2026-10-05 only `v1.2.7-dev.*` builds exist).** `connections` needs `minAPI: "1.2.7"`, which locks every 1.2.6 user out, so do not ship it earlier. Per tool: drop the legacy pair, set `connections`, set `minAPI: "1.2.7"`, bump `@pptb/types` to 1.2.7 and `@pptb/validate` to ^1.0.4 (the locked 1.0.2 does not know `connections` and errors on a missing `multiConnection`), bump the tool version, run `npm run validate`.
 
 | Tool | Legacy | `connections` |
 |---|---|---|
