@@ -32,9 +32,11 @@ Nothing else: no other files, no settings outside the tool, no network calls oth
 
 ## Screenshots
 
-Column security, captured inside Power Platform ToolBox (user redacted).
+Captured in Power Platform ToolBox against a Dataverse Sandbox environment, with demo users.
 
-![Column security](https://raw.githubusercontent.com/sss-dclemente/sss-pptb/main/tools/access-checker/docs/img/columns.png)
+![Record check: a user with no role on a record, every right denied with its reason, each agreeing with the platform](https://raw.githubusercontent.com/sss-dclemente/sss-pptb/main/tools/access-checker/docs/img/check.png)
+
+![Table check on an organization-owned table, dark theme: Assign and Share not applicable](https://raw.githubusercontent.com/sss-dclemente/sss-pptb/main/tools/access-checker/docs/img/check-dark.png)
 
 ## Install
 
@@ -68,6 +70,9 @@ Notes:
 
 Limitations (the platform verdict is always shown alongside and is right when the two differ):
 
+- **Tested on 2026-10-06 against a Dataverse Sandbox environment** with a single business unit: user search (including a disabled user), table-level checks for a user with no role and for a System Administrator, an organization-owned table (Assign / Share not applicable), Task and Note (activity and note privilege names), a record-level check, the Shares and Column security tabs when the record has no shares and the table no secured column, all three exports, light and dark theme. Every verdict agreed with the platform.
+- **Not yet verified against a live environment** (the environment had no such data): a user with a mix of direct and team roles, Local / Deep depth across business units, records shared with a user or a team, field security profiles on a secured column, *Team privileges only* team roles, and hierarchy security.
+
 - Access-team templates and position hierarchy are not modelled; roles inherited from a team in another BU are approximated against the team's BU.
 - Entra group teams (security or Office group) list only members Dataverse has synced so far: a group member is added just in time, when they first sign in to the environment, so someone who has never signed in does not appear as a member and their team roles are missing here.
 - Nested Entra groups are not resolved: only direct members of the group behind the team are considered.
@@ -85,11 +90,11 @@ All data stays between ToolBox and your Dataverse environment: the tool talks to
 
 ## Release notes
 
-- **1.2.1** — Marketplace review: display name without publisher prefix, 'What this tool changes' section, AI assistance disclosure, synthetic screenshots removed.
+- **1.2.1** — Marketplace review: display name without publisher prefix, 'What this tool changes' section, AI assistance disclosure, synthetic screenshots removed. Check refuses to run when a record name is typed but not picked (it used to run a table-level check under that name).
 
 ## AI Assistance
 
-Substantial parts of this tool's code and documentation were generated with Claude Code (Anthropic) and reviewed and maintained by the contributors listed in `package.json`. Testing status against real Dataverse environments is stated per feature under Limitations.
+Substantial parts of this tool's code and documentation were generated with Claude Code (Anthropic) and reviewed, tested and maintained by the contributors listed in `package.json`. Testing status against real Dataverse environments is stated per feature under Limitations.
 
 ## Credits
 

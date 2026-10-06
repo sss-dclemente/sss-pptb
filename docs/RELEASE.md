@@ -99,20 +99,20 @@ Submit: `@simplesmoothsafe/pptb-envvar-matrix`, categories **Environments, Migra
 ## 3. Access Checker — `tools/access-checker`
 
 Real-env test (one connection, a user with a mix of direct role + team role):
-- [ ] User typeahead finds by name / domain / email; disabled badge on a disabled user.
-- [ ] Table list excludes intersect/private tables; org-owned table shows Assign / Share as n/a.
+- [x] User typeahead finds by name / domain / email; disabled badge on a disabled user. (2026-10-06, PSA-DEV Sandbox)
+- [x] Table list excludes intersect/private tables; org-owned table shows Assign / Share as n/a. (Currency, 2026-10-06)
 - [ ] Table-level check: every chip's depth equals the effective depth in Security roles UI (`agrees` on all eight).
 - [ ] Record check: pick a record owned by another user in a child BU and one in a sibling BU; verdict chips match what the user actually sees (log in as them or use "Check access" in the model-driven app). Any `platform says otherwise` → note the case in `docs/BACKLOG.md`.
 - [ ] Record shared with a team the user belongs to: Shares tab lists it with `via team`; Check tab shows the share as the winning path.
 - [ ] Column security on a table with a secured column: Read / Update / Create match the field security profile UI.
 - [ ] Hierarchy: with hierarchy security on and the user as the owner's manager, the Hierarchy card appears. If the card says "state unknown", the organization row could not be read: check `fetchHierarchySettings` in `src/access/fetch.ts` (`ishierarchicalsecuritymodelenabled`, `maxdepthforhierarchicalsecuritymodel`, both documented on the organization table). A manager further above the owner than the organization's hierarchy depth gets no card.
-- [ ] Table-level check on an activity table (Task) and on Note: chips agree (names come from entity metadata: `prv*Activity`, `prv*Note`).
+- [x] Table-level check on an activity table (Task) and on Note: chips agree (2026-10-06, no-role user only) (names come from entity metadata: `prv*Activity`, `prv*Note`).
 - [ ] Team role with *Member's privilege inheritance* = *Team privileges only* at Basic: a record the user owns is not reached through it; a record owned by that team is.
 - [ ] Record shared with the user for a right they hold no privilege for: the chip is denied and the "why" line says the share has no effect.
-- [ ] Exports: JSON, shares CSV, columns CSV.
+- [x] Exports: JSON, shares CSV, columns CSV. (2026-10-06)
 - [ ] Debug log (1.1.0; published to npm 2026-10-02 before this check, fixes go in 1.1.1): tick Debug log, run a record check, Save log: user, privilege and share queries with results; a failed call shows its error.
 
-Screenshots: `check.png`, `columns-dark.png` (+ optionally `shares.png`, add to README). Remove the synthetic-data line from `README.md`.
+Screenshots: `check.png`, `check-dark.png` captured 2026-10-06 on PSA-DEV (no secured column or share there, so `columns-dark.png` / `shares.png` were not captured; old `columns.png` removed). UNVERIFIED on a live environment: mixed direct + team roles, cross-BU depth, shares, field security, Team privileges only, hierarchy.
 
 Publish:
 ```bash

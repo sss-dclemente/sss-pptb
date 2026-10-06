@@ -149,6 +149,11 @@ async function loadTables(): Promise<void> {
 async function runCheck(): Promise<void> {
   const a = api();
   if (!a || !user || !tbl) return;
+  // Text typed in Record but no suggestion picked would silently run a table-level check under a record name.
+  if (!record && !recordId && $<HTMLInputElement>("#record-q").value.trim()) {
+    await notify("Pick a record", "Choose the record from the suggestions under Record (type 2 or more characters), paste its GUID, or clear the field for a table-level check.", "warning");
+    return;
+  }
   // Everything the check depends on is captured now: the inputs may change while it is in flight.
   const seq = ++checkSeq;
   const stale = (): boolean => seq !== checkSeq;
