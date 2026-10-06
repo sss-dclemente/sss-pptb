@@ -48,6 +48,20 @@ Reverting restores the flags, not audit history: whatever happened while a table
 
 **Nothing else.** Org-level audit settings (`isauditenabled`, user access and read auditing, retention) are shown read-only. The tool does not create, delete or rename tables or columns, change data records, solutions, security roles, ownership or any other metadata property, and never writes to the secondary connection.
 
+## Screenshots
+
+Captured in Power Platform ToolBox against a Dataverse Sandbox environment, compared with a snapshot taken from it before a test change.
+
+![Matrix: one environment against a snapshot, with the differing table and column marked](https://raw.githubusercontent.com/sss-dclemente/sss-pptb/main/tools/audit-matrix/docs/img/matrix.png)
+
+![A table expanded to its columns: the column flag that differs, and locked system columns](https://raw.githubusercontent.com/sss-dclemente/sss-pptb/main/tools/audit-matrix/docs/img/columns.png)
+
+![Only differences: one table and one column left](https://raw.githubusercontent.com/sss-dclemente/sss-pptb/main/tools/audit-matrix/docs/img/differences.png)
+
+![Preview from Plan: match other env, naming the target environment and saving a backup first](https://raw.githubusercontent.com/sss-dclemente/sss-pptb/main/tools/audit-matrix/docs/img/preview.png)
+
+![Org settings, dark theme](https://raw.githubusercontent.com/sss-dclemente/sss-pptb/main/tools/audit-matrix/docs/img/org-dark.png)
+
 ## Install
 
 **From the ToolBox marketplace** — search for "Audit Config Matrix" once listed.
@@ -80,7 +94,9 @@ Notes:
 - Intersect, private and logical tables are filtered out, as are attributes that cannot be audited.
 - Metadata reads and writes are slow. Expect a few seconds per table on a large plan, and use the progress and Cancel in the status bar.
 - Metadata collections are not paged; environments with extremely large metadata could be truncated.
-- The backup taken before Apply and the revert path through it (0.2.1) are covered by the mocked end-to-end test only; not yet verified against a live tenant.
+- The backup taken before Apply and the revert path through it were tested against a Dataverse Sandbox environment on 2026-10-06: apply a table and a column flag, publish, revert from the backup, publish, and the environment matched its earlier snapshot again.
+- The exported PowerShell script has not yet been run against a live environment.
+- Not yet verified against a live environment (mocked end-to-end test only): a connection user without the privilege to change metadata, an expired or removed connection, and a write the environment rejects (it should stay in the plan as a failed row).
 
 ## Debug log
 
@@ -105,7 +121,7 @@ Stack: TypeScript, Vite, no framework, no runtime dependencies. Types from `@ppt
 
 ## AI Assistance
 
-Substantial parts of this tool's code and documentation were generated with Claude Code (Anthropic) and reviewed and maintained by the contributors listed in `package.json`. Real-environment testing status is stated in this README where a feature has not yet been verified.
+Substantial parts of this tool's code and documentation were generated with Claude Code (Anthropic) and reviewed, tested and maintained by the contributors listed in `package.json`. Real-environment testing status is stated in this README where a feature has not yet been verified.
 
 ## Credits
 

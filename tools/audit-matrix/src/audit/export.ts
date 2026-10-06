@@ -25,7 +25,7 @@ export function matrixCsv(m: Matrix): string {
         : `# organization auditing could not be read for ${primary}`;
   const out: string[] = [
     orgNote,
-    line(["level", "table", "column", "type", `${primary} audit`, "captures", other ? `${other} audit` : "other audit", "differs", "locked", "managed"]),
+    line(["level", "table", "column", "type", `${primary} audit`, "captures", other ? `${other}${m.other?.kind === "snapshot" ? " (snapshot)" : ""} audit` : "other audit", "differs", "locked", "managed"]),
   ];
   const captures = (state: string, inert: boolean): string => (state !== "on" ? "no" : inert ? "no — a level above is off" : "yes");
   for (const r of m.rows) {
@@ -63,7 +63,7 @@ export function planScript(plan: Plan): string {
 # Token: az login, then  $t = (az account get-access-token --resource <env url> | ConvertFrom-Json).accessToken
 
 param(
-  [Parameter(Mandatory = $true)][string] $EnvironmentUrl = '${plan.target.url}',
+  [string] $EnvironmentUrl = '${plan.target.url}',
   [Parameter(Mandatory = $true)][string] $AccessToken
 )
 

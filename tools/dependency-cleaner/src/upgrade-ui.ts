@@ -1,4 +1,5 @@
 /** "Upgrade blockers" tab: docs/UPGRADE-BLOCKERS-PLAN.md. Dev = primary connection, target = secondary. */
+import { noSolutionsText } from "./solutions-state";
 import { $, badge, emptyState, foldAllButtons, foldCard, h, keepFold, type Child } from "../../_shared/dom";
 import { backupFileName, buildUpgradeBackup } from "./deps/backup";
 import { Cancelled } from "./deps/diagnose";
@@ -69,7 +70,7 @@ export function upgradeOnConnections(changed: boolean): void {
           const where = !target ? "" : t ? ` · ${t.isManaged ? "managed" : "unmanaged"} ${t.version} in target` : " · not in target";
           return h("option", { value: x.id }, `${x.friendlyName} (${x.uniqueName}) ${x.version}${where}`);
         })
-      : [h("option", { value: "" }, ctx.primary() ? "No unmanaged solutions" : "No connection")]),
+      : [h("option", { value: "" }, noSolutionsText(!!ctx.primary()))]),
   );
   if ([...sel.options].some((o) => o.value === prev)) sel.value = prev;
   $<HTMLButtonElement>("#ub-run").disabled = !pickable.length || !ctx.secondary();

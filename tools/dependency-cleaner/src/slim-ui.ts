@@ -1,4 +1,5 @@
 /** "Slim" tab: docs/SOLUTION-SLIMMER-PLAN.md. Removes from an unmanaged solution what is neither yours nor customized. */
+import { noSolutionsText } from "./solutions-state";
 import { $, badge, emptyState, filteredEmpty, foldAllButtons, foldCard, h, keepFold, shownOf, type Child } from "../../_shared/dom";
 import { persistControls, type PersistedControls } from "../../_shared/view-state";
 import { backupFileName, buildMembershipBackup } from "./deps/backup";
@@ -68,7 +69,7 @@ export function slimOnConnections(changed: boolean): void {
   const sel = $<HTMLSelectElement>("#sl-solution");
   const prev = sel.value;
   const pickable = ctx.devSolutions().filter((x) => !x.isManaged && !SYSTEM.has(x.uniqueName.toLowerCase()));
-  sel.replaceChildren(...(pickable.length ? pickable.map((x) => h("option", { value: x.id }, `${x.friendlyName} (${x.uniqueName}) ${x.version}`)) : [h("option", { value: "" }, ctx.primary() ? "No unmanaged solutions" : "No connection")]));
+  sel.replaceChildren(...(pickable.length ? pickable.map((x) => h("option", { value: x.id }, `${x.friendlyName} (${x.uniqueName}) ${x.version}`)) : [h("option", { value: "" }, noSolutionsText(!!ctx.primary()))]));
   if ([...sel.options].some((o) => o.value === prev)) sel.value = prev;
   $<HTMLButtonElement>("#sl-run").disabled = !pickable.length;
   render();
