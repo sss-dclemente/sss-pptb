@@ -249,7 +249,7 @@ const G = (n) => `00000000-0000-0000-0000-${String(n).padStart(12, "0")}`;
 function fakeDv(o = {}) {
   const calls = [];
   const sols = [
-    { solutionid: G(1), uniquename: "msdyn_Sales", friendlyname: "Sales", version: "9.0" },
+    { solutionid: G(1), uniquename: "msdyn_Sales", friendlyname: "Sales", version: "9.0", isvisible: false }, // anchors are usually hidden
     { solutionid: G(2), uniquename: "msdyn_SalesCore", friendlyname: "Sales core", version: "9.0" },
     { solutionid: G(3), uniquename: "msdyn_Common", friendlyname: "Common", version: "1.0" },
     { solutionid: G(4), uniquename: "msdyn_Gami", friendlyname: "Gamification", version: "1.0" },
@@ -289,7 +289,7 @@ function fakeDv(o = {}) {
     calls,
     queryData: async (q) => {
       calls.push(q);
-      if (q.startsWith("solutions?")) return page(sols);
+      if (q.startsWith("solutions?")) return page(q.includes("isvisible eq true") ? sols.filter((x) => x.isvisible !== false) : sols);
       if (q.startsWith("msdyn_solutionhistories?")) {
         if (o.historyFails) throw new Error("history down");
         if (o.historyNoFilter && q.includes("$filter")) throw new Error("filter not supported");
@@ -299,6 +299,9 @@ function fakeDv(o = {}) {
       if (q.startsWith("EntityDefinitions?")) return page(defs);
       if (q.startsWith("RetrieveTotalRecordCount(")) {
         const names = JSON.parse(decodeURIComponent(q.split("@p1=")[1]));
+        const bad = names.find((n) => o.countRefuses?.[n]);
+        if (bad) throw new Error(`400 {"error":{"code":"0x80040203","message":"Entity ${bad} ${o.countRefuses[bad]}"}}`);
+        if (o.countDown) throw new Error("503 Service Unavailable");
         const keys = names.filter((n) => n in snapshot);
         return { EntityRecordCountCollection: { Count: keys.length, Keys: keys, Values: keys.map((k) => snapshot[k]) } };
       }
@@ -408,6 +411,21 @@ test("analyzeUnused: shared solutions and tables excluded, zeros re-checked live
   assert.match(csv.split("\r\n")[1], /^Dev,Gamification,Gamification,1\.0,Probably unused,0,1,,msdyn_Gami,msdyn_Common,Gamification \(0 roles\),history$/);
 });
 
+test("analyzeUnused: a table the count API refuses is dropped from its batch, the rest keep their snapshot", async () => {
+  const dv = fakeDv({ countRefuses: { msdyn_badge: "is not valid for read", msdyn_opp: "is a virtual entity, which is not supported" } });
+  const r = await M.analyzeUnused({ dv, installed: installedPkgs });
+  const by = Object.fromEntries(r.packages.map((p) => [p.pkg.uniqueName, p]));
+  assert.deepEqual(r.warnings, [], "refused tables are expected, no warning");
+  assert.equal(by.SeedPkg.verdict, "light", "3 rows from the snapshot, not a $top=1 lower bound");
+  assert.equal(by.SeedPkg.tables[0].atLeast, false);
+  assert.ok(!dv.calls.some((q) => q.startsWith("msdyn_seedcfgs?")), "counted table not re-queried");
+  assert.ok(dv.calls.includes("msdyn_badges?$select=msdyn_badgeid&$top=1"), "refused table checked live");
+  assert.equal(by.Gamification.verdict, "unused");
+  const down = await M.analyzeUnused({ dv: fakeDv({ countDown: true }), installed: installedPkgs });
+  assert.equal(down.warnings.length, 1, "an error naming no table: one warning, no retry storm");
+  assert.match(down.warnings[0], /Record count failed for 4 tables \(503/);
+});
+
 test("unusedShown: pressed verdicts (any, not found as no signal) override Show all; name filter on top", () => {
   const P = (uniqueName, verdict) => ({ pkg: pkg(uniqueName, "1.0", "Installed", { name: uniqueName.toUpperCase() }), verdict });
   const list = [P("a", "unused"), P("b", "in-use"), P("c", "not-found"), P("d", "platform"), P("e", "no-signal")];
@@ -437,7 +455,7 @@ test("analyzeUnused: history filter refused → unfiltered read; history unreada
   assert.equal(b.history, false);
   assert.match(b.warnings[0], /history down/);
   assert.equal(b.packages.find((p) => p.pkg.uniqueName === "Gamification").verdict, "not-found");
-  assert.equal(b.packages.find((p) => p.pkg.uniqueName === "msdyn_Sales").mappedBy, "anchor");
+  assert.equal(b.packages.find((p) => p.pkg.uniqueName === "msdyn_Sales").mappedBy, "anchor", "a hidden anchor solution still maps its package");
 });
 
 test("envTypes: present types once each, usual ones first in a fixed order, others A–Z", () => {
