@@ -506,6 +506,12 @@ assert((await M(() => window.__mock.log.length)) === writesBefore, "managed solu
 assert((await page.textContent("#fix-banners")).includes("managed") && (await page.isDisabled("#btn-confirm")), "managed banner shown, confirm disabled");
 await page.evaluate(() => { window.__mock.managedFlip = false; });
 
+// ---- changing a pick after the preview drops the plan: a stale preview must not stay applicable ----
+await page.click('.tab[data-tab="diagnose"]');
+await sel(`26:${ids.VIEW}`, "");
+await page.click('.tab[data-tab="fix"]');
+assert((await page.$$("#ops li")).length === 0 && !(await page.$("#btn-confirm:not([disabled])")), "pick changed after preview: plan dropped, nothing to confirm");
+
 // ---- offline ----
 await page.click('.tab[data-tab="offline"]');
 assert(await page.isHidden("#btn-export-json"), "D8: Findings JSON hidden on the Offline tab");

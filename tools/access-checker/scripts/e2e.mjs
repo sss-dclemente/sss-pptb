@@ -191,6 +191,16 @@ assert(colCells.join(",") === "yes,no,no", "column read yes / update no / create
   await page.click(".tab[data-tab='check']");
 }
 
+// a record name typed but not picked: Check refuses instead of running a table-level check under that name
+{
+  const before = await text("#tab-check");
+  await page.fill("#record-q", "b");
+  await page.click("#btn-check");
+  await page.waitForFunction(() => (window.__notes ?? []).some((n) => n.title === "Pick a record"));
+  assert((await text("#tab-check")) === before, "unpicked record text: no check runs");
+  await page.fill("#record-q", "");
+}
+
 // record check: Bruno's account (same BU, Ana is Bruno's manager)
 await page.fill("#record-q", "bruno");
 await page.waitForSelector("#record-results li button");

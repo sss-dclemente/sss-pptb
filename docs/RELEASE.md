@@ -13,7 +13,8 @@ Not fixable in the repo — owner, per tool, before replying to the review:
 - [ ] **Real-environment test** (policy: "Tested by a person, against a real environment": light and dark theme, realistic data volumes, error paths — missing permissions, expired connection, empty results). Use the per-tool checklists below, plus the new confirmations. Then, and only then, remove or rewrite the matching "UNVERIFIED" / "not yet verified against a live tenant" README lines (Dependency Cleaner Limitations, D365 Apps Limitations, Audit Matrix backup/revert note). The reviewers flagged those lines on Dependency Cleaner and D365 Apps: the fix is the test, not deleting the line.
 - [ ] Once tested, the `## AI Assistance` line may say "reviewed, tested and maintained"; until then it says "reviewed and maintained".
 - [ ] Real ToolBox screenshots, added back to each README.
-- [ ] Publish the patch version to npm (`npm run build && npm run validate && npm publish --access public`), then reply to the review / resubmit.
+- [x] **Published to npm 2026-10-06, before the real-environment check** (from `main` b672f0c, each after `npm run build && npm run validate`): Solution XRay 1.2.1, EnvVar & ConnRef Matrix 1.6.1, Access Checker 1.2.1, Dependency Cleaner 1.5.1, D365 Apps Matrix 0.3.1, Offboarding Wizard 0.2.1, Audit Config Matrix 0.2.1. These npm builds do **not** contain the live-test fixes and screenshots committed afterwards on `claude/pensive-ride-08x8zw` (audit-matrix, d365-apps, access-checker, dependency-cleaner commits labelled 0.2.1 / 0.3.1 / 1.2.1 / 1.5.1): those versions are taken on npm, so they were bumped to 0.2.2 / 0.3.2 / 1.2.2 / 1.5.2 and **published to npm 2026-10-06** from this branch with the live-test fixes and real screenshots. Any later fix for Solution XRay / EnvVar Matrix / Offboarding Wizard goes in 1.2.2 / 1.6.2 / 0.2.2. Do not unpublish. README-only changes need no new version: the listing reads `readmeUrl` from `main`.
+- [ ] Reply to the review / resubmit once the items above are done.
 
 What to put in each screenshot is spelled out per shot in [SCREENSHOTS.md](SCREENSHOTS.md).
 
@@ -99,20 +100,20 @@ Submit: `@simplesmoothsafe/pptb-envvar-matrix`, categories **Environments, Migra
 ## 3. Access Checker — `tools/access-checker`
 
 Real-env test (one connection, a user with a mix of direct role + team role):
-- [ ] User typeahead finds by name / domain / email; disabled badge on a disabled user.
-- [ ] Table list excludes intersect/private tables; org-owned table shows Assign / Share as n/a.
+- [x] User typeahead finds by name / domain / email; disabled badge on a disabled user. (2026-10-06, PSA-DEV Sandbox)
+- [x] Table list excludes intersect/private tables; org-owned table shows Assign / Share as n/a. (Currency, 2026-10-06)
 - [ ] Table-level check: every chip's depth equals the effective depth in Security roles UI (`agrees` on all eight).
 - [ ] Record check: pick a record owned by another user in a child BU and one in a sibling BU; verdict chips match what the user actually sees (log in as them or use "Check access" in the model-driven app). Any `platform says otherwise` → note the case in `docs/BACKLOG.md`.
 - [ ] Record shared with a team the user belongs to: Shares tab lists it with `via team`; Check tab shows the share as the winning path.
 - [ ] Column security on a table with a secured column: Read / Update / Create match the field security profile UI.
 - [ ] Hierarchy: with hierarchy security on and the user as the owner's manager, the Hierarchy card appears. If the card says "state unknown", the organization row could not be read: check `fetchHierarchySettings` in `src/access/fetch.ts` (`ishierarchicalsecuritymodelenabled`, `maxdepthforhierarchicalsecuritymodel`, both documented on the organization table). A manager further above the owner than the organization's hierarchy depth gets no card.
-- [ ] Table-level check on an activity table (Task) and on Note: chips agree (names come from entity metadata: `prv*Activity`, `prv*Note`).
+- [x] Table-level check on an activity table (Task) and on Note: chips agree (2026-10-06, no-role user only) (names come from entity metadata: `prv*Activity`, `prv*Note`).
 - [ ] Team role with *Member's privilege inheritance* = *Team privileges only* at Basic: a record the user owns is not reached through it; a record owned by that team is.
 - [ ] Record shared with the user for a right they hold no privilege for: the chip is denied and the "why" line says the share has no effect.
-- [ ] Exports: JSON, shares CSV, columns CSV.
+- [x] Exports: JSON, shares CSV, columns CSV. (2026-10-06)
 - [ ] Debug log (1.1.0; published to npm 2026-10-02 before this check, fixes go in 1.1.1): tick Debug log, run a record check, Save log: user, privilege and share queries with results; a failed call shows its error.
 
-Screenshots: `check.png`, `columns-dark.png` (+ optionally `shares.png`, add to README). Remove the synthetic-data line from `README.md`.
+Screenshots: `check.png`, `check-dark.png` captured 2026-10-06 on PSA-DEV (no secured column or share there, so `columns-dark.png` / `shares.png` were not captured; old `columns.png` removed). UNVERIFIED on a live environment: mixed direct + team roles, cross-BU depth, shares, field security, Team privileges only, hierarchy.
 
 Publish:
 ```bash
@@ -179,15 +180,15 @@ Real-env test (two connections to sandboxes whose audit configuration differs, o
 > **Status, 2026-09-21.** Loaded in ToolBox against a real environment and exercised read-only: it connects, reads and renders. No plan was applied, so every write path below is still untested and none of the boxes are ticked on the strength of that session.
 >
 > **0.1.0 published to npm 2026-10-02, before the write-path checks below.** Fixes go in 0.1.1; do not unpublish.
-- [ ] Matrix loads; table count and the audited count match Settings → Auditing → Entity and Field Audit Settings.
-- [ ] A table from a managed solution that forbids the change shows as `locked` and cannot be ticked.
-- [ ] Secondary connection populates the comparison column; `≠` appears exactly where the two environments really differ. Then export a snapshot from one, load it into the other, and check the same diff appears.
-- [ ] Expand a table: its auditable columns load, the column counts name their scope, and a column you know is audited reads `on`.
-- [ ] Org tab: the four switches match the admin centre for both environments. Any field showing `unknown` names an attribute to fix in `src/audit/fetch.ts` — `isreadauditenabled` and `auditretentionperiodv2` are the two unverified ones.
-- [ ] **Plan: match other env** builds a plan that never contains a locked row. Preview, cancel, and confirm nothing changed.
-- [ ] Apply a small plan (one table flag, one column flag): rows report ok, then accept the scoped publish, then reload the matrix and see the new values. Check the table in the maker portal.
-- [ ] A write that the environment rejects stays in the plan as a failed row and does not stop the batch.
-- [ ] Exports: matrix CSV, JSON snapshot, plan CSV and plan PowerShell script (run the script against a sandbox once to confirm it is actually runnable).
+- [x] Matrix loads (2026-10-06, PSA-DEV Sandbox env: 1789 tables, 168 audited). Admin-centre cross-check of the count done on SL Sandbox only.
+- [x] A table from a managed solution that forbids the change shows as `locked` and cannot be ticked.
+- [x] Snapshot route only (2026-10-06, one connection): a snapshot from PSA-DEV loaded as the comparison shows `≠` exactly on the flags changed since. UNVERIFIED: a live secondary connection. Secondary connection populates the comparison column; `≠` appears exactly where the two environments really differ. Then export a snapshot from one, load it into the other, and check the same diff appears.
+- [x] Expand a table: its auditable columns load, the column counts name their scope, and a column you know is audited reads `on`.
+- [x] Org tab: no `unknown` on PSA-DEV (2026-10-06); `isreadauditenabled` and `auditretentionperiodv2` read fine. Matched the admin centre on SL Sandbox. Any field showing `unknown` names an attribute to fix in `src/audit/fetch.ts` — `isreadauditenabled` and `auditretentionperiodv2` are the two unverified ones.
+- [x] **Plan: match other env** builds a plan that never contains a locked row. Preview, cancel, and confirm nothing changed.
+- [x] Apply a small plan (one table flag, one column flag): rows report ok, then accept the scoped publish, then reload the matrix and see the new values. 2026-10-06 on PSA-DEV (`sss_ledger`), then reverted from the backup snapshot and published: 0 differences against the earlier snapshot.
+- [ ] UNVERIFIED (not tested live): a write that the environment rejects stays in the plan as a failed row and does not stop the batch.
+- [x] Exports: matrix CSV, JSON snapshot, plan CSV and plan PowerShell script generated. UNVERIFIED: the script has not been run.
 
 Screenshots: `matrix.png`, `columns.png`, `differences.png`, `preview.png`, `org-dark.png`. Remove the synthetic-data line from `README.md`.
 

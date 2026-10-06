@@ -324,6 +324,48 @@ test("historyMap: Import rows only, failed imports skipped, keyed lower-case", (
   assert.deepEqual([...m.get("p")], ["a"]);
 });
 
+test("historyMap + mapPackages: real shapes (packagename empty, grouped by correlation id, hidden anchors)", () => {
+  // msdyn_solutionhistories rows as read from a Sandbox on 2026-10-06 (trimmed): msdyn_packagename is "" on every row
+  const Z = "00000000-0000-0000-0000-000000000000";
+  const h = (msdyn_name, msdyn_correlationid, extra = {}) => ({ msdyn_name, msdyn_packagename: "", msdyn_operation: 0, msdyn_suboperation: 3, msdyn_result: true, msdyn_ismanaged: true, msdyn_correlationid, ...extra });
+  const rows = [
+    h("msdyn_FlowApprovalsCore", "1d0c5a40-6b8e-4c3f-9a51-2f0e7c1b9d01"),
+    h("msdyn_FlowApprovals", "1d0c5a40-6b8e-4c3f-9a51-2f0e7c1b9d01"),
+    h("msdyn_TransformContactCenter", "7e2f8b1c-3a4d-4e5f-8a9b-0c1d2e3f4a02"),
+    h("msdyn_TransformContactCenterData", "7e2f8b1c-3a4d-4e5f-8a9b-0c1d2e3f4a02"),
+    h("msdyn_TransformContactCenterAnchor", "7e2f8b1c-3a4d-4e5f-8a9b-0c1d2e3f4a02"),
+    h("msdyn_TransformationAgentUX", "7e2f8b1c-3a4d-4e5f-8a9b-0c1d2e3f4a02", { msdyn_result: false }),
+    // one run that installed two packages: its solutions are shared between them
+    h("msdyn_QMSAnchor", "be86c57a-024b-43a2-8d35-f330e189f9e3"),
+    h("msdyn_AgentCoach", "be86c57a-024b-43a2-8d35-f330e189f9e3"),
+    h("msdyn_QualityManagement", "be86c57a-024b-43a2-8d35-f330e189f9e3"),
+    // the all-zero correlation id spans months and many packages: ignored
+    h("PSAHub", Z, { msdyn_suboperation: 1 }),
+    h("msdyn_FlowApprovals", Z),
+    h("msdyn_TransformContactCenterAnchor", Z),
+    h("msdyn_Removed", "1d0c5a40-6b8e-4c3f-9a51-2f0e7c1b9d01", { msdyn_operation: 1, msdyn_suboperation: 2 }),
+  ];
+  const hist = M.historyMap(rows);
+  assert.deepEqual([...hist.get("msdyn_flowapprovals")].sort(), ["msdyn_flowapprovals", "msdyn_flowapprovalscore"]);
+  assert.ok(!hist.get("msdyn_transformcontactcenteranchor").has("psahub"), "all-zero correlation id is not a run");
+  // anchors are hidden solutions (isvisible false): they must be in the solutions read
+  const S = (u) => [u.toLowerCase(), { id: u, uniqueName: u, name: u, version: "1.0" }];
+  const sols = new Map(["msdyn_FlowApprovalsCore", "msdyn_FlowApprovals", "msdyn_TransformContactCenter", "msdyn_TransformContactCenterData", "msdyn_TransformContactCenterAnchor", "msdyn_QMSAnchor", "msdyn_AgentCoach", "msdyn_QualityManagement", "PSAHub"].map(S));
+  const m = M.mapPackages([pkg("msdyn_FlowApprovals", "1"), pkg("msdyn_TransformContactCenterAnchor", "1"), pkg("msdyn_QMSAnchor", "1"), pkg("msdyn_AgentCoach", "1"), pkg("Ghost", "1")], sols, hist);
+  assert.deepEqual([...m.byPackage.get("msdyn_transformcontactcenteranchor")].sort(), ["msdyn_transformcontactcenter", "msdyn_transformcontactcenteranchor", "msdyn_transformcontactcenterdata"], "failed import left out");
+  assert.equal(m.mappedBy.get("msdyn_transformcontactcenteranchor"), "history+anchor");
+  assert.equal(m.owners.get("msdyn_qualitymanagement").size, 2, "a run with two packages' anchors: shared");
+  assert.equal(m.owners.get("msdyn_flowapprovalscore").size, 1);
+  assert.equal(m.mappedBy.get("ghost"), null);
+});
+
+test("analyzeUnused: reads hidden managed solutions and the correlation id", async () => {
+  const dv = fakeDv();
+  await M.analyzeUnused({ dv, installed: installedPkgs });
+  assert.ok(dv.calls.some((q) => q.startsWith("solutions?") && !q.includes("isvisible")), "anchors are hidden: no isvisible filter");
+  assert.ok(dv.calls.some((q) => q.startsWith("msdyn_solutionhistories?") && q.includes("msdyn_correlationid") && !q.includes("msdyn_packagename ne null")));
+});
+
 test("parseCounts / countPath: Keys+Values collection, names JSON-encoded", () => {
   const c = M.parseCounts({ EntityRecordCountCollection: { Count: 2, IsReadOnly: false, Keys: ["Account", "contact"], Values: [3, 0] } });
   assert.deepEqual([...c], [["account", 3], ["contact", 0]]);
@@ -452,4 +494,21 @@ test("confirmation scope: each target environment with its app count; the no-und
   assert.match(M.IRREVERSIBLE_NOTE, /no rollback/);
   assert.match(M.IRREVERSIBLE_NOTE, /cannot uninstall/);
   assert.match(M.IRREVERSIBLE_NOTE, /backup or copy of the environment/);
+});
+
+test("getWithRetry: retries a throttled read with backoff, gives up after 4 retries, never on other errors", async () => {
+  const waits = [];
+  const wait = async (ms) => { waits.push(ms); };
+  let calls = 0;
+  const flaky = { Get: async () => { if (++calls < 3) throw new Error("Power Platform request failed: HTTP 429"); return { value: [1] }; } };
+  assert.deepEqual(await M.getWithRetry(flaky, "x", wait), { value: [1] });
+  assert.deepEqual(waits, [2000, 4000]);
+  const always = { Get: async () => { throw new Error("HTTP 429"); } };
+  waits.length = 0;
+  await assert.rejects(M.getWithRetry(always, "x", wait), /429/);
+  assert.deepEqual(waits, [2000, 4000, 8000, 16000]);
+  const denied = { Get: async () => { throw new Error("HTTP 403"); } };
+  waits.length = 0;
+  await assert.rejects(M.getWithRetry(denied, "x", wait), /403/);
+  assert.deepEqual(waits, []);
 });

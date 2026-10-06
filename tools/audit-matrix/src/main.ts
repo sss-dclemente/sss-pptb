@@ -22,6 +22,8 @@ let plan: PlanItem[] = [];
 let cancelRun = false;
 /** Set while "Load columns for N tables" runs; its Cancel sets cancelCols. */
 let loadingCols = false;
+/** Environments are being read: the header says so instead of "No connection". */
+let loadingEnv = false;
 let cancelCols = false;
 /** Comparison column to select on the next render (a snapshot just loaded). */
 let preferCompare: string | null = null;
@@ -119,7 +121,7 @@ function renderHeader(): void {
   const wrap = $("#columns");
   wrap.replaceChildren();
   if (primary) wrap.append(colChip(primary.meta, false));
-  else wrap.append(h("span", { class: "caption" }, inToolbox() ? "No connection. Pick a primary connection in ToolBox." : "Not running inside ToolBox."));
+  else wrap.append(h("span", { class: "caption" }, loadingEnv ? "Loading environment…" : inToolbox() ? "No connection. Pick a primary connection in ToolBox." : "Not running inside ToolBox."));
   for (const o of others) wrap.append(colChip(o.meta, o.meta.kind === "snapshot"));
 
   const sel = $<HTMLSelectElement>("#compare");
@@ -788,6 +790,8 @@ async function refresh(): Promise<void> {
     return;
   }
   setStatus("Loading tables…");
+  loadingEnv = true;
+  renderHeader();
   try {
     const loaded = await Promise.all(
       conns.map((c) =>
@@ -805,6 +809,7 @@ async function refresh(): Promise<void> {
     setStatus(null);
     await notify("Load failed", (e as Error).message, "error");
   }
+  loadingEnv = false;
   rebuild();
   await reloadExpandedColumns();
   // the first rebuild, without columns, is shorter and can clamp the scroll: put the user back where they were

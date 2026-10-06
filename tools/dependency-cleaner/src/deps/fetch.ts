@@ -344,6 +344,8 @@ export const RECORD_TYPES: Record<number, [string, string, string, string?]> = {
   [CT.SiteMap]: ["sitemaps", "sitemapid", "sitemapname"],
   [CT.AppModule]: ["appmodules", "appmoduleid", "name"],
   [CT.PluginStep]: ["sdkmessageprocessingsteps", "sdkmessageprocessingstepid", "name"],
+  90: ["plugintypes", "plugintypeid", "name"],
+  91: ["pluginassemblies", "pluginassemblyid", "name"],
   20: ["roles", "roleid", "name"],
   300: ["canvasapps", "canvasappid", "name"],
   372: ["connectionreferences", "connectionreferenceid", "connectionreferencelogicalname"],

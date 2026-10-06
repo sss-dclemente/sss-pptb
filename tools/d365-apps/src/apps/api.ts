@@ -44,12 +44,30 @@ export function relativePath(link: string, category: string): string {
   return m ? m[1] : link;
 }
 
+/** Throttled (HTTP 429): the host returns the body only, so there is no Retry-After to honour. */
+export const isThrottled = (e: unknown): boolean => /\b429\b|too many requests/i.test(String((e as Error)?.message ?? e));
+
+/**
+ * GET with a retry on 429 after 2, 4, 8 and 16 s. Reads only: an install POST is never retried here.
+ * ponytail: fixed backoff, no Retry-After (the host does not expose headers); add it if the host ever does.
+ */
+export async function getWithRetry(cat: CategoryLike, path: string, wait = (ms: number) => new Promise((r) => setTimeout(r, ms))): Promise<Obj> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return obj(await cat.Get(path));
+    } catch (e) {
+      if (!isThrottled(e) || attempt >= 4) throw e;
+      await wait(2000 * 2 ** attempt);
+    }
+  }
+}
+
 async function getAll(cat: CategoryLike, category: string, path: string): Promise<Obj[]> {
   const out: Obj[] = [];
   const seen = new Set<string>();
   let next: string | null = path;
   for (let page = 0; next && page < MAX_PAGES; page++) {
-    const r = obj(await cat.Get(next));
+    const r = await getWithRetry(cat, next);
     if (Array.isArray(r.value)) out.push(...(r.value as Obj[]));
     const link = str(r["@odata.nextLink"]) ?? str(r["@odata.nextlink"]) ?? str(r.nextLink);
     next = link ? relativePath(link, category) : null;
@@ -126,7 +144,7 @@ export async function startInstall(pp: PpLike, envId: string, uniqueName: string
 export type OperationStatus = "NotStarted" | "Running" | "Succeeded" | "Failed" | "Canceled" | "Unknown";
 
 export async function operationStatus(pp: PpLike, envId: string, operationId: string): Promise<{ status: OperationStatus; message: string | null }> {
-  const r = obj(await pp.AppManagement.Get(`environments/${encodeURIComponent(envId)}/operations/${encodeURIComponent(operationId)}?api-version=${API_VERSION}`));
+  const r = await getWithRetry(pp.AppManagement, `environments/${encodeURIComponent(envId)}/operations/${encodeURIComponent(operationId)}?api-version=${API_VERSION}`);
   const s = str(r.status) ?? "";
   const known: OperationStatus[] = ["NotStarted", "Running", "Succeeded", "Failed", "Canceled"];
   const status = known.find((k) => k.toLowerCase() === s.toLowerCase()) ?? "Unknown";
