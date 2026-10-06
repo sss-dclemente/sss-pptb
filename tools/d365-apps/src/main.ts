@@ -3,7 +3,7 @@ import { $, append, badge, emptyState, filteredEmpty, foldAllButtons, h, showDia
 import { loadView, persistControls, saveView } from "../../_shared/view-state";
 import { errText, isSetupError, listEnvironments, listPackages, type PpLike } from "./apps/api";
 import { matrixCsv, pacScript, resultsCsv } from "./apps/export";
-import { buildMatrix, cellKey, counts, emptyEnvIds, envMatches, envTypes, failedKeys, isProduction, PLAN_FOLD_OVER, planGroupOpen, planInstalls, rowHasState, STATE_KINDS, updateKeys, visibleEnvs, type StateKind } from "./apps/matrix";
+import { buildMatrix, cellKey, counts, emptyEnvIds, envMatches, envTypes, failedKeys, IRREVERSIBLE_NOTE, isProduction, PLAN_FOLD_OVER, planGroupOpen, planInstalls, planScope, planScopeText, rowHasState, STATE_KINDS, updateKeys, visibleEnvs, type StateKind } from "./apps/matrix";
 import { runInstalls, runProblems, toRunItems } from "./apps/run";
 import type { DvLike } from "./apps/unused";
 import type { Cell, EnvPackages, Environment, Matrix, PlannedInstall, Row, RunItem } from "./apps/types";
@@ -505,7 +505,15 @@ function planNode(plan: PlannedInstall[], shownCols: Set<string>): HTMLElement {
   return h(
     "div",
     { id: "plan" },
-    prod.length ? h("div", { class: "danger-banner" }, `${new Set(prod.map((p) => p.env.id)).size} Production environment(s). Installs take the app's components through an upgrade; there is no undo.`) : null,
+    // what changes where: every target environment by name with its app count, then the plain no-way-back note
+    h(
+      "div",
+      { class: "plan-scope", id: "plan-scope" },
+      h("p", {}, h("strong", {}, "Target: "), planScopeText(plan)),
+      h("ul", {}, ...planScope(plan).map((g) => h("li", { "data-env": g.env.id }, h("strong", {}, g.env.name), ` (${g.env.type || "unknown type"}${g.env.url ? `, ${g.env.url}` : ""}): ${g.count} app${g.count === 1 ? "" : "s"} to install or update`))),
+    ),
+    h("div", { class: "danger-banner", id: "plan-irreversible", role: "alert" }, h("strong", {}, "No undo. "), IRREVERSIBLE_NOTE),
+    prod.length ? h("div", { class: "danger-banner" }, `${new Set(prod.map((p) => p.env.id)).size} Production environment(s): ${[...new Set(prod.map((p) => p.env.name))].join(", ")}. Installs take the app's components through an upgrade.`) : null,
     offscreen.length
       ? h("div", { class: "warnings", id: "plan-hidden" }, `${offscreen.length} install${offscreen.length === 1 ? " is" : "s are"} in environment columns hidden from the matrix: ${[...new Set(offscreen.map((p) => p.env.name))].join(", ")}. They are part of this run; clear the selection or Show all to check them.`)
       : null,
@@ -530,13 +538,28 @@ function planNode(plan: PlannedInstall[], shownCols: Set<string>): HTMLElement {
   );
 }
 
+/**
+ * The one confirmation before any Power Platform API install (install, update, retry; one cell or a bulk selection):
+ * names each target environment with its app count and says plainly that installs and updates cannot be undone.
+ * execute() is only reached through here.
+ */
+function confirmInstalls(plan: PlannedInstall[], shownCols: Set<string>): Promise<boolean> {
+  const scope = planScope(plan);
+  const prod = plan.some((p) => isProduction(p.env));
+  return showDialog({
+    title: "Run installs",
+    target: h("span", { id: "dlg-envs" }, scope.length === 1 ? scope[0].env.name : `${scope.length} environments`),
+    body: planNode(plan, shownCols),
+    okLabel: `Run ${plan.length} install${plan.length === 1 ? "" : "s"}`,
+    danger: prod,
+  });
+}
+
 async function preview(): Promise<void> {
   if (!matrix || running) return;
   const plan = planInstalls(matrix, selected);
   if (!plan.length) return;
-  const prod = plan.some((p) => isProduction(p.env));
-  const ok = await showDialog({ title: "Run installs", body: planNode(plan, shownEnvIds(matrix)), okLabel: `Run ${plan.length} install${plan.length === 1 ? "" : "s"}`, danger: prod });
-  if (ok) await execute(plan);
+  if (await confirmInstalls(plan, shownEnvIds(matrix))) await execute(plan);
 }
 
 function renderRun(): void {

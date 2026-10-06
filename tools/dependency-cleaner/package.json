@@ -1,7 +1,7 @@
 {
   "name": "@simplesmoothsafe/pptb-dependency-cleaner",
-  "version": "1.5.0",
-  "displayName": "SSS Dependency Cleaner",
+  "version": "1.5.1",
+  "displayName": "Dependency Cleaner",
   "description": "Why does my solution depend on msdyn_*? Find every dependency of an unmanaged solution on a managed solution the target environment lacks, see the component that causes it, and fix it in place: convert tables to shells, remove components, strip msdyn columns from forms and views. Upgrade blockers: before a managed upgrade, see what it deletes, what blocks each delete (custom pages, canvas apps, model-driven apps) and where to fix it. Slim: remove from an unmanaged solution every managed component you did not customize, convert all-assets tables to shells. Cycles: circular dependencies between your unmanaged solutions, the import order, and fixes through a base solution. Failed import: an upgrade already failed with \"component cannot be deleted because it is referenced by\": read the error from solution history, find what still references the component and fix it in that environment (remove active customizations, re-point a flow to another connection reference). Preview, backup and restore.",
   "main": "index.html",
   "icon": "icon.svg",

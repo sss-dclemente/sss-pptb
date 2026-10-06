@@ -25,7 +25,7 @@ const text = (sel) => page.textContent(sel);
 const chip = async (right) => (await page.textContent(`#verdicts .verdict[data-right="${right}"]`)).replace(/\s+/g, " ").trim();
 
 assert((await text("#host-mode")).includes("inside Power Platform ToolBox"), "toolbox host detected");
-assert((await text("#conn")).includes("SSS Dev"), "connection chip");
+assert((await text("#conn")).includes("Contoso Dev"), "connection chip");
 await page.waitForFunction(() => document.querySelectorAll("#table option").length > 1);
 const opts = await page.$$eval("#table option", (o) => o.map((x) => x.value));
 assert(opts.includes("account") && opts.includes("sss_setting") && !opts.includes("accountleads"), "tables loaded, intersect filtered");
@@ -279,7 +279,7 @@ await page.waitForFunction(() => window.__saved.length === 2);
 const saved = await page.evaluate(() => window.__saved);
 assert(saved[0].name.endsWith("_shares.csv") && saved[0].content.includes("team,Sales EU") && saved[0].content.includes("via team"), "shares CSV");
 const json = JSON.parse(saved[1].content);
-assert(saved[1].name.endsWith(".access.json") && json.verdicts.length === 8 && json.verdicts.find((v) => v.right === "Write").shares.length === 1 && json.environment.includes("SSS Dev"), "JSON export");
+assert(saved[1].name.endsWith(".access.json") && json.verdicts.length === 8 && json.verdicts.find((v) => v.right === "Write").shares.length === 1 && json.environment.includes("Contoso Dev"), "JSON export");
 await page.click(".tab[data-tab='columns']");
 await page.click("#btn-export-columns");
 await page.waitForFunction(() => window.__saved.length === 3);

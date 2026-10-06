@@ -1,8 +1,6 @@
-# SSS Access Checker
+# Access Checker
 
 Why can (or can't) a user do X on a record? Pick a user, a table and optionally a record inside [Power Platform ToolBox](https://www.powerplatformtoolbox.com) and get the verdict per access right together with the chain that produced it: security roles (direct and through teams), privilege depth, business unit position, ownership, shares and manager hierarchy. Plus the record's share list and the user's effective column security on the table.
-
-Built by [Simple Smooth Safe](https://simplesmoothsafe.com).
 
 ## What it does
 
@@ -14,21 +12,33 @@ Built by [Simple Smooth Safe](https://simplesmoothsafe.com).
 - **Hierarchy** — when hierarchy security is on and the user is above the record owner in the manager chain, within the organization's hierarchy depth, the possible extra access is noted, not asserted.
 - **Export** — JSON of the whole check, CSV of shares and of column security.
 
-Read-only: the tool never changes roles, shares or profiles.
+## What this tool changes
+
+**Nothing in Dataverse or Power Platform: the tool is read-only.** It never creates, updates, deletes, assigns, shares or unshares records, and never changes security roles, team membership, business units, field security profiles or organization settings. Every call it makes is a read: OData queries (`queryData`), table and column metadata, and the read-only functions `RetrievePrincipalAccess`, `RetrieveUserPrivilegeByPrivilegeName`, `RetrieveRolePrivilegesRole` and `RetrieveSharedPrincipalsAndAccess`. Because nothing is written, there is no confirmation dialog and nothing to undo. What it can read is limited to what the connection's user can read.
+
+Files saved to disk, only when you click an export button and only where you choose in the ToolBox save dialog:
+
+- **Export JSON** — `<user>_<table>[_<record id>].access.json`: the whole check (user, table, roles, teams, verdicts and their explanation, ownership, hierarchy, notes) and the environment name.
+- **Export CSV** on the Shares tab — `<table>_<record id>_shares.csv`.
+- **Export CSV** on the Column security tab — `<table>_<user>_columns.csv`.
+- **Save log** (only when the Debug log is on) — `access-checker-debug-<timestamp>.txt`, see [Debug log](#debug-log).
+
+Browser storage (localStorage of the tool's ToolBox view, per viewer, never sent anywhere):
+
+- `sss-view:access-checker` — the display toggles *Hide roles with no privilege on this table*, *Only shares affecting* (the checked user) and *Only columns with a denied right*. Search text in the filters is kept only for the session.
+- `sss-debug:access-checker` — whether the Debug log switch is on.
+
+Nothing else: no other files, no settings outside the tool, no network calls other than the ToolBox `dataverseAPI` bridge.
 
 ## Screenshots
 
-Column security (light) captured inside Power Platform ToolBox, user redacted. Record check and dark theme are still synthetic.
-
-![Record check](https://raw.githubusercontent.com/sss-dclemente/sss-pptb/main/tools/access-checker/docs/img/check.png)
+Column security, captured inside Power Platform ToolBox (user redacted).
 
 ![Column security](https://raw.githubusercontent.com/sss-dclemente/sss-pptb/main/tools/access-checker/docs/img/columns.png)
 
-![Column security, dark theme](https://raw.githubusercontent.com/sss-dclemente/sss-pptb/main/tools/access-checker/docs/img/columns-dark.png)
-
 ## Install
 
-**From the ToolBox marketplace** — search for "SSS Access Checker" once listed.
+**From the ToolBox marketplace** — search for "Access Checker" once listed.
 
 **From npm (ToolBox Debug menu)** — Settings → enable *Show Debug Menu* → Debug → *Install from npm* → `@simplesmoothsafe/pptb-access-checker`.
 
@@ -72,3 +82,15 @@ The file is written only where you save it. Secrets (keys named like password, s
 ## Privacy
 
 All data stays between ToolBox and your Dataverse environment: the tool talks to Dataverse only through the ToolBox `dataverseAPI` bridge, requests no CSP exceptions, and sends nothing anywhere else. Exports are written to files you choose.
+
+## Release notes
+
+- **1.2.1** — Marketplace review: display name without publisher prefix, 'What this tool changes' section, AI assistance disclosure, synthetic screenshots removed.
+
+## AI Assistance
+
+Substantial parts of this tool's code and documentation were generated with Claude Code (Anthropic) and reviewed and maintained by the contributors listed in `package.json`. Testing status against real Dataverse environments is stated per feature under Limitations.
+
+## Credits
+
+Built and maintained by Duarte Clemente ([Simple Smooth Safe](https://simplesmoothsafe.com)).

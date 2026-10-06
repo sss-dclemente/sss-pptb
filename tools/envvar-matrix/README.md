@@ -1,8 +1,6 @@
-# SSS EnvVar & ConnRef Matrix
+# EnvVar & ConnRef Matrix
 
 Environment variables and connection references across environments, as one matrix, inside [Power Platform ToolBox](https://www.powerplatformtoolbox.com). See what is missing, what differs, copy values between environments with a preview, and export `deploymentSettings.json`.
-
-Built by [Simple Smooth Safe](https://simplesmoothsafe.com).
 
 ## What it does
 
@@ -20,21 +18,32 @@ Built by [Simple Smooth Safe](https://simplesmoothsafe.com).
 - **Solution check** — pick a solution in the Solution filter while in Consolidate: lists connection references used by the solution's cloud flows that are not in the solution (an export would miss them) and flows naming a reference that does not exist. **Add to solution…** runs `AddSolutionComponent` for each (no required components). Managed solutions are reported only.
 - **Export** — `deploymentSettings.json` for any column (the shape `pac solution import --settings-file` expects), matrix CSV, and snapshots. `deploymentSettings.json` follows the solution filter when one is selected. `Value` is the current value row only: variables with just a default, and all secrets, get an empty `Value`, as with `pac solution create-settings`. CSV cells that a spreadsheet would read as a formula (starting with `=`, `+`, `-`, `@`) are prefixed with `'`.
 
-## Screenshots
+## What this tool changes
 
-Rendered from the tool against a mocked host with fictional sample data (Contoso Dev / UAT sandboxes). Regenerate with `npm run build && npm run screenshots`.
+Reading never changes anything. The tool writes to Dataverse only after a preview that names the target environment (dialog header and summary) and the number of records, and only into one live ToolBox connection at a time; snapshot and deploymentSettings.json columns are read-only. Before every record it re-checks that the target connection is still the one the preview was built for, and stops writing if not. Every write, successful or failed, is recorded in the **Run log**. When the target's ToolBox environment type reads Production, the preview says so and the confirm button turns red.
 
-![Environment variables matrix](https://raw.githubusercontent.com/sss-dclemente/sss-pptb/main/tools/envvar-matrix/docs/img/envvars.png)
+**Dataverse writes**
 
-![Copy preview](https://raw.githubusercontent.com/sss-dclemente/sss-pptb/main/tools/envvar-matrix/docs/img/preview.png)
+- **Environment variable values** (Copy values, set a cell): updates `environmentvariablevalue.value` where a value row exists, otherwise creates one value row bound to the definition. Scope: the selected rows (copy) or one cell (set), minus the rows the preview skips or marks invalid. Values written outside a solution land in the unmanaged layer (a managed value row is cautioned). **No backup file is saved and this cannot be undone from the tool**: the preview shows the current value of each row and the Run log keeps before → after, so an update can be undone by setting the old value back; a created value row stays until it is deleted in the maker portal. Export → Snapshot keeps a file copy of a column first, if you want one. Definitions are never created and secret values are never written.
+- **Bind connection references** (Preview bind…, Pick connections…): updates `connectionreference.connectionid` for the selected references. A **backup file of the current bindings is mandatory** (cancelling the save cancels the bind); **Consolidate → Restore from backup…** writes them back, including unbinding references that were unbound. A binding on a managed reference is an unmanaged change (cautioned).
+- **Restart flows after binding** (option, on by default): turns each solution cloud flow that is on and uses a rebound reference off and back on (`workflow.statecode` / `statuscode`). A flow that cannot be turned back on is reported and left off; turn it on from *Flows that are off* or in Power Automate once fixed.
+- **Consolidate connection references** (Preview merge…): per affected solution cloud flow, turns it off if on, rewrites `workflow.clientdata` (connection reference names, optionally collapsed duplicate keys), turns it back on. Managed flows get an unmanaged layer (cautioned). Optionally deletes the merged `connectionreference` records afterwards, only when unmanaged, unused after a re-read of the flows and without other dependents (`RetrieveDependenciesForDelete`). A **backup file of every touched flow's clientdata and of the references is mandatory** (cancelling the save cancels the merge). **Restore from backup…** writes each flow's original clientdata back and recreates deleted references with the same logical name, display name, connector and connection, but a **new id and outside any solution** (add them back to their solution yourself).
+- **Delete unused connection references** (Preview delete…): deletes the selected unmanaged `connectionreference` records that no cloud flow uses and nothing else depends on (checked in the preview and again before each delete). Same mandatory backup and Restore as above, with the same new-id / no-solution limit.
+- **Add to solution** (Solution check): `AddSolutionComponent` (no required components) for connection references the selected unmanaged solution's flows use but the solution does not contain. No backup applies: the references themselves are not changed. **This tool does not remove solution components**; to undo, remove them from the solution in the maker portal.
+- **Turn on flows** (Flows that are off): sets `workflow.statecode` on for the selected ready flows, one by one. No backup applies; turned-on flows start running on their triggers, and runs that have started cannot be undone. **This tool does not turn flows off**; do that in Power Automate.
+- **Restore from backup**: applies a bind, merge or cleanup backup file made by this tool (the writes above, in reverse). Refused when the backup's environment URL is not the target's. The current state is **not backed up first**: a restore cannot be undone from this tool.
 
-![Connection references](https://raw.githubusercontent.com/sss-dclemente/sss-pptb/main/tools/envvar-matrix/docs/img/connrefs.png)
+The tool never creates, changes or deletes environment variable definitions, never writes or deletes secret values, never deletes environment variable value rows, never touches flows outside solutions ("My flows") or canvas apps, never imports, exports or publishes solutions, and never changes security roles, ownership or sharing. The Power Platform API is used read-only (listing connections for Pick connections…).
 
-![Snapshot column, dark theme](https://raw.githubusercontent.com/sss-dclemente/sss-pptb/main/tools/envvar-matrix/docs/img/snapshot-dark.png)
+**Files saved to disk** — only where you choose in the ToolBox save dialog: bind / merge / cleanup backups (required before those writes), `deploymentSettings.json`, snapshots, matrix CSV, run log JSON / CSV, and the debug log.
+
+**Browser local storage** (this tool, this machine, per viewer): filters, active tab, Compact, hidden live columns, *Only ready*, the Debug log switch, and the Run log (up to 2 000 entries; **Clear log** removes it).
+
+Nothing else.
 
 ## Install
 
-**From the ToolBox marketplace** — search for "SSS EnvVar & ConnRef Matrix" once listed.
+**From the ToolBox marketplace** — search for "EnvVar & ConnRef Matrix" once listed.
 
 **From npm (ToolBox Debug menu)** — Settings → enable *Show Debug Menu* → Debug → *Install from npm* → `@simplesmoothsafe/pptb-envvar-matrix`.
 
@@ -84,6 +93,14 @@ npm run e2e         # Playwright smoke test against dist/ with a mocked ToolBox 
 ```
 
 Stack: TypeScript, Vite, no framework, no runtime dependencies. Types from `@pptb/types`.
+
+## AI Assistance
+
+Substantial parts of this tool's code and documentation were generated with Claude Code (Anthropic) and reviewed and maintained by the contributors listed in `package.json`. Real-environment testing status is stated in this README where a feature has not yet been verified.
+
+## Credits
+
+Built and maintained by Duarte Clemente ([Simple Smooth Safe](https://simplesmoothsafe.com)).
 
 ## License
 

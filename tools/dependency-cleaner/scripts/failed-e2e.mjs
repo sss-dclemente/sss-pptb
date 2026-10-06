@@ -139,6 +139,13 @@ const MOCK = `
 const { page, assert, finish } = await launchPage(import.meta.url, { initScript: MOCK });
 await page.goto("file://" + TOOL + "/dist/index.html");
 const M = (fn, arg) => page.evaluate(fn, arg);
+// the last confirmation before a write names the environment, the scope and the way back
+const okWrite = async (env, url, scope, wayBack = /backup/i) => {
+  await page.waitForSelector("#dlg[open] #dlg-write");
+  const t = await page.textContent("#dlg-write");
+  assert(t.includes(env) && t.includes(url) && t.includes(scope) && wayBack.test(t), "write confirmation names environment, scope and way back: " + t);
+  await page.click("#dlg-ok");
+};
 const ID = await M(() => window.__mock.ID);
 
 await page.click('.tab[data-tab="failed"]');
@@ -193,6 +200,7 @@ const bk = JSON.parse(backup.content);
 assert(bk.kind === "sss-dependency-cleaner-failed-import-backup" && bk.flows.length === 1 && bk.flows[0].id === ID.FL1 && bk.flows[0].clientdata.includes("sss_SharePointOld") && bk.activeLayers[0].id === ID.FL2 && bk.activeLayers[0].json.includes("clientdata"), "backup: Notify's clientdata before, Sync's Active layer JSON");
 
 await page.click("#fi-confirm");
+await okWrite("SSS Prod", "https://sss-prod.crm4.dynamics.com", "2 operations written to this environment: 1 active customization removed (RemoveActiveCustomizations), 1 cloud flow re-pointed", /cannot be undone, by this tool or by the platform[\s\S]*Undo flow changes/);
 await page.waitForSelector("#fi-rerun", { timeout: 15000 });
 const upd = await M(() => window.__mock.updates);
 const fl1 = upd.filter((u) => u.id === ID.FL1);
@@ -205,9 +213,7 @@ assert(!(await page.$("#fi-target")), "target section gone after the fixes");
 // ---- undo the flow re-point from the backup ----
 await M((t) => { window.__mock.nextText = t; }, backup.content);
 await page.click("#fi-undo");
-await page.waitForSelector("#dlg[open]");
-assert((await page.textContent("#dlg-body")).includes("Notify"), "undo dialog lists the flow");
-await page.click("#dlg-ok");
+await okWrite("SSS Prod", "https://sss-prod.crm4.dynamics.com", "Write back the clientdata of 1 flow from the backup", /cannot be put back[\s\S]*No new backup/);
 await page.waitForFunction(() => window.__mock.notes.some((n) => n.title === "Undone"));
 assert(await M(() => window.__mock.T.flows[window.__mock.ID.FL1].clientdata.includes("sss_SharePointOld")), "undo wrote Notify's clientdata back");
 

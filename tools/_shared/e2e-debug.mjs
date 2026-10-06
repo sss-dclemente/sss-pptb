@@ -11,7 +11,7 @@ export async function checkDebugLog(page, assert, { tool, act, readSaved, expect
   });
   await page.waitForTimeout(200);
   const text = await readSaved(() => page.click("#debug-save"));
-  assert(new RegExp(`^SSS ${tool} (\\d+\\.\\d+\\.\\d+|dev) debug log`).test(text), `${tool}: log header names the tool and version: ${text.split("\n")[0]}`);
+  assert(new RegExp(`^${tool} (\\d+\\.\\d+\\.\\d+|dev) debug log`).test(text), `${tool}: log header names the tool and version: ${text.split("\n")[0]}`);
   assert(/\[debug\] debug on/.test(text), `${tool}: log records the switch`);
   for (const [re, msg] of expect) assert(re.test(text), `${tool}: log ${msg}`);
   assert(!/fileSystem\.saveFile/.test(text), `${tool}: saving the log does not log its own content`);

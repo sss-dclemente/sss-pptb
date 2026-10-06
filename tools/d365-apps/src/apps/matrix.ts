@@ -107,6 +107,32 @@ export function planInstalls(m: Matrix, selected: Set<string>): PlannedInstall[]
 
 export const isProduction = (e: Environment): boolean => /production/i.test(e.type);
 
+/**
+ * Shown in every install / update / retry confirmation (and in the pac script): the Power Platform API has no
+ * rollback and no uninstall, so the platform's own backup / copy is the only way back.
+ */
+export const IRREVERSIBLE_NOTE =
+  "Installs and updates of Dynamics 365 apps cannot be undone: there is no rollback to the previous version and this tool cannot uninstall an app. Take a backup or copy of the environment in the Power Platform admin center first if you may need to go back.";
+
+const plural = (k: number, one: string, many = `${one}s`) => `${k} ${k === 1 ? one : many}`;
+
+/** Confirmation scope: the target environments in plan order, each with its number of apps. */
+export function planScope(plan: readonly PlannedInstall[]): { env: Environment; count: number }[] {
+  const by = new Map<string, { env: Environment; count: number }>();
+  for (const p of plan) {
+    const g = by.get(p.env.id);
+    if (g) g.count++;
+    else by.set(p.env.id, { env: p.env, count: 1 });
+  }
+  return [...by.values()];
+}
+
+/** One line naming every target environment and its app count, e.g. "3 apps in 2 environments: Dev (Sandbox): 2 apps; Prod (Production): 1 app." */
+export function planScopeText(plan: readonly PlannedInstall[]): string {
+  const s = planScope(plan);
+  return `${plural(plan.length, "app")} in ${plural(s.length, "environment")}: ${s.map((g) => `${g.env.name} (${g.env.type || "unknown type"}): ${plural(g.count, "app")}`).join("; ")}.`;
+}
+
 /** Usual environment types, in the order the picker offers them; any other type reported follows, A–Z. */
 const TYPE_ORDER = ["production", "sandbox", "developer", "trial", "default"];
 

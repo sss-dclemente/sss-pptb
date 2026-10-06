@@ -14,7 +14,7 @@
  *  - `ReassignObjectsSystemUser` would move everything a user owns in one call, and is deliberately
  *    not used: it returns no per-record result and cannot be previewed, which is this tool's point.
  */
-import type { CategoryKey, CategoryResult, InventoryItem, Inventory, Plan, PlannedOp, PrincipalHeld, RoleRef, TableInfo, UserInfo } from "./types";
+import type { CategoryKey, CategoryResult, InventoryItem, Inventory, OpKind, Plan, PlannedOp, PrincipalHeld, RoleRef, TableInfo, UserInfo } from "./types";
 
 /** Records per table fetched for the plan; more than this and the table is truncated with a warning. */
 export const DEFAULT_RECORD_CAP = 500;
@@ -289,8 +289,13 @@ export function buildPlan(inv: Inventory, recordIds: Map<string, { id: string; n
     warnings.push(
       "This environment has \"share to previous owner on assign\" enabled: everything reassigned here is shared back to the leaver with full rights. Turn it off, or revoke those shares afterwards, or the leaver keeps access to everything in this plan.",
     );
-  if (movesOwnership)
+  if (movesOwnership) {
     warnings.push("Reassigning a record deactivates any workflow or business rule currently active on it; the new owner has to reactivate them.");
+    // An owner change runs the platform's Assign, so each relationship's Assign cascade rule applies too.
+    warnings.push(
+      "Dataverse also applies each relationship's Assign cascade rule: related records (for example activities under a reassigned account, where the relationship cascades) can change owner with their parent. Those are not counted in this plan and not listed in the exports.",
+    );
+  }
   if (ops.some((op) => op.category === "workflows"))
     warnings.push(
       "Flow ownership: only solution-aware cloud flows can change owner this way, the leaver remains a co-owner, and the change can take up to 7 days to affect licensing and run limits.",
@@ -314,6 +319,26 @@ export function buildPlan(inv: Inventory, recordIds: Map<string, { id: string; n
 }
 
 export const categoryLabel = (k: CategoryKey): string => CATEGORY_LABEL[k];
+
+/** One line per kind of write, for the confirmation's scope list. */
+const KIND_LABEL: Record<OpKind, string> = {
+  "reassign-record": "Records: change owner",
+  "reassign-asset": "Flows, views, charts, queues, connection references, connections: change owner",
+  "role-copy": "Security roles: grant to the successor",
+  "role-remove": "Security roles: remove from the leaver",
+  "profile-copy": "Field security profiles: grant to the successor",
+  "profile-remove": "Field security profiles: remove from the leaver",
+  "team-add": "Teams: add the successor",
+  "team-remove": "Teams: remove the leaver",
+  "manager-reassign": "Direct reports: change manager",
+};
+
+/** Operation counts per kind of write, in KIND_LABEL order, kinds with no operation left out. */
+export function kindCounts(ops: PlannedOp[]): { kind: OpKind; label: string; count: number }[] {
+  return (Object.keys(KIND_LABEL) as OpKind[])
+    .map((k) => ({ kind: k, label: KIND_LABEL[k], count: ops.filter((op) => op.kind === k).length }))
+    .filter((c) => c.count > 0);
+}
 
 /** How many operations the current selection would produce, without fetching any record id. */
 export function estimateCounts(inv: Inventory, o: Pick<PlanOptions, "categories" | "tables" | "roleCopy" | "roleRemove" | "profileCopy" | "profileRemove" | "teamRemove" | "teamAdd" | "recordCap">): { label: string; count: number }[] {

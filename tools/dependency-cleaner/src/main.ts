@@ -1,5 +1,5 @@
 import { mountDebug } from "../../_shared/debug-ui";
-import { $, append, badge, emptyState, filteredEmpty, foldAllButtons, h, keepFold, showDialog, shownOf, wireTabs, type Child } from "../../_shared/dom";
+import { $, append, badge, emptyState, filteredEmpty, foldAllButtons, h, keepFold, shownOf, wireTabs, type Child } from "../../_shared/dom";
 import { persistControls, type PersistedControls } from "../../_shared/view-state";
 import { backupFileName, buildBackup, parseBackup, planRestore, type Backup, type RestorePlan } from "./deps/backup";
 import { parseFilter } from "./deps/classify";
@@ -9,6 +9,7 @@ import { fetchEnvironmentId, fetchSolutionManaged, fetchSolutions, MetaCache, ty
 import { readSolutionZip, refName, type OfflineGroup, type OfflineResult } from "./deps/offline";
 import { CT, DEFAULT_FILTER, typeName, type Diagnosis, type Finding, type FixKind, type SolutionInfo } from "./deps/types";
 import { buildOps, executeOps, opLabel, prepare, xmlDiff, type Op, type OpResult, type Prepared, type ShellPlan } from "./deps/write";
+import { confirmWrite, opsBreakdown, plural } from "./confirm-write";
 import { errorList } from "./error-list";
 import { cyclesOnConnections, initCycles } from "./cycles-ui";
 import { initSlim, slimOnConnections } from "./slim-ui";
@@ -647,6 +648,16 @@ async function applyFix(a: DataverseLike): Promise<void> {
     await notify("Refused", `${sol.uniqueName} is managed (or could not be read). Nothing was written.`, "error");
     return;
   }
+  const go = await confirmWrite({
+    title: "Apply fixes",
+    conn: now,
+    scope: `${plural(ops.length, "operation")} on solution ${fresh.uniqueName}: ${opsBreakdown(ops)}. Removed components only leave the solution, nothing is deleted from the environment; form and view edits change those records in place.`,
+    wayBack:
+      "Way back: the backup you saved for this plan. The Restore tab writes the original form and view XML back, re-adds removed components and puts shell tables back to all assets, then publishes; only in this environment, and form or view edits made after the backup are overwritten.",
+    okLabel: `Apply ${ops.length}`,
+    danger: isProd(now),
+  });
+  if (!go) return;
   $<HTMLButtonElement>("#btn-confirm").disabled = true;
   const before = diagnosis.findings.filter((f) => f.status === "blocker").map((f) => f.key);
   const touched = new Set<string>();
@@ -745,11 +756,14 @@ async function applyRestore(): Promise<void> {
     await notify("Refused", `${plan.solution.uniqueName} is managed (or could not be read). Nothing was written.`, "error");
     return;
   }
-  const ok = await showDialog({
+  const ok = await confirmWrite({
     title: "Apply restore",
-    body: h("p", {}, `${plan.ops.length} operations on ${plan.solution.uniqueName} in ${primary()?.conn.name ?? ""}.`),
+    conn: now,
+    scope: `${plural(plan.ops.length, "operation")} on solution ${plan.solution.uniqueName}, back to the backup of ${restore.backup.takenAt}: ${opsBreakdown(plan.ops)}.`,
+    wayBack:
+      "No new backup is taken before a restore: form and view XML and the solution membership are set back to the backup, overwriting changes made since. To go forward again, run the fixes again.",
     okLabel: `Apply ${plan.ops.length}`,
-    danger: isProd(primary()),
+    danger: isProd(now),
   });
   if (!ok) return;
   const results = await executeOps(a, plan.ops, fresh.uniqueName, (i, n) => setStatus(i < n ? `Restoring ${i + 1} / ${n}…` : null));

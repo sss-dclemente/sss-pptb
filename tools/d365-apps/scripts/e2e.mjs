@@ -1,4 +1,4 @@
-// E2E for SSS D365 Apps Matrix on the dist build with a mocked host (toolboxAPI, dataverseAPI, powerplatformAPI).
+// E2E for D365 Apps Matrix on the dist build with a mocked host (toolboxAPI, dataverseAPI, powerplatformAPI).
 // Environments: Dev (Sandbox, the connection's), Prod (Production), Teams (no Dataverse: hidden).
 // Dev: sales 1.0 (catalog 1.2: update, Installed list paged), fs InstallFailed, custom 1.0 → 1.5 (customHandleUpgrade).
 // Prod: sales 1.2 (current), portal Installing, extra available only (install returns no operation id → state fallback).
@@ -26,6 +26,7 @@ assert((await page.$$eval("#grid tbody tr", (els) => els.length)) === 4, "paged 
 
 // ---- environment picker: Teams (no Dataverse) is not offered; pick Dev + Prod ----
 const txt = async (sel) => (await page.textContent(sel)) ?? "";
+const NO_UNDO = "Installs and updates of Dynamics 365 apps cannot be undone: there is no rollback to the previous version and this tool cannot uninstall an app. Take a backup or copy of the environment in the Power Platform admin center first if you may need to go back.";
 await page.click("#btn-envs");
 await page.waitForSelector(".envpick input[data-env]");
 const offered = await page.$$eval(".envpick input[data-env]", (els) => els.map((e) => e.dataset.env));
@@ -59,7 +60,7 @@ assert((await txt(cell("env-dev", "msdyn_fs"))).includes("Dependency msdyn_ancho
 assert((await txt(cell("env-prod", "msdyn_portal"))).includes("Installing"), "Prod portal: in progress, no checkbox");
 assert(!(await page.$(`${cell("env-prod", "msdyn_portal")} input`)), "busy cell is not selectable");
 assert((await txt('tr[data-app="msdyn_custom"]')).includes("custom upgrade"), "custom upgrade package flagged");
-assert((await page.getAttribute(`${cell("env-dev", "msdyn_sales")} input`, "aria-label")) === "Update SALES in SSS Dev" && (await page.getAttribute(`${cell("env-dev", "msdyn_fs")} input`, "aria-label")) === "Retry FS in SSS Dev", "cell checkbox label: action, app name and environment name (not the GUID)");
+assert((await page.getAttribute(`${cell("env-dev", "msdyn_sales")} input`, "aria-label")) === "Update SALES in Contoso Dev" && (await page.getAttribute(`${cell("env-dev", "msdyn_fs")} input`, "aria-label")) === "Retry FS in Contoso Dev", "cell checkbox label: action, app name and environment name (not the GUID)");
 assert((await txt("#counts")).includes("5 apps × 2 environments") && (await txt("#summary")).includes("2 updates") && (await txt("#summary")).includes("1 failed"), "summary counts: " + (await txt("#summary")));
 
 // ---- filter: shown rows, count caption, select-all respects it, hidden count, persisted, sticky App column ----
@@ -152,7 +153,8 @@ assert((await txt("#sel-count")) === "3 selected", "3 selected after ticking ret
 await page.click("#btn-pac");
 await page.waitForFunction(() => window.__mock.saved.length > 0);
 const ps = await M(() => window.__mock.saved.at(-1));
-assert(/^d365-apps-install-.*\.ps1$/.test(ps.name) && ps.content.includes("pac application install --environment 'env-dev' --application-name 'msdyn_fs'") && ps.content.includes("# SSS Prod (Production)"), "pac script: one line per install, grouped per environment");
+assert(/^d365-apps-install-.*\.ps1$/.test(ps.name) && ps.content.includes("pac application install --environment 'env-dev' --application-name 'msdyn_fs'") && ps.content.includes("# Contoso Prod (Production)"), "pac script: one line per install, grouped per environment");
+assert(ps.content.includes("# Target: 3 apps in 2 environments: Contoso Dev (Sandbox): 2 apps; Contoso Prod (Production): 1 app.") && ps.content.includes("# " + NO_UNDO) && ps.content.includes("# Contoso Dev (Sandbox): 2 apps"), "pac script: target environments with app counts and the no-undo note");
 
 // ---- preview + run ----
 await page.click("#btn-preview");
@@ -160,8 +162,12 @@ await page.waitForSelector("#plan");
 const plan = await txt("#plan");
 assert(plan.includes("1 Production environment") && plan.includes("Retry FS") && plan.includes("Install EXTRA"), "preview: Production warning and per-environment list");
 const planFolds = () => page.$$eval("#plan details.plan-env", (els) => els.map((d) => `${d.querySelector("summary").textContent}:${d.open}`).join("|"));
-assert((await planFolds()) === "SSS Dev · 2 installsSandbox:true|SSS Prod · 1 installProduction:true" && !(await page.$("#plan .fold-all")), "preview: one open fold per environment (≤ 5), summary 'name · N installs': " + (await planFolds()));
+assert((await planFolds()) === "Contoso Dev · 2 installsSandbox:true|Contoso Prod · 1 installProduction:true" && !(await page.$("#plan .fold-all")), "preview: one open fold per environment (≤ 5), summary 'name · N installs': " + (await planFolds()));
 assert((await page.$eval("#dlg-ok", (b) => b.className)).includes("btn-danger") && (await txt("#dlg-ok")) === "Run 3 installs", "confirm is the danger button when Production is in the plan");
+// every install / update / retry confirmation: each target environment by name with its app count, and the plain no-undo note
+assert((await txt("#plan-scope")).includes("3 apps in 2 environments: Contoso Dev (Sandbox): 2 apps; Contoso Prod (Production): 1 app."), "confirm names each target environment with its app count: " + (await txt("#plan-scope")));
+assert((await page.$$eval("#plan-scope li", (els) => els.map((e) => e.textContent).join("|"))) === "Contoso Dev (Sandbox, https://contoso-dev.crm4.dynamics.com): 2 apps to install or update|Contoso Prod (Production, https://contoso.crm4.dynamics.com): 1 app to install or update", "confirm lists one line per environment (name, type, URL, count)");
+assert((await txt("#plan-irreversible")).includes(NO_UNDO) && (await txt("#dlg-envs")) === "2 environments", "confirm says installs and updates cannot be undone (no rollback, no uninstall, back up first)");
 await page.click("#dlg-ok");
 await page.waitForSelector("#run-table");
 await page.waitForFunction(() => /Last run/.test(document.querySelector("#run-title")?.textContent ?? ""), null, { timeout: 20000 });
@@ -200,6 +206,7 @@ assert(res.name.endsWith(".csv") && res.content.split("\n")[0].startsWith("envir
 await page.check(`${cell("env-dev", "msdyn_custom")} input`);
 await page.click("#btn-preview");
 await page.waitForSelector("#plan");
+assert((await txt("#dlg-envs")) === "Contoso Dev" && (await txt("#plan-scope")).includes("1 app in 1 environment: Contoso Dev (Sandbox): 1 app.") && (await txt("#plan-irreversible")).includes(NO_UNDO), "single-app update confirm: environment name, count and the no-undo note: " + (await txt("#plan-scope")));
 await page.click("#dlg-ok");
 const during = await page.waitForFunction(() => {
   const t = document.querySelector("#run-title")?.textContent ?? "";
@@ -221,7 +228,7 @@ assert(!(await page.$eval("#btn-unused", (b) => b.disabled)), "Unused apps enabl
 const postsBefore = await M(() => window.__mock.posts.length);
 await page.click("#btn-unused");
 await page.waitForSelector("#unused-table");
-assert((await txt("#unused-env")) === "SSS Dev", "report runs on the connection's environment");
+assert((await txt("#unused-env")) === "Contoso Dev", "report runs on the connection's environment");
 let uv = await page.$$eval("#unused-table tbody tr", (els) => els.map((e) => e.dataset.app + ":" + e.dataset.verdict));
 assert(uv[0] === "msdyn_teamsapp:unused", "anchor app with only empty own tables: probably unused, listed first: " + uv.join(","));
 assert(!uv.some((x) => x.startsWith("msdyn_sales:")), "apps in use are hidden by default: " + uv.join(","));
@@ -237,7 +244,7 @@ assert(dvq.includes("msdyn_tiles?$select=msdyn_tileid&$top=1") && !dvq.some((q) 
 assert((await M(() => window.__mock.posts.length)) === postsBefore && dvq.every((q) => !/^(Uninstall|Delete)/i.test(q)), "read-only: no Power Platform posts, no write calls");
 await page.click("#btn-unused-csv");
 const ucsv = await M(() => window.__mock.saved.at(-1));
-assert(ucsv.name.startsWith("d365-apps-unused-SSS_Dev-") && ucsv.content.includes("SSS Dev,TEAMSAPP,msdyn_teamsapp,3.1.0.0,Probably unused"), "report CSV: " + ucsv.content.split("\r\n")[1]);
+assert(ucsv.name.startsWith("d365-apps-unused-Contoso_Dev-") && ucsv.content.includes("Contoso Dev,TEAMSAPP,msdyn_teamsapp,3.1.0.0,Probably unused"), "report CSV: " + ucsv.content.split("\r\n")[1]);
 
 // ---- unused: notes folded, verdict badges filter, name filter, expand / collapse all, Hide keeps the report, Re-run ----
 assert(!(await page.$eval("#unused-how", (d) => d.open)) && (await txt("#unused-how")).includes("RetrieveTotalRecordCount"), "How verdicts work: folded by default");
@@ -291,7 +298,7 @@ assert((await txt("#counts")).includes("× 3 of 4 environments") && (await txt("
 // a selection in a column that gets hidden: kept, counted as hidden, flagged in the plan
 await page.check(`${cell("env-dev", "msdyn_fs")} input`);
 let before = await calls();
-await page.click('#grid th.col[data-env="env-dev"] button[aria-label="Hide SSS Dev"]');
+await page.click('#grid th.col[data-env="env-dev"] button[aria-label="Hide Contoso Dev"]');
 assert((await colIds()) === "env-broken,env-prod" && (await calls()) === before, "✕ hides the column locally, no API call");
 assert((await txt("#counts")).includes("× 2 of 4 environments") && (await txt("#env-hidden")).startsWith("2 environments hidden"), "2 hidden: " + (await txt("#summary")));
 assert(!(await page.$("#f-failed")), "badge counts cover the shown columns only (the failed install is in hidden Dev)");
@@ -300,7 +307,8 @@ await page.click("#btn-select-failed");
 assert((await txt("#sel-count")) === "1 selected (1 hidden by filter)", "Select all failed leaves out hidden columns");
 await page.click("#btn-preview");
 await page.waitForSelector("#plan");
-assert((await txt("#plan-hidden")).includes("1 install is in environment columns hidden from the matrix: SSS Dev") && (await txt("#plan")).includes("hidden column"), "plan flags installs in hidden columns: " + (await txt("#plan")));
+assert((await txt("#plan-hidden")).includes("1 install is in environment columns hidden from the matrix: Contoso Dev") && (await txt("#plan")).includes("hidden column"), "plan flags installs in hidden columns: " + (await txt("#plan")));
+assert((await txt("#plan-scope")).includes("Contoso Dev (Sandbox): 1 app") && (await txt("#plan-irreversible")).includes(NO_UNDO), "retry confirm (hidden column): environment named, no-undo note");
 await page.click("#dlg-cancel");
 await page.waitForFunction(() => !document.querySelector("#dlg").open);
 // persisted across reload
@@ -309,8 +317,8 @@ await page.waitForSelector('#grid th.col[data-env="env-broken"]');
 assert((await colIds()) === "env-broken,env-prod" && (await page.$eval("#hide-empty", (e) => e.checked)), "hidden columns and Hide empty persisted across reload: " + (await colIds()));
 assert(await M(() => JSON.parse(localStorage.getItem("sss-view:d365-apps")).hiddenEnvs.join(",") === "env-dev"), "hiddenEnvs saved in the view state");
 // every column hidden → empty state with Show all
-await page.click('button[aria-label="Hide SSS Prod"]');
-await page.click('button[aria-label="Hide SSS Broken"]');
+await page.click('button[aria-label="Hide Contoso Prod"]');
+await page.click('button[aria-label="Hide Contoso Broken"]');
 await page.waitForSelector("#matrix .empty-state");
 assert((await txt("#matrix .empty-state")).includes("All environments hidden"), "all columns hidden: empty state");
 before = await calls();
@@ -322,7 +330,7 @@ await page.reload();
 await page.waitForSelector('#grid th.col[data-env="env-empty"]');
 assert((await colIds()) === "env-broken,env-dev,env-empty,env-prod", "Show all persisted across reload");
 await page.check("#hide-empty");
-await page.click('button[aria-label="Hide SSS Prod"]');
+await page.click('button[aria-label="Hide Contoso Prod"]');
 await page.click("#btn-show-envs");
 assert((await colIds()) === "env-broken,env-dev,env-empty,env-prod", "summary Show all un-hides ✕ and empty columns");
 await page.check("#hide-empty");
@@ -340,10 +348,10 @@ await M(() => {
     m.envs.push({ id, displayName, type, state: 'Ready', dataverseId: 'org-' + id, url: 'https://' + id + '.crm4.dynamics.com', geo: 'europe' });
     m.available[id] = [{ uniqueName: 'msdyn_extra', localizedName: 'EXTRA', version: '7.0.0.0', state: 'None', publisherName: 'Microsoft' }];
   };
-  add('env-t1', 'SSS Trial', 'Trial');
-  add('env-s2', 'SSS Sandbox 2', 'Sandbox');
-  add('env-d1', 'SSS Default', 'Default');
-  add('env-p2', 'SSS Prod 2', 'Production');
+  add('env-t1', 'Contoso Trial', 'Trial');
+  add('env-s2', 'Contoso Sandbox 2', 'Sandbox');
+  add('env-d1', 'Contoso Default', 'Default');
+  add('env-p2', 'Contoso Prod 2', 'Production');
   m.installed['env-dev'].push({ uniqueName: 'msdyn_long', localizedName: 'A very long Dynamics 365 application name that keeps going well past any sensible column width', version: '1.0.0.0', state: 'Installed', publisherName: 'Microsoft' });
   m.emit("connection:updated");
 });
@@ -369,12 +377,14 @@ await page.click("#dlg-ok");
 await page.waitForSelector('#grid th.col[data-env="env-p2"]');
 for (const id of ["env-empty", "env-t1", "env-s2", "env-d1", "env-p2"]) await page.check(`${cell(id, "msdyn_extra")} input`);
 await page.check(`${cell("env-dev", "msdyn_fs")} input`);
-await page.click('button[aria-label="Hide SSS Sandbox 2"]');
+await page.click('button[aria-label="Hide Contoso Sandbox 2"]');
 await page.click("#btn-preview");
 await page.waitForSelector("#plan");
 const openFolds = () => page.$$eval("#plan details.plan-env", (els) => els.filter((d) => d.open).map((d) => d.dataset.env).sort().join(","));
 assert((await page.$$eval("#plan details.plan-env", (els) => els.length)) === 6 && (await openFolds()) === "env-p2,env-s2", "6 environments: folds closed except Production and the hidden column: " + (await openFolds()));
-assert((await txt('#plan details[data-env="env-p2"] > summary')).startsWith("SSS Prod 2 · 1 install") && (await txt("#plan-hidden")).includes("SSS Sandbox 2"), "summary and the hidden-column warning kept");
+assert((await txt('#plan details[data-env="env-p2"] > summary')).startsWith("Contoso Prod 2 · 1 install") && (await txt("#plan-hidden")).includes("Contoso Sandbox 2"), "summary and the hidden-column warning kept");
+const bulkScope = await txt("#plan-scope");
+assert(bulkScope.startsWith("Target: 6 apps in 6 environments:") && (await page.$$eval("#plan-scope li", (els) => els.length)) === 6 && ["Contoso Dev", "Contoso Empty", "Contoso Trial", "Contoso Sandbox 2", "Contoso Default", "Contoso Prod 2"].every((n) => bulkScope.includes(`${n} (`)) && (await txt("#plan-irreversible")).includes(NO_UNDO) && (await txt("#dlg-envs")) === "6 environments", "bulk confirm with folds closed: every target environment still named with its count, no-undo note: " + bulkScope);
 await page.click('#plan details[data-env="env-t1"] > summary');
 assert((await openFolds()).includes("env-t1"), "a closed environment unfolds from its summary");
 await page.click("#plan .fold-all button:first-child");

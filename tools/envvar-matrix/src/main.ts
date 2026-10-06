@@ -894,7 +894,11 @@ async function previewCleanup(col: ColumnData): Promise<void> {
   setStatus("Checking dependencies…");
   await markDependents(api, plan);
   setStatus(null);
-  await runMergePlan(col, plan, `${cleanupSummary(plan.deletes.filter((d) => d.action === "delete").length)} in ${col.meta.name}. A backup is saved first; Restore from backup recreates them.`);
+  await runMergePlan(
+    col,
+    plan,
+    `${cleanupSummary(plan.deletes.filter((d) => d.action === "delete").length)} in ${col.meta.name}. A backup file is saved first (cancelling the save cancels the delete); Restore from backup… recreates them with the same name, connector and connection, but a new id and outside any solution.`,
+  );
   cleanupSel.clear();
 }
 
@@ -972,6 +976,7 @@ async function previewTurnOn(col: ColumnData, picked: { flowId: string; name: st
     h("div", { class: "warnings" }, "Turned-on flows start running on their triggers (schedules, Dataverse and connector events). Turn on only flows that are meant to run in this environment."),
     isProd ? h("div", { class: "warnings" }, "Target is a Production environment.") : null,
     h("ul", {}, ...picked.map((f) => h("li", {}, f.name, h("span", { class: "caption" }, ` — ${f.refs.join(", ") || "no connection references"}`)))),
+    h("p", { class: "caption" }, "No backup applies: only the flow state changes. This tool does not turn flows off again; turn a flow off in Power Automate if needed. Runs that have started cannot be undone."),
   );
   const ok = await showDialog({ title: "Turn on flows", target: targetChip(col.meta), body, okLabel: `Turn on ${picked.length}`, danger: isProd });
   if (!ok) return;
@@ -1071,8 +1076,13 @@ async function addToSolution(col: ColumnData, sol: SolutionInfo, refs: ConnRefRe
   const body = h(
     "div",
     {},
-    h("p", { class: "caption" }, `AddSolutionComponent into ${sol.friendlyName} (${sol.uniqueName}), without required components:`),
+    h(
+      "p",
+      { class: "caption" },
+      `${refs.length} connection reference${refs.length === 1 ? "" : "s"} to add to ${sol.friendlyName} (${sol.uniqueName}) in ${col.meta.name}, with AddSolutionComponent, without required components:`,
+    ),
     h("ul", {}, ...refs.map((r) => h("li", { class: "mono" }, r.logicalName))),
+    h("p", { class: "caption" }, "No backup applies: the references themselves are not changed. This tool does not remove solution components; to undo, remove them from the solution in the maker portal."),
   );
   const ok = await showDialog({ title: "Add to solution", target: targetChip(col.meta), body, okLabel: `Add ${refs.length}` });
   if (!ok) return;
@@ -1160,7 +1170,7 @@ async function previewMerge(): Promise<void> {
   const specs = mergeSpecs(col.connRefs);
   if (!specs.length) return;
   const plan: MergePlan = planMerge(col.meta, col.connRefs, flows, specs, { deleteSources: $<HTMLInputElement>("#merge-delete").checked, collapseKeys: $<HTMLInputElement>("#merge-collapse").checked });
-  const summary = `${specs.map((s) => `${s.sources.join(", ")} → ${s.target}`).join(" · ")}. ${plan.flows.filter((f) => f.action === "update").length} flows to update in ${col.meta.name}; ${plan.deletes.filter((d) => d.action === "delete").length} references to delete. A backup of every touched flow is saved first.`;
+  const summary = `${specs.map((s) => `${s.sources.join(", ")} → ${s.target}`).join(" · ")}. ${plan.flows.filter((f) => f.action === "update").length} flows to update in ${col.meta.name}; ${plan.deletes.filter((d) => d.action === "delete").length} references to delete. A backup file of every touched flow and reference is saved first (cancelling the save cancels the merge); Restore from backup… puts each flow's clientdata back and recreates deleted references (new id, outside any solution).`;
   await runMergePlan(col, plan, summary);
   mergeSel.clear();
 }
@@ -1230,7 +1240,11 @@ async function restoreBindings(col: ColumnData, b: BindBackup): Promise<void> {
   const body = h(
     "div",
     {},
-    h("p", { class: "caption" }, `Bind backup taken ${b.takenAt.replace("T", " ").slice(0, 19)} in ${b.environment.name}. ${writes.length} binding${writes.length === 1 ? "" : "s"} to put back; flows are not restarted.`),
+    h(
+      "p",
+      { class: "caption" },
+      `Bind backup taken ${b.takenAt.replace("T", " ").slice(0, 19)} in ${b.environment.name}. ${writes.length} binding${writes.length === 1 ? "" : "s"} to put back in ${col.meta.name}; flows are not restarted. The current bindings are not backed up first: they are listed under Current and recorded in the Run log.`,
+    ),
     ...plan.errors.map((e) => h("div", { class: "warnings" }, badge("blocked", "bad"), " ", e)),
     h(
       "table",
@@ -1282,8 +1296,10 @@ async function restoreFromBackup(): Promise<void> {
     return;
   }
   let plan;
+  let takenAt = "";
   try {
     const b = parseMergeBackup(file.text);
+    takenAt = `${String(b.takenAt ?? "").replace("T", " ").slice(0, 19)} in ${b.environment.name}`;
     setStatus("Reading cloud flows…");
     const flows = await fetchFlows(api, col.meta.target!);
     plan = planRestore(col.meta, b, col.connRefs, flows);
@@ -1297,6 +1313,11 @@ async function restoreFromBackup(): Promise<void> {
   const body = h(
     "div",
     {},
+    h(
+      "p",
+      { class: "caption" },
+      `Backup taken ${takenAt}. In ${col.meta.name}: ${plan.recreate.length} reference${plan.recreate.length === 1 ? "" : "s"} to recreate (new id, outside any solution), ${updates.length} flow${updates.length === 1 ? "" : "s"} whose clientdata is put back. The current flow definitions are not backed up first: this restore cannot be undone from this tool.`,
+    ),
     ...plan.errors.map((e) => h("div", { class: "warnings" }, badge("blocked", "bad"), " ", e)),
     plan.recreate.length ? h("p", { class: "caption" }, `Recreated first: ${plan.recreate.map((r) => r.logicalName).join(", ")}.`) : null,
     plan.missing.length ? h("div", { class: "warnings" }, `Flows in the backup that no longer exist (not restored): ${plan.missing.join(", ")}`) : null,
@@ -1498,6 +1519,13 @@ async function runPlan(plan: WritePlan): Promise<void> {
     isProd && writes.length ? h("div", { class: "warnings" }, "Target is a Production environment.") : null,
     invalid.length ? h("div", { class: "warnings" }, `${invalid.length} value${invalid.length === 1 ? " does" : "s do"} not match the variable type and will not be written.`) : null,
     cautions.length ? h("div", { class: "warnings" }, `${cautions.length} write${cautions.length === 1 ? "" : "s"} with a caution: see Note.`) : null,
+    writes.length
+      ? h(
+          "p",
+          { class: "caption" },
+          "This cannot be undone from this tool: no backup file is saved for values. The old values are in the Current column above and in the Run log (before → after); to undo an update, set the old value back. A created value row stays until it is deleted in the maker portal. For a file copy first, use Export → Snapshot.",
+        )
+      : null,
     hideSkippedToggle(table, plan.items.length, plan.items.filter((i) => i.action === "skip").length, writes.length),
     table,
   );
@@ -1708,7 +1736,7 @@ async function runBind(plan: BindPlan): Promise<void> {
       `${writes.length} binding${writes.length === 1 ? "" : "s"} from ${plan.source.name} into ${plan.target.name}. ${plan.items.length - writes.length - invalid.length} skipped.${invalid.length ? ` ${invalid.length} invalid (not written).` : ""}${restart && writes.length ? " Flows that are on and use a rebound reference are turned off and on afterwards." : ""}`,
     ),
     plan.source.key === "picker" ? h("p", { class: "caption" }, "Connections picked from the Power Platform API list.") : null,
-    writes.length ? h("p", { class: "caption" }, "The current bindings are saved to a backup file first; undo with Consolidate → Restore from backup….") : null,
+    writes.length ? h("p", { class: "caption" }, "The current bindings are saved to a backup file first (cancelling the save cancels the bind); undo with Consolidate → Restore from backup…. Flow restarts are not undone.") : null,
     !plan.source.url ? h("p", { class: "caption" }, "Settings file: connection ids are taken as written for this environment. Check the file targets it.") : null,
     isProd && writes.length ? h("div", { class: "warnings" }, "Target is a Production environment.") : null,
     hideSkippedToggle(table, plan.items.length, plan.items.filter((i) => i.action === "skip").length, writes.length),

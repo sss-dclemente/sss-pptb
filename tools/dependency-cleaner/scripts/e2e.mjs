@@ -309,6 +309,13 @@ const MOCK = `
 const { page, assert, finish } = await launchPage(import.meta.url, { initScript: MOCK });
 await page.goto("file://" + TOOL + "/dist/index.html");
 const M = (fn) => page.evaluate(fn);
+// the last confirmation before a write names the environment, the scope and the way back
+const okWrite = async (scope) => {
+  await page.waitForSelector("#dlg[open] #dlg-write");
+  const t = await page.textContent("#dlg-write");
+  assert(t.includes("SSS Dev") && t.includes("https://sss-dev.crm4.dynamics.com") && t.includes(scope) && /backup/i.test(t), "write confirmation names environment, scope and way back: " + t);
+  await page.click("#dlg-ok");
+};
 
 // ---- load ----
 await page.waitForFunction(() => document.querySelectorAll("#solution option[value]:not([value=''])").length > 0);
@@ -424,6 +431,12 @@ await page.screenshot({ path: resolve(OUT, "02-fix-preview.png"), fullPage: true
 
 // ---- confirm ----
 await page.click("#btn-confirm");
+await page.waitForSelector("#dlg[open] #dlg-write");
+await page.click("#dlg-cancel");
+await page.waitForTimeout(200);
+assert((await M(() => window.__mock.updates.length)) === 0 && !(await page.isDisabled("#btn-confirm")), "write confirmation cancelled: nothing written, Confirm available again");
+await page.click("#btn-confirm");
+await okWrite("operations on solution SssCore");
 await page.waitForSelector("#rediag", { timeout: 15000 });
 const log = await M(() => window.__mock.log);
 const ex = await M(() => window.__mock.executes.filter((e) => /SolutionComponent|PublishXml/.test(e.operationName)));
@@ -459,8 +472,7 @@ await page.click("#restore-ops-head .fold-all >> text=Expand all");
 assert((await page.$$eval("#restore-ops details.diff-fold", (els) => els.every((d) => d.open))) && (await page.$eval("#restore-ops pre.diff", (e) => e.querySelectorAll(".del, .add").length > 0)), "D1: restore Expand all opens the diffs");
 assert(rops[0] === "RemoveSolutionComponent Table account" && rops[1] === "AddSolutionComponent Table account" && rops.some((t) => t.startsWith("Update form Account")) && rops.some((t) => t.startsWith("Update view")) && rops.at(-1) === "PublishXml account", "restore plan: table back to all assets, XML back, publish: " + rops.join(" | "));
 await page.click("#btn-restore-apply");
-await page.waitForSelector("dialog[open]");
-await page.click("#dlg-ok");
+await okWrite("on solution SssCore, back to the backup of");
 await page.waitForSelector("#restore-results table");
 const after = await M(() => ({ form: window.__mock.forms[window.__mock.ids.FORM_A].formxml === window.__mock.FORM_A_XML, fetch: window.__mock.views[window.__mock.ids.VIEW].fetchxml === window.__mock.VIEW_FETCH, layout: window.__mock.views[window.__mock.ids.VIEW].layoutxml === window.__mock.VIEW_LAYOUT, members: window.__mock.members.map((m) => m.objectid + ":" + m.rootcomponentbehavior), pubs: window.__mock.log.filter((x) => x === "PublishXml").length }));
 assert(after.form && after.fetch && after.layout, "restore writes original formxml / fetchxml / layoutxml back");
@@ -772,6 +784,7 @@ await page.selectOption("#solution", ids.SOL.other);
 await page.click('.tab[data-tab="fix"]');
 const q5 = await M(() => window.__mock.queries.length);
 await page.click("#btn-confirm");
+await okWrite("on solution SssCore");
 await page.waitForSelector("#rediag", { timeout: 15000 });
 const b7 = await page.evaluate((n) => window.__mock.queries.slice(n).filter((x) => x.q.includes("_solutionid_value eq")).map((x) => x.q.match(/_solutionid_value eq ([0-9a-f-]{36})/)[1]), q5);
 const b7sum = await page.textContent("#diag-summary");
@@ -787,6 +800,7 @@ await page.evaluate(() => {
   b.click();
   b.click();
 });
+await okWrite("on solution SssCore");
 await page.waitForSelector("#rediag", { timeout: 15000 });
 await page.waitForTimeout(300);
 const b8 = await page.evaluate((w) => ({ updates: window.__mock.updates.length - w.updates, pubs: window.__mock.log.filter((x) => x === "PublishXml").length - w.pubs }), w6);

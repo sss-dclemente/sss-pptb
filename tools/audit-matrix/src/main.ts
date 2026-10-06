@@ -5,7 +5,7 @@ import { loadView, persistControls, saveView, type PersistedControls } from "../
 import { matrixCsv, planCsv, planScript, safeFileName } from "./audit/export";
 import { fetchColumns, fetchEnv, type DataverseLike } from "./audit/fetch";
 import { buildMatrix, filterRows, originDefault, visibleColumns } from "./audit/matrix";
-import { parseSnapshot, serializeSnapshot } from "./audit/snapshot";
+import { parseSnapshot, serializeBackup, serializeSnapshot } from "./audit/snapshot";
 import type { EnvData, EnvMeta, Filters, FlagState, Matrix, MatrixTableRow, OrgAudit, TableAudit } from "./audit/types";
 import { applyPlan, planMatchOther, planSet, publishTables, tablesToPublish, type Plan, type PlanBuild, type PlanItem, type PlanResult } from "./audit/write";
 
@@ -102,7 +102,7 @@ function colChip(meta: EnvMeta, removable: boolean): HTMLElement {
     { class: "colchip", title: meta.url },
     dot,
     h("span", { class: "env" }, meta.name),
-    h("span", { class: "kind" }, meta.kind === "live" ? `${meta.target} · ${meta.environment}` : `snapshot${meta.takenAt ? ` · ${meta.takenAt.slice(0, 10)}` : ""}`),
+    h("span", { class: "kind" }, meta.kind === "live" ? `${meta.target} · ${meta.environment}` : `${meta.partial ? "backup " : ""}snapshot${meta.takenAt ? ` · ${meta.takenAt.slice(0, 10)}` : ""}`),
   );
   if (removable) {
     const x = h("button", { class: "btn-icon", type: "button", "aria-label": `Remove ${meta.name}` }, "×");
@@ -591,18 +591,35 @@ function addToPlan(build: PlanBuild, label: string, note = ""): void {
   void notify(label, `${added} change${added === 1 ? "" : "s"} added to the plan${skippedNote}${note ? `; ${note}` : ""}`, added ? "success" : "warning");
 }
 
+/** "Contoso Dev (Dev) — https://contoso-dev.crm4.dynamics.com": the environment a write or publish goes to, named in full. */
+const envLabel = (m: EnvMeta): string => `${m.name} (${m.environment})${m.url ? ` — ${m.url}` : ""}`;
+
+/** How to put the flags back, said the same way in the preview, the publish confirm and the README. */
+const UNDO_STEPS = "load the backup with Load snapshot…, keep it selected in Compare with, press Plan: match other env, then Preview & apply and publish";
+
 async function runPlan(): Promise<void> {
   const a = api();
   if (!a || !primary || !plan.length) return;
-  const current: Plan = { target: primary.meta, items: plan };
+  const items = [...plan];
+  const current: Plan = { target: primary.meta, items };
   const isProd = /prod/i.test(primary.meta.environment);
+  const tableWrites = items.filter((i) => i.level === "table").length;
+  const columnWrites = items.length - tableWrites;
+  const touched = new Set(items.map((i) => i.table)).size;
+  const backup = h("input", { type: "checkbox", id: "backup-first" }) as HTMLInputElement;
+  backup.checked = true;
   const ok = await showDialog({
     title: "Preview changes",
     target: h("span", {}, "Target:", colChip(primary.meta, false)),
     body: h(
       "div",
       {},
-      h("p", { class: "caption" }, `${plan.length} metadata write${plan.length === 1 ? "" : "s"} to ${primary.meta.name} (${primary.meta.environment}). Each one re-reads the current definition and changes only IsAuditEnabled.`),
+      h("p", { id: "preview-target" }, h("strong", {}, "Target environment: "), envLabel(primary.meta)),
+      h(
+        "p",
+        { class: "caption", id: "preview-scope" },
+        `${plural(items.length, "metadata write")} to ${primary.meta.name}: ${plural(tableWrites, "table flag")} and ${plural(columnWrites, "column flag")}, across ${plural(touched, "table")}. Each one re-reads the current definition and changes only IsAuditEnabled.`,
+      ),
       isProd ? h("div", { class: "warnings" }, "Target is a Production environment.") : null,
       // Turning a flag on is not the same as capturing anything: the organization switch gates both
       // other levels, so a plan that switches things on there changes metadata and nothing else.
@@ -613,15 +630,39 @@ async function runPlan(): Promise<void> {
             `Auditing is off for ${primary.meta.name} at the organization level. These writes will set the flags, but nothing will be captured until auditing is switched on in the Power Platform admin centre.`,
           )
         : null,
-      previewBody(plan),
+      h(
+        "div",
+        { class: "backup-step", id: "preview-backup" },
+        h("label", { class: "check" }, backup, " ", h("strong", {}, "Save backup snapshot first")),
+        h(
+          "p",
+          { class: "caption" },
+          `Before anything is written, saves the current audit flags of these ${plural(touched, "table")} (${plural(columnWrites, "column")}) from ${primary.meta.name} as a JSON snapshot, through the save dialog. Cancel the save and nothing is written.`,
+        ),
+      ),
+      h(
+        "p",
+        { class: "caption", id: "preview-undo" },
+        `To undo: ${UNDO_STEPS}. Without the backup this cannot be undone from this tool except by planning the opposite change by hand. ` +
+          "Reverting restores the flags, not audit history: whatever happened while auditing was off was never recorded and cannot be recovered. This tool never deletes audit records.",
+      ),
+      previewBody(items),
     ),
-    okLabel: `Apply ${plan.length}`,
+    okLabel: `Apply ${items.length}`,
     danger: isProd,
   });
   if (!ok) return;
+  if (backup.checked) {
+    const name = `audit-backup.${safeFileName(primary.meta.name)}.${new Date().toISOString().replace(/[:.]/g, "-")}.json`;
+    if (!(await saveText(name, serializeBackup(primary, items), "application/json"))) {
+      await notify("Backup not saved", "Nothing was written. Apply again and save the backup, or untick “Save backup snapshot first”.", "warning");
+      return;
+    }
+    await notify("Backup saved", `${name}. To undo: ${UNDO_STEPS}.`, "success");
+  }
 
   cancelRun = false;
-  setStatus(`Writing 0/${plan.length}…`, () => {
+  setStatus(`Writing 0/${items.length}…`, () => {
     cancelRun = true;
     setStatus("Cancelling…");
   });
@@ -702,19 +743,28 @@ async function showResults(results: PlanResult[]): Promise<void> {
 }
 
 async function offerPublish(a: DataverseLike, tables: string[]): Promise<void> {
+  if (!primary?.meta.target) return;
+  const meta = primary.meta;
   const ok = await showDialog({
     title: "Publish customizations",
+    target: h("span", {}, "Target:", colChip(meta, false)),
     body: h(
       "div",
       {},
-      h("p", {}, `Audit metadata changes only take effect after publishing. Publish ${tables.length} table${tables.length === 1 ? "" : "s"}?`),
+      h("p", { id: "publish-target" }, h("strong", {}, "Target environment: "), envLabel(meta)),
+      h("p", { id: "publish-scope" }, `Audit metadata changes only take effect after publishing. Publish ${plural(tables.length, "table")} in ${meta.name}?`),
       h("p", { class: "caption" }, tables.join(", ")),
+      h(
+        "p",
+        { class: "caption", id: "publish-undo" },
+        `Publishing cannot be undone. To back out, revert the flags (${UNDO_STEPS}) and publish again.`,
+      ),
     ),
-    okLabel: "Publish",
+    okLabel: `Publish ${tables.length}`,
   });
-  if (!ok || !primary?.meta.target) return;
+  if (!ok || primary?.meta.key !== meta.key || !meta.target) return;
   setStatus("Publishing…");
-  const results = await publishTables(a, tables, primary.meta.target);
+  const results = await publishTables(a, tables, meta.target);
   setStatus(null);
   const failed = results.filter((r) => !r.ok);
   await notify(failed.length ? "Publish partly failed" : "Published", `${results.length - failed.length} of ${results.length} tables`, failed.length ? "warning" : "success");

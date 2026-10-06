@@ -1,4 +1,5 @@
 import type { ColumnAudit, EnvData, ManagedFlag, OrgAudit, TableAudit } from "./types";
+import type { PlanItem } from "./write";
 
 export const SNAPSHOT_KIND = "sss-audit-matrix-snapshot";
 export const SNAPSHOT_VERSION = 1;
@@ -31,6 +32,11 @@ interface SnapTable {
 interface Snap {
   kind: string;
   version: number;
+  /**
+   * "backup": saved before Apply, carrying only the tables and columns that plan wrote (see
+   * serializeBackup). Absent or "full": a snapshot of the whole environment as loaded.
+   */
+  scope?: "full" | "backup";
   environment?: { name?: string; url?: string; environment?: string; takenAt?: string };
   org?: Partial<OrgAudit> | null;
   tables?: SnapTable[];
@@ -70,6 +76,57 @@ export function serializeSnapshot(env: EnvData): string {
         }));
       return out;
     }),
+  };
+  return JSON.stringify(doc, null, 2);
+}
+
+/**
+ * The backup saved before Apply: the audit flags the plan is about to change, as the preview shows
+ * them ("Current"), in the snapshot format. Loaded with "Load snapshot…" as the comparison, "Plan:
+ * match other env" then plans exactly the writes that put those flags back. Each touched table is
+ * recorded with its own flag (its current value) and only the planned columns; the "backup" scope
+ * tells the matrix that anything else missing from the file is not recorded rather than absent.
+ */
+export function serializeBackup(env: EnvData, items: PlanItem[], takenAt = new Date().toISOString()): string {
+  const byTable = new Map<string, PlanItem[]>();
+  for (const i of items) byTable.set(i.table, [...(byTable.get(i.table) ?? []), i]);
+  const tables: SnapTable[] = [];
+  for (const [name, group] of byTable) {
+    const t = env.tables.find((x) => x.logicalName === name);
+    const own = group.find((i) => i.level === "table");
+    const tableFlag = own ? own.current : !!t?.audit.value;
+    const cols = env.columns[name] ?? [];
+    const planned = group.filter((i) => i.level === "column");
+    const out: SnapTable = {
+      logicalName: name,
+      schemaName: t?.schemaName ?? name,
+      displayName: t?.displayName ?? group[0].tableDisplay,
+      ownership: t?.ownership,
+      audit: { value: tableFlag, canBeChanged: t?.audit.canBeChanged ?? true, managedPropertyLogicalName: t?.audit.managedPropertyLogicalName ?? null },
+      isManaged: t?.isManaged,
+      isCustom: t?.isCustom ?? null,
+    };
+    if (planned.length)
+      out.columns = planned.map((i) => {
+        const c = cols.find((x) => x.logicalName === i.column);
+        return {
+          logicalName: i.column!,
+          displayName: c?.displayName ?? i.columnDisplay ?? i.column!,
+          attributeType: c?.attributeType,
+          audit: { value: i.current, canBeChanged: c?.audit.canBeChanged ?? true, managedPropertyLogicalName: c?.audit.managedPropertyLogicalName ?? null },
+          isManaged: c?.isManaged,
+          isSecured: c?.isSecured,
+        };
+      });
+    tables.push(out);
+  }
+  const doc: Snap = {
+    kind: SNAPSHOT_KIND,
+    version: SNAPSHOT_VERSION,
+    scope: "backup",
+    environment: { name: env.meta.name, url: env.meta.url, environment: env.meta.environment, takenAt },
+    org: env.org,
+    tables,
   };
   return JSON.stringify(doc, null, 2);
 }
@@ -122,6 +179,7 @@ export function parseSnapshot(json: string, fileName: string): EnvData {
       url: env.url ?? "",
       environment: env.environment ?? "Snapshot",
       takenAt: env.takenAt ?? "",
+      partial: obj.scope === "backup",
     },
     tables,
     columns,

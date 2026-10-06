@@ -3,7 +3,7 @@ import { $, badge, card, emptyState, filteredEmpty, foldAllButtons, h, keepFold,
 import { dataverse, getConnections, initTheme, inToolbox, notify, onConnectionChange, saveText } from "../../_shared/host";
 import { loadView, saveView } from "../../_shared/view-state";
 import { applyPlan, DEFAULT_WRITE_CONCURRENCY } from "./offboard/apply";
-import { inventoryCsv, inventoryJson, resultsCsv, resultsJson, safeFileName } from "./offboard/export";
+import { inventoryCsv, inventoryJson, planCsv, resultsCsv, resultsJson, safeFileName } from "./offboard/export";
 import {
   fetchCategories,
   fetchLeaver,
@@ -18,7 +18,7 @@ import {
   type DataverseLike,
   type PoolControl,
 } from "./offboard/fetch";
-import { buildPlan, categoryLabel, DEFAULT_RECORD_CAP, estimateCounts, LARGE_PLAN_WARNING, type OwnerTarget } from "./offboard/plan";
+import { buildPlan, categoryLabel, DEFAULT_RECORD_CAP, estimateCounts, kindCounts, LARGE_PLAN_WARNING, type OwnerTarget } from "./offboard/plan";
 import {
   ACCESS_MODE_LABEL,
   CALL_TEXT,
@@ -45,6 +45,7 @@ let useTeamTarget = false;
 let lastPlan: Plan | null = null;
 let lastResults: OpResult[] | null = null;
 let envName: string | null = null;
+let envUrl: string | null = null;
 let control: PoolControl | null = null;
 /** Report table view: null = default (Failed when anything failed, else All); reset by every new apply. */
 let resultView: "failed" | "all" | null = null;
@@ -647,14 +648,50 @@ function previewCategory(c: Plan["counts"][number], ops: Plan["ops"], open: bool
   );
 }
 
+/**
+ * Who and where, the count per kind of write, and the way back: what the confirmation has to say before
+ * anything is written. The plan export is the backup — it lists the value every operation replaces.
+ */
+function previewScope(plan: Plan, leaverUser: UserInfo, successorUser: UserInfo, target: OwnerTarget): Node {
+  const has = (k: string): boolean => plan.ops.some((op) => op.kind === k);
+  const kv: [string, string][] = [
+    ["Environment", `${envName ?? "unknown connection"}${envUrl ? ` · ${envUrl}` : ""}`],
+    ["Leaver", `${leaverUser.fullName}${leaverUser.domainName ? ` (${leaverUser.domainName})` : ""}`],
+    ["Successor", `${successorUser.fullName}${successorUser.domainName ? ` (${successorUser.domainName})` : ""}`],
+  ];
+  if (has("reassign-record")) kv.push(["Records go to", target.kind === "team" ? `team ${target.name}` : target.name]);
+  if (has("reassign-asset")) kv.push(["Other owned items go to", successorUser.fullName]);
+  const exportPlan = h("button", { class: "btn btn-ghost btn-sm", type: "button", id: "btn-export-plan" }, "Export plan (CSV)");
+  const planFile = `${safeFileName(leaverUser.domainName ?? leaverUser.fullName)}.offboarding-plan.csv`;
+  exportPlan.addEventListener("click", async () => {
+    if (await saveText(planFile, planCsv(plan, leaverUser), "text/csv")) await notify("Exported", planFile, "success");
+  });
+  return h(
+    "div",
+    { class: "stack", id: "preview-scope" },
+    h("dl", { class: "kv" }, ...kv.flatMap(([k, v]) => [h("dt", {}, k), h("dd", {}, v)])),
+    h("ul", { class: "notes", id: "preview-kinds" }, ...kindCounts(plan.ops).map((c) => h("li", {}, `${c.label}: ${c.count}`))),
+    h(
+      "div",
+      { class: "danger-box", id: "preview-undo" },
+      `No backup is taken and this run cannot be undone from this tool: Dataverse keeps no undo for an owner change or a removed role. ` +
+        `Export the plan first to keep the way back — it lists every record with its previous owner (${leaverUser.fullName}), ` +
+        `every direct report with their previous manager, and every role, profile and team membership removed from the leaver; the results export on the Report tab carries the same column. ` +
+        `Reverting means reassigning and re-granting from that list by hand.`,
+    ),
+    h("div", { class: "row" }, exportPlan),
+  );
+}
+
 /** Warnings first (open), then one fold per category with its operations, then the skipped items with their reasons. */
-function previewBody(plan: Plan): Node {
+function previewBody(plan: Plan, leaverUser: UserInfo, successorUser: UserInfo, target: OwnerTarget): Node {
   const big = plan.ops.length > LARGE_PLAN_WARNING;
   const cats = plan.counts; // categories with at least one operation, in category order
   return h(
     "div",
     { class: "preview-body" },
     h("p", {}, `${plan.ops.length} operation${plan.ops.length === 1 ? "" : "s"} against ${envName ?? "this environment"}.`),
+    previewScope(plan, leaverUser, successorUser, target),
     big ? h("div", { class: "danger-box" }, `This is a large batch (over ${LARGE_PLAN_WARNING} writes). Narrow the table selection, or use the ToolBox "Ownership Mover" for bulk ownership changes.`) : null,
     plan.warnings.length
       ? h("details", { class: "warnings", id: "preview-warnings", open: true }, h("summary", { class: "chev" }, `Warnings (${plan.warnings.length})`), h("ul", { class: "notes" }, ...plan.warnings.map((w) => h("li", {}, w))))
@@ -709,8 +746,8 @@ async function previewAndApply(): Promise<void> {
   }
   const confirmed = await showDialog({
     title: "Preview — nothing has been written yet",
-    target: h("span", {}, "Successor:", badge(successorUser.fullName, "neutral")),
-    body: previewBody(plan),
+    target: h("span", {}, "Environment:", badge(envName ?? "unknown connection", "neutral")),
+    body: previewBody(plan, inv.leaver.user, successorUser, target),
     okLabel: `Apply ${plan.ops.length}`,
     danger: true,
   });
@@ -844,7 +881,7 @@ function renderReport(): void {
             "span",
             { class: "row" },
             exportButton("btn-export-res-json", "Export JSON", () => `${base}.offboarding-results.json`, () => resultsJson(inv, plan, results, succ, envName), "application/json"),
-            exportButton("btn-export-res-csv", "Export CSV", () => `${base}.offboarding-results.csv`, () => resultsCsv(results), "text/csv"),
+            exportButton("btn-export-res-csv", "Export CSV", () => `${base}.offboarding-results.csv`, () => resultsCsv(results, inv.leaver.user), "text/csv"),
           ),
         )
       : card("Apply results", h("p", { class: "caption" }, "No plan has been applied yet."));
@@ -870,6 +907,7 @@ async function renderConnection(): Promise<void> {
   chip.replaceChildren();
   const [c] = await getConnections();
   envName = c ? `${c.conn.name} (${c.conn.environment})` : null;
+  envUrl = c?.conn.url ?? null;
   if (!c) return;
   const dot = h("span", { class: "dot" });
   if (c.conn.environmentColor) dot.style.background = c.conn.environmentColor;

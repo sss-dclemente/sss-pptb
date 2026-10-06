@@ -124,7 +124,7 @@ export const mockHost = ({ securedColumns = [], fieldPermissions = [] } = {}) =>
     if (ed) {
       const e = entities.find((x) => x.LogicalName === ed[1]);
       if (!e) throw new Error('mock: no entity ' + ed[1]);
-      return { '@odata.context': 'https://sss-dev.crm4.dynamics.com/api/data/v9.2/$metadata#EntityDefinitions(Privileges)/$entity', LogicalName: e.LogicalName, MetadataId: P(e.LogicalName), Privileges: entityPrivileges(e) };
+      return { '@odata.context': 'https://contoso-dev.crm4.dynamics.com/api/data/v9.2/$metadata#EntityDefinitions(Privileges)/$entity', LogicalName: e.LogicalName, MetadataId: P(e.LogicalName), Privileges: entityPrivileges(e) };
     }
     // Parsed the way the server parses a URL: '#' starts a fragment (never sent), '&' separates
     // parameters, '+' is a space and %XX is decoded.
@@ -155,7 +155,7 @@ export const mockHost = ({ securedColumns = [], fieldPermissions = [] } = {}) =>
       const skip = Number(params.$skiptoken ?? 0);
       const page = rows.slice(skip, skip + src.pageSize);
       const out = { value: page.map((r) => ({ ...r })) };
-      if (skip + src.pageSize < rows.length) out['@odata.nextLink'] = 'https://sss-dev.crm4.dynamics.com/api/data/v9.2/' + set + '?' + rest.split('&').filter((p) => !p.startsWith('$skiptoken=')).join('&') + '&$skiptoken=' + (skip + src.pageSize);
+      if (skip + src.pageSize < rows.length) out['@odata.nextLink'] = 'https://contoso-dev.crm4.dynamics.com/api/data/v9.2/' + set + '?' + rest.split('&').filter((p) => !p.startsWith('$skiptoken=')).join('&') + '&$skiptoken=' + (skip + src.pageSize);
       return out;
     }
     return { value: rows.map((r) => ({ ...r })) };
@@ -227,7 +227,7 @@ export const mockHost = ({ securedColumns = [], fieldPermissions = [] } = {}) =>
     },
   };
   window.toolboxAPI = {
-    connections: { getActiveConnection: async () => ({ id: 'c1', name: 'SSS Dev', url: 'https://sss-dev.crm4.dynamics.com', environment: 'Dev', environmentColor: '#0f766e' }), getSecondaryConnection: async () => null },
+    connections: { getActiveConnection: async () => ({ id: 'c1', name: 'Contoso Dev', url: 'https://contoso-dev.crm4.dynamics.com', environment: 'Dev', environmentColor: '#0f766e' }), getSecondaryConnection: async () => null },
     utils: { getCurrentTheme: async () => 'light', showNotification: async (o) => { (window.__notes ??= []).push(o); } },
     events: { on: (h) => window.__handlers.push(h) },
     fileSystem: { selectPath: async () => null, readBinary: async () => new Uint8Array(), readText: async () => '', saveFile: async (name, content) => { window.__saved.push({ name, content }); return '/tmp/' + name; } },

@@ -18,8 +18,8 @@
 //              first-time viewer starts on Origin: custom.
 //   v=manyunknown  the same, with IsCustomEntity missing from every table: no default is applied.
 //   v=nosec    no secondary connection: no comparison until a snapshot is loaded.
-// Screenshots go to scripts/.e2e-out/; the ones the README links are copied into docs/img/ so those
-// links can never go stale. Run: npm run build && node scripts/e2e.mjs (needs playwright + chromium).
+// Screenshots go to scripts/.e2e-out/; a few are also copied into docs/img-synthetic/ (gitignored).
+// They show mocked data, so they are never published: the README shows real ToolBox captures only. Run: npm run build && node scripts/e2e.mjs (needs playwright + chromium).
 // Usability: Only changeable (M6), expanded rows kept across Refresh / Apply (M7), "expand to load"
 // button + focus kept across re-renders (M8), grouped plan / preview / results (M9), locked reason
 // tooltips + no comparison / Diff columns without a comparison (M10).
@@ -30,7 +30,7 @@ import { checkDebugLog } from "../../_shared/e2e-debug.mjs";
 
 const TOOL = new URL("..", import.meta.url).pathname.replace(/\/$/, "");
 const OUT = resolve(TOOL, "scripts/.e2e-out");
-const IMG = resolve(TOOL, "docs/img");
+const IMG = resolve(TOOL, "docs/img-synthetic");
 mkdirSync(OUT, { recursive: true });
 mkdirSync(IMG, { recursive: true });
 const PAGE = "file://" + TOOL + "/dist/index.html";
@@ -130,7 +130,8 @@ const MOCK = `
     utils: { getCurrentTheme: async () => 'light', showNotification: async (o) => { window.__mock.notes.push(o); } },
     events: { on() {} },
     fileSystem: {
-      saveFile: async (name, content) => { window.__mock.saved.push({ name, content }); return '/tmp/' + name; },
+      // cancelSave: the viewer cancels the save dialog (saveFile resolves to no path)
+      saveFile: async (name, content) => { if (window.__mock.cancelSave) return null; window.__mock.saved.push({ name, content }); return '/tmp/' + name; },
       selectPath: async () => (window.__mock.nextOpen ? '/tmp/snapshot.json' : null),
       readText: async () => window.__mock.nextOpen,
     },
@@ -379,9 +380,29 @@ await page.click("#btn-apply");
 await page.waitForSelector("dialog[open]");
 assert((await page.textContent("#dlg-title")) === "Preview changes", "preview dialog");
 assert((await page.textContent("#dlg-body")).includes("3 metadata writes"), "preview counts the writes");
+const previewTarget = await page.textContent("#preview-target");
+assert(previewTarget.includes("SSS Dev (Dev)") && previewTarget.includes("https://sss-dev.crm4.dynamics.com"), "preview names the target environment and its URL — " + previewTarget);
+const previewScope = await page.textContent("#preview-scope");
+assert(previewScope.includes("2 table flags and 1 column flag, across 2 tables"), "preview states the scope in tables and columns — " + previewScope);
+assert(await page.isChecked("#backup-first"), "“Save backup snapshot first” is on by default");
+assert((await page.textContent("#preview-backup")).includes("2 tables (1 column) from SSS Dev"), "the backup step says what it saves — " + (await page.textContent("#preview-backup")));
+const undo = await page.textContent("#preview-undo");
+assert(undo.includes("Load snapshot…") && undo.includes("Plan: match other env") && undo.includes("cannot be recovered"), "the preview says how to undo, and that lost audit history cannot be recovered — " + undo);
 assert(!(await page.textContent("#dlg-body")).includes("nothing will be captured"), "no organization warning in the preview while the primary's organization auditing is on");
 await shot("04-preview.png", "preview.png");
 await page.click("#dlg-ok");
+
+// ---- the backup is saved before anything is written, in the snapshot format, scoped to the plan
+await page.waitForFunction(() => window.__mock.saved.length === 3);
+const backupFile = (await page.evaluate(() => window.__mock.saved))[2];
+assert(/^audit-backup\.SSS_Dev\..+\.json$/.test(backupFile.name), "backup file name names the environment — " + backupFile.name);
+const backupDoc = JSON.parse(backupFile.content);
+assert(backupDoc.kind === "sss-audit-matrix-snapshot" && backupDoc.scope === "backup" && backupDoc.environment.url === "https://sss-dev.crm4.dynamics.com", "backup is a snapshot of the target, marked as a backup");
+assert(
+  JSON.stringify(backupDoc.tables.map((t) => [t.logicalName, t.audit.value, (t.columns ?? []).map((c) => [c.logicalName, c.audit.value])])) ===
+    JSON.stringify([["account", true, [["telephone1", false]]], ["sss_fails", false, []]]),
+  "backup records the current flags of exactly the planned tables and columns",
+);
 
 await page.waitForFunction(() => document.querySelector("#dlg-title").textContent === "Results");
 const results = await page.textContent("#dlg-body");
@@ -391,6 +412,10 @@ await page.click("#dlg-cancel");
 // ---- scoped publish behind its own confirm
 await page.waitForFunction(() => document.querySelector("#dlg-title").textContent === "Publish customizations");
 assert((await page.textContent("#dlg-body")).includes("account"), "publish dialog names the touched tables");
+const publishTarget = await page.textContent("#publish-target");
+assert(publishTarget.includes("SSS Dev (Dev)") && publishTarget.includes("https://sss-dev.crm4.dynamics.com"), "publish confirm names the target environment and its URL — " + publishTarget);
+assert((await page.textContent("#publish-scope")).includes("Publish 1 table in SSS Dev"), "publish confirm counts the tables — " + (await page.textContent("#publish-scope")));
+assert((await page.textContent("#publish-undo")).includes("cannot be undone") && (await page.textContent("#publish-undo")).includes("publish again"), "publish confirm says publishing cannot be undone, only re-published after reverting");
 await page.click("#dlg-ok");
 await page.waitForFunction(() => window.__mock.published.length > 0);
 const published = await page.evaluate(() => window.__mock.published);
@@ -419,9 +444,10 @@ assert((await page.textContent("#apply-body")).includes("sss_fails"), "only the 
 await page.click("#btn-export-plan-csv");
 await page.click("#btn-export-plan-ps");
 saved = await page.evaluate(() => window.__mock.saved);
-assert(saved.length === 4, "plan CSV + plan script saved");
-assert(saved[2].name === "audit-plan.csv" && saved[2].content.includes("table,sss_fails,,off,on"), "plan CSV rows");
-assert(saved[3].name === "audit-plan.ps1" && saved[3].content.includes("EntityDefinitions(LogicalName=") && saved[3].content.includes("Table = 'sss_fails'"), "plan script is a runnable list");
+assert(saved.length === 5, "plan CSV + plan script saved");
+assert(saved[3].name === "audit-plan.csv" && saved[3].content.includes("table,sss_fails,,off,on"), "plan CSV rows");
+assert(saved[4].name === "audit-plan.ps1" && saved[4].content.includes("EntityDefinitions(LogicalName=") && saved[4].content.includes("Table = 'sss_fails'"), "plan script is a runnable list");
+assert(saved[4].content.startsWith("# Audit Config Matrix - exported plan"), "plan script header carries the tool name without a publisher prefix");
 
 // Applying the plan reloaded the matrix; the rows expanded before it come back expanded, their columns
 // read again (M7). The CSV only carries the columns of expanded tables: an audited column under a
@@ -444,6 +470,50 @@ await page.waitForFunction(() => {
   return tr && !tr.querySelector(".diffmark");
 });
 assert(true, "account no longer differs after the write");
+
+// ---- revert: the backup loaded as the comparison + "Plan: match other env" puts the flags back
+await page.evaluate((c) => { window.__mock.nextOpen = c; }, backupFile.content);
+const chipsBefore = await page.$$eval("#columns .colchip", (e) => e.length);
+await page.click("#btn-load-snap");
+await page.waitForFunction((n) => document.querySelectorAll("#columns .colchip").length === n + 1, chipsBefore);
+assert((await page.$$eval("#columns .colchip .kind", (e) => e.map((k) => k.textContent))).some((k) => k.startsWith("backup snapshot")), "the backup's chip says it is a backup snapshot");
+await page.waitForFunction(() => document.querySelectorAll("table.matrix .diffmark").length === 2);
+const revertDiffs = await page.$$eval("table.matrix tr.differs td.name .mono", (e) => e.map((x) => x.textContent));
+assert(
+  JSON.stringify(revertDiffs) === JSON.stringify(["account", "telephone1"]),
+  "against the backup only what the apply changed differs; tables and columns the backup does not record do not — " + revertDiffs.join(","),
+);
+await page.click('.tab[data-tab="apply"]');
+await page.click("#btn-clear-plan");
+await page.click('.tab[data-tab="matrix"]');
+await page.click("#btn-plan-match");
+await page.waitForFunction(() => document.querySelector("#plan-count").textContent === "2");
+await page.click('.tab[data-tab="apply"]');
+assert((await page.textContent("#plan-summary")) === "2 pending changes: 1 table on / 0 off, 1 column (0 on / 1 off)", "the revert plan turns account back on and telephone1 back off — " + (await page.textContent("#plan-summary")));
+// cancelling the backup save writes nothing
+const writesBefore = await page.evaluate(() => window.__mock.writes.length);
+await page.evaluate(() => { window.__mock.cancelSave = true; });
+await page.click("#btn-apply");
+await page.waitForSelector("dialog[open]");
+await page.click("#dlg-ok");
+await page.waitForFunction(() => window.__mock.notes.some((n) => n.title === "Backup not saved"));
+assert((await page.evaluate(() => window.__mock.writes.length)) === writesBefore, "a cancelled backup save writes nothing");
+assert((await page.textContent("#plan-count")) === "2", "the plan is kept when the backup was not saved");
+await page.evaluate(() => { window.__mock.cancelSave = false; });
+await page.click("#btn-apply");
+await page.waitForSelector("dialog[open]");
+await page.click("#dlg-ok");
+await page.waitForFunction(() => document.querySelector("#dlg-title").textContent === "Results");
+assert((await page.textContent("#results-summary")) === "2 ok · 0 failed", "the revert writes succeed — " + (await page.textContent("#results-summary")));
+await page.click("#dlg-cancel");
+await page.waitForFunction(() => document.querySelector("#dlg-title").textContent === "Publish customizations");
+await page.click("#dlg-ok");
+await page.waitForFunction(() => window.__mock.published.length === 2);
+const reverted = await page.evaluate(() => [window.__mock.envs.primary.tables.find((t) => t.LogicalName === "account").IsAuditEnabled.Value, window.__mock.envs.primary.attrs.account.find((a) => a.LogicalName === "telephone1").IsAuditEnabled.Value]);
+assert(JSON.stringify(reverted) === JSON.stringify([true, false]), "account and telephone1 are back to their backed-up flags — " + reverted.join(","));
+await page.click('.tab[data-tab="matrix"]');
+await page.waitForFunction(() => document.querySelector("#status").hidden && document.querySelectorAll("table.matrix tr.colrow").length === 2 && document.querySelectorAll("table.matrix .diffmark").length === 0);
+assert(true, "after the revert nothing differs from the backup");
 
 // ---------------------------------------------------------------- fixture variants
 /** A fresh context on one fixture variant, loaded and handed to `fn`; its page errors are asserted too. */

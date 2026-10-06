@@ -7,6 +7,7 @@ import { csvCell, safeFileName } from "./deps/export";
 import { fetchSolutionManaged, MetaCache, type DataverseLike } from "./deps/fetch";
 import { analyzeSlim, executeSlim, ORIGIN_LABEL, planSlim, slimCsv, slimMarkdown, slimOpLabel, VERDICT_LABEL, type SlimAnalysis, type SlimOpResult, type SlimPlan, type SlimRow, type SlimVerdict } from "./deps/slim";
 import { typeName, type SolutionInfo } from "./deps/types";
+import { confirmWrite, plural } from "./confirm-write";
 import { errorList } from "./error-list";
 import { notify, saveText, type LiveConnection } from "./host";
 
@@ -321,6 +322,16 @@ async function confirm(): Promise<void> {
       await notify("Refused", `${sol.uniqueName} is managed (or could not be read). Nothing was written.`, "error");
       return;
     }
+    const removes = plan.ops.filter((o) => o.kind === "remove").length;
+    const go = await confirmWrite({
+      title: "Slim solution",
+      conn: now,
+      scope: `${plural(plan.ops.length, "operation")} on solution ${fresh.uniqueName}: ${plural(plan.removing.length, "component")} leave the solution${plan.shells ? `, ${plural(plan.shells, "table")} converted to shells` : ""} (${removes} RemoveSolutionComponent, ${plan.ops.length - removes} AddSolutionComponent). Membership only: nothing is deleted from the environment.`,
+      wayBack: "Way back: the backup you saved for this plan. The Restore tab re-adds what left and puts shell tables back to all assets; only in this environment.",
+      okLabel: `Apply ${plan.ops.length}`,
+      danger: ctx.isProd(now),
+    });
+    if (!go) return;
     const before = analysis.counts.remove + analysis.counts.shell;
     const results = await executeSlim(a, plan.ops, fresh.uniqueName, (i, n) => ctx.setStatus(i < n ? `Applying ${i + 1} / ${n}…` : null));
     ctx.setStatus(null);

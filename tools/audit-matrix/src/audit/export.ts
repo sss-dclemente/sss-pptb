@@ -54,7 +54,7 @@ export function planScript(plan: Plan): string {
   const rows = plan.items
     .map((i) => `  @{ Level = '${i.level}'; Table = ${psLit(i.table)}; Column = ${i.column ? psLit(i.column) : "$null"}; Audit = $${i.next ? "true" : "false"} }`)
     .join("\n");
-  return `# SSS Audit Config Matrix - exported plan
+  return `# Audit Config Matrix - exported plan
 # Target environment: ${plan.target.name} (${plan.target.environment}) ${plan.target.url}
 # Generated: ${new Date().toISOString()}
 #

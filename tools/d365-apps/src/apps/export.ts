@@ -1,4 +1,5 @@
 /** Exports: matrix CSV, results CSV, pac script for a plan (plan D9). */
+import { IRREVERSIBLE_NOTE, planScopeText } from "./matrix";
 import type { Matrix, PlannedInstall, RunItem } from "./types";
 
 /** RFC 4180 quoting; cells a spreadsheet would read as a formula get a leading apostrophe. */
@@ -51,8 +52,10 @@ const psQuote = (s: string) => `'${s.replace(/'/g, "''")}'`;
 /** PowerShell script running the same plan through pac (`pac application install`), one environment block each. */
 export function pacScript(plan: PlannedInstall[], at = new Date()): string {
   const out = [
-    `# SSS D365 Apps Matrix: ${plan.length} install(s), generated ${at.toISOString()}`,
+    `# D365 Apps Matrix: ${plan.length} install(s), generated ${at.toISOString()}`,
     "# Needs the Power Platform CLI and an auth profile with admin rights on each environment: pac auth create",
+    `# Target: ${planScopeText(plan)}`,
+    `# ${IRREVERSIBLE_NOTE}`,
     "# Installs run one after another; pac waits for each to finish.",
     "$ErrorActionPreference = 'Continue'",
   ];
@@ -60,7 +63,7 @@ export function pacScript(plan: PlannedInstall[], at = new Date()): string {
   for (const p of plan) byEnv.set(p.env.id, [...(byEnv.get(p.env.id) ?? []), p]);
   for (const list of byEnv.values()) {
     const env = list[0].env;
-    out.push("", `# ${env.name} (${env.type || "unknown type"})`);
+    out.push("", `# ${env.name} (${env.type || "unknown type"}): ${list.length} app${list.length === 1 ? "" : "s"}`);
     for (const p of list) {
       const what = p.action === "update" ? `update ${p.from ?? "?"} -> ${p.to ?? "?"}` : p.action === "retry" ? "retry failed install" : `install ${p.to ?? ""}`.trim();
       out.push(`pac application install --environment ${psQuote(env.id)} --application-name ${psQuote(p.uniqueName)}  # ${p.name}: ${what}`);

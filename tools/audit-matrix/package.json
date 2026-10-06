@@ -1,15 +1,28 @@
 {
   "name": "@simplesmoothsafe/pptb-audit-matrix",
-  "version": "0.2.0",
-  "displayName": "SSS Audit Config Matrix",
+  "version": "0.2.1",
+  "displayName": "Audit Config Matrix",
   "description": "Org, table and column audit flags on one screen: cross-environment diff against a second connection or a snapshot, bulk set with preview and confirm, CSV and snapshot export.",
   "main": "index.html",
   "icon": "icon.svg",
   "license": "MIT",
-  "keywords": ["powerplatform", "dataverse", "toolbox", "pptb", "audit", "auditing", "compliance", "metadata", "security"],
+  "keywords": [
+    "powerplatform",
+    "dataverse",
+    "toolbox",
+    "pptb",
+    "audit",
+    "auditing",
+    "compliance",
+    "metadata",
+    "security"
+  ],
   "author": "Simple Smooth Safe",
   "contributors": [
-    { "name": "Duarte Clemente", "url": "https://simplesmoothsafe.com" }
+    {
+      "name": "Duarte Clemente",
+      "url": "https://simplesmoothsafe.com"
+    }
   ],
   "homepage": "https://simplesmoothsafe.com",
   "repository": {
@@ -27,7 +40,9 @@
     "connectionRequirement": "required",
     "minAPI": "1.2.0"
   },
-  "engines": { "node": ">=18.0.0" },
+  "engines": {
+    "node": ">=18.0.0"
+  },
   "scripts": {
     "build": "tsc --noEmit && vite build && node scripts/check-dist.mjs",
     "dev-watch": "vite build --mode development --watch",
@@ -41,5 +56,7 @@
     "typescript": "^5.6.0",
     "vite": "^5.4.0"
   },
-  "files": ["dist"]
+  "files": [
+    "dist"
+  ]
 }

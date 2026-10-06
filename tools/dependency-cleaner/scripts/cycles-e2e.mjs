@@ -150,6 +150,13 @@ const MOCK = `
 const { page, assert, finish } = await launchPage(import.meta.url, { initScript: MOCK });
 await page.goto("file://" + TOOL + "/dist/index.html");
 const M = (fn, arg) => page.evaluate(fn, arg);
+// the last confirmation before a write names the environment, the scope and the way back
+const okWrite = async (env, url, scope, wayBack = /backup/i) => {
+  await page.waitForSelector("#dlg[open] #dlg-write");
+  const t = await page.textContent("#dlg-write");
+  assert(t.includes(env) && t.includes(url) && t.includes(scope) && wayBack.test(t), "write confirmation names environment, scope and way back: " + t);
+  await page.click("#dlg-ok");
+};
 const ID = await M(() => window.__mock.ID);
 
 // ---- pick ----
@@ -188,8 +195,8 @@ assert((await page.textContent("#cy-sel-count")) === "3 fixes selected", "3 fixe
 const folds = await page.$$eval("#cy-body details.card[data-fold-key]", (els) => Object.fromEntries(els.map((e) => [e.dataset.foldKey, e.open])));
 assert(folds["cy:cycles"] && folds["cy:orphans"] && !folds["cy:edges"], "fold cards: cycles + orphans open, acyclic edges closed: " + JSON.stringify(folds));
 
-// E2E_SHOTS=1 refreshes the README screenshot (docs/img/cycles.png)
-if (process.env.E2E_SHOTS) await page.screenshot({ path: resolve(TOOL, "docs/img/cycles.png"), fullPage: false });
+// E2E_SHOTS=1 writes a synthetic screenshot (docs/img-synthetic/cycles.png, gitignored; not for the README)
+if (process.env.E2E_SHOTS) await page.screenshot({ path: resolve(TOOL, "docs/img-synthetic/cycles.png"), fullPage: false });
 
 // ---- export ----
 await page.click("#cy-export-md");
@@ -239,6 +246,7 @@ const backup = saved.at(-1);
 const bk = JSON.parse(backup.content);
 assert(bk.kind === "sss-dependency-cleaner-cycles-backup" && bk.operations.length === 3 && bk.operations.every((o) => o.kind === "add" && o.solution === "Core") && bk.environment.url === "https://sss-dev.crm4.dynamics.com", "backup records the three adds with their solution");
 await page.click("#cy-confirm");
+await okWrite("SSS Dev", "https://sss-dev.crm4.dynamics.com", "3 operations on solution Core: 3 components added (AddSolutionComponent)");
 await page.waitForSelector("#cy-rerun", { timeout: 15000 });
 const writes = (await M(() => window.__mock.executes)).filter((e) => e.operationName !== "RetrieveCurrentOrganization");
 assert(writes.length === 3 && writes.every((e) => e.operationName === "AddSolutionComponent" && e.parameters.SolutionUniqueName === "Core" && e.parameters.AddRequiredComponents === false), "3 AddSolutionComponent into Core");
@@ -257,6 +265,7 @@ await page.waitForSelector("#cy-undo-ops li");
 const uops = await page.$$eval("#cy-undo-ops li .mono", (els) => els.map((e) => e.textContent));
 assert(uops.length === 3 && uops.every((o) => o.startsWith("RemoveSolutionComponent") && o.endsWith("← Core")) && uops[0].includes("svc_url"), "undo plan: the three removes, last add first: " + uops.join(" | "));
 await page.click("#cy-undo-apply");
+await okWrite("SSS Dev", "https://sss-dev.crm4.dynamics.com", "3 operations on solution Core: 3 components removed (RemoveSolutionComponent)");
 await page.waitForFunction(() => window.__mock.notes.some((n) => n.title === "Undone"));
 const coreAfterUndo = await M((id) => window.__mock.members(id), ID.core);
 assert(coreAfterUndo.length === 1 && coreAfterUndo[0].objectid === ID.E3, "undo removed the three components; the opportunity shell that came along with its column stays (documented)");

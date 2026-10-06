@@ -175,7 +175,9 @@ test("exports: matrix CSV, pac script per environment, results CSV", () => {
   assert.ok(csv.includes("sales,sales,Microsoft,1.0 -> 1.2,1.2"));
   const plan = M.planInstalls(m, new Set([M.cellKey("dev", "sales"), M.cellKey("dev", "fs")]));
   const ps = M.pacScript(plan, new Date("2026-10-02T00:00:00Z"));
-  assert.ok(ps.includes("# DEV (Sandbox)"));
+  assert.ok(ps.includes("# DEV (Sandbox): 2 apps"));
+  assert.ok(ps.includes("# Target: 2 apps in 1 environment: DEV (Sandbox): 2 apps."), "pac script names the target environments with counts");
+  assert.ok(ps.includes(`# ${M.IRREVERSIBLE_NOTE}`), "pac script carries the no-undo note");
   assert.ok(ps.includes("pac application install --environment 'dev' --application-name 'sales'  # sales: update 1.0 -> 1.2"));
   assert.ok(ps.includes("--application-name 'fs'  # fs: retry failed install"));
   const items = M.toRunItems(plan);
@@ -417,4 +419,19 @@ test("planGroupOpen: open up to PLAN_FOLD_OVER groups; past it only Production a
   assert.ok(!M.planGroupOpen(env("a"), 6));
   assert.ok(M.planGroupOpen(env("p", "Production"), 6));
   assert.ok(M.planGroupOpen(env("a"), 6, true));
+});
+
+test("confirmation scope: each target environment with its app count; the no-undo note", () => {
+  const m = M.buildMatrix(results(), { showNotInstalled: true });
+  const sel = new Set([...M.updateKeys(m), ...M.failedKeys(m)]);
+  const plan = M.planInstalls(m, sel);
+  const scope = M.planScope(plan);
+  assert.deepEqual(scope.map((g) => `${g.env.name}:${g.count}`), [...new Set(plan.map((p) => p.env.id))].map((id) => `${id.toUpperCase()}:${plan.filter((p) => p.env.id === id).length}`));
+  assert.equal(scope.reduce((a, g) => a + g.count, 0), plan.length);
+  const one = M.planInstalls(m, new Set([M.cellKey("dev", "sales")]));
+  assert.equal(M.planScopeText(one), "1 app in 1 environment: DEV (Sandbox): 1 app.");
+  assert.match(M.IRREVERSIBLE_NOTE, /cannot be undone/);
+  assert.match(M.IRREVERSIBLE_NOTE, /no rollback/);
+  assert.match(M.IRREVERSIBLE_NOTE, /cannot uninstall/);
+  assert.match(M.IRREVERSIBLE_NOTE, /backup or copy of the environment/);
 });
