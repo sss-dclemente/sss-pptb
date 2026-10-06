@@ -1,4 +1,5 @@
 import { mountDebug } from "../../_shared/debug-ui";
+import { noSolutionsText, setSolutionsFailed } from "./solutions-state";
 import { $, append, badge, emptyState, filteredEmpty, foldAllButtons, h, keepFold, shownOf, wireTabs, type Child } from "../../_shared/dom";
 import { persistControls, type PersistedControls } from "../../_shared/view-state";
 import { backupFileName, buildBackup, parseBackup, planRestore, type Backup, type RestorePlan } from "./deps/backup";
@@ -171,7 +172,9 @@ async function loadConnections(): Promise<void> {
     setStatus("Loading solutions…");
     try {
       solutions = await fetchSolutions(a, "primary");
+      setSolutionsFailed(false);
     } catch (e) {
+      setSolutionsFailed(true);
       await notify("Load failed", (e as Error).message, "error");
     }
     if (s) {
@@ -187,9 +190,11 @@ async function loadConnections(): Promise<void> {
   const sel = $<HTMLSelectElement>("#solution");
   const prev = sel.value;
   const pickable = solutions.filter((x) => !x.isManaged && !["default", "active", "basic"].includes(x.uniqueName.toLowerCase()));
-  sel.replaceChildren(...(pickable.length ? pickable.map((x) => h("option", { value: x.id }, `${x.friendlyName} (${x.uniqueName}) ${x.version}`)) : [h("option", { value: "" }, p ? "No unmanaged solutions" : "No connection")]));
+  sel.replaceChildren(...(pickable.length ? pickable.map((x) => h("option", { value: x.id }, `${x.friendlyName} (${x.uniqueName}) ${x.version}`)) : [h("option", { value: "" }, noSolutionsText(!!p))]));
   if ([...sel.options].some((o) => o.value === prev)) sel.value = prev;
   $<HTMLButtonElement>("#btn-run").disabled = !pickable.length;
+  // the empty state names the connection state, which only now is known
+  if (!diagnosis) renderDiagnosis();
   upgradeOnConnections(changed);
   failedOnConnections(changed);
   slimOnConnections(changed);
@@ -267,6 +272,11 @@ function findingCard(f: Finding): HTMLElement {
   sel.addEventListener("change", () => {
     if (sel.value) selections.set(f.key, sel.value as FixKind);
     else selections.delete(f.key);
+    // a preview built from the old picks must not stay applicable
+    if (prepared || ops.length) {
+      clearPlan();
+      renderFix();
+    }
     renderSelCount();
   });
   const report = f.fixes.find((x) => x.kind === "report");

@@ -1,4 +1,5 @@
 /** "Cycles" tab: docs/CYCLES-PLAN.md. Several unmanaged solutions, the cycles between them, fixes through a base solution. */
+import { noSolutionsText } from "./solutions-state";
 import { $, badge, emptyState, foldAllButtons, foldCard, h, type Child } from "../../_shared/dom";
 import { persistControls, type PersistedControls } from "../../_shared/view-state";
 import { backupFileName } from "./deps/backup";
@@ -77,7 +78,7 @@ export function cyclesOnConnections(changed: boolean): void {
           });
           return h("label", { class: "check" }, box, `${s.friendlyName} (${s.uniqueName}) ${s.version}`);
         })
-      : [h("span", { class: "caption" }, ctx.primary() ? "No unmanaged solutions" : "No connection")]),
+      : [h("span", { class: "caption" }, noSolutionsText(!!ctx.primary()))]),
   );
   const base = $<HTMLSelectElement>("#cy-base");
   const prev = base.value;
