@@ -242,7 +242,7 @@ export async function analyzeUnused(o: AnalyzeOptions): Promise<UnusedReport> {
   const packages = o.installed.filter((p) => p.state === "" || /^(installed|none)$/i.test(p.state) || /failed$/i.test(p.state));
 
   say("Reading solutions…");
-  const solRows = await queryAll(dv, "solutions?$select=solutionid,uniquename,friendlyname,version&$filter=ismanaged eq true and isvisible eq true");
+  const solRows = await queryAll(dv, "solutions?$select=solutionid,uniquename,friendlyname,version&$filter=ismanaged eq true");
   const solutions = new Map<string, SolutionRef>();
   for (const r of solRows) {
     const u = str(r.uniquename);

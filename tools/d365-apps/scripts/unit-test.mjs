@@ -249,7 +249,7 @@ const G = (n) => `00000000-0000-0000-0000-${String(n).padStart(12, "0")}`;
 function fakeDv(o = {}) {
   const calls = [];
   const sols = [
-    { solutionid: G(1), uniquename: "msdyn_Sales", friendlyname: "Sales", version: "9.0" },
+    { solutionid: G(1), uniquename: "msdyn_Sales", friendlyname: "Sales", version: "9.0", isvisible: false }, // anchors are usually hidden
     { solutionid: G(2), uniquename: "msdyn_SalesCore", friendlyname: "Sales core", version: "9.0" },
     { solutionid: G(3), uniquename: "msdyn_Common", friendlyname: "Common", version: "1.0" },
     { solutionid: G(4), uniquename: "msdyn_Gami", friendlyname: "Gamification", version: "1.0" },
@@ -289,7 +289,7 @@ function fakeDv(o = {}) {
     calls,
     queryData: async (q) => {
       calls.push(q);
-      if (q.startsWith("solutions?")) return page(sols);
+      if (q.startsWith("solutions?")) return page(q.includes("isvisible eq true") ? sols.filter((x) => x.isvisible !== false) : sols);
       if (q.startsWith("msdyn_solutionhistories?")) {
         if (o.historyFails) throw new Error("history down");
         if (o.historyNoFilter && q.includes("$filter")) throw new Error("filter not supported");
@@ -413,7 +413,7 @@ test("analyzeUnused: history filter refused → unfiltered read; history unreada
   assert.equal(b.history, false);
   assert.match(b.warnings[0], /history down/);
   assert.equal(b.packages.find((p) => p.pkg.uniqueName === "Gamification").verdict, "not-found");
-  assert.equal(b.packages.find((p) => p.pkg.uniqueName === "msdyn_Sales").mappedBy, "anchor");
+  assert.equal(b.packages.find((p) => p.pkg.uniqueName === "msdyn_Sales").mappedBy, "anchor", "a hidden anchor solution still maps its package");
 });
 
 test("envTypes: present types once each, usual ones first in a fixed order, others A–Z", () => {
