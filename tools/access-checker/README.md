@@ -90,7 +90,8 @@ All data stays between ToolBox and your Dataverse environment: the tool talks to
 
 ## Release notes
 
-- **1.2.1** — Marketplace review: display name without publisher prefix, 'What this tool changes' section, AI assistance disclosure, synthetic screenshots removed. Check refuses to run when a record name is typed but not picked (it used to run a table-level check under that name).
+- **1.2.2** — Live test on a Sandbox: Check refuses to run when a record name is typed but not picked (it used to run a table-level check under that name). Real screenshots.
+- **1.2.1** — Marketplace review: display name without publisher prefix, 'What this tool changes' section, AI assistance disclosure, synthetic screenshots removed.
 
 ## AI Assistance
 
