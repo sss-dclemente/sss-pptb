@@ -1,5 +1,20 @@
 # RELEASE — owner-side steps per tool
 
+## Marketplace review round (2026-10) — owner steps
+
+Reviews of Access Checker, Dependency Cleaner, D365 Apps Matrix and Audit Config Matrix came back "changes requested" against the [marketplace](https://docs.powerplatformtoolbox.com/policies/marketplace) and [AI-assisted development](https://docs.powerplatformtoolbox.com/policies/ai-assisted-development) policies. Fixed in the repo for all seven tools (patch versions):
+- `displayName` without the publisher prefix; attribution only in `contributors` and the README `## Credits` section (in-app "Simple Smooth Safe" header and footer link removed).
+- `## What this tool changes` section in every README, right after What it does.
+- Write confirmations name the target environment and the scope, and either save a backup first or say plainly that the change cannot be undone from the tool (D365 Apps: every install / update / retry; Audit Matrix: publish names its environment, apply saves a backup snapshot and states the revert path).
+- `## AI Assistance` disclosure in every README.
+- Synthetic screenshots removed (see [SCREENSHOTS.md](SCREENSHOTS.md)).
+
+Not fixable in the repo — owner, per tool, before replying to the review:
+- [ ] **Real-environment test** (policy: "Tested by a person, against a real environment": light and dark theme, realistic data volumes, error paths — missing permissions, expired connection, empty results). Use the per-tool checklists below, plus the new confirmations. Then, and only then, remove or rewrite the matching "UNVERIFIED" / "not yet verified against a live tenant" README lines (Dependency Cleaner Limitations, D365 Apps Limitations, Audit Matrix backup/revert note). The reviewers flagged those lines on Dependency Cleaner and D365 Apps: the fix is the test, not deleting the line.
+- [ ] Once tested, the `## AI Assistance` line may say "reviewed, tested and maintained"; until then it says "reviewed and maintained".
+- [ ] Real ToolBox screenshots, added back to each README.
+- [ ] Publish the patch version to npm (`npm run build && npm run validate && npm publish --access public`), then reply to the review / resubmit.
+
 What to put in each screenshot is spelled out per shot in [SCREENSHOTS.md](SCREENSHOTS.md).
 
 Everything below runs on the owner's machine: needs ToolBox desktop, a Dataverse connection and an npm login. Order per tool: real-env test → real screenshots → publish → submit. Repo state: `main` builds and e2e green for all five; `pptb-validate` passes for all of them. Offboarding Wizard and Audit Config Matrix (0.1.0 on npm since 2026-10-02) have been loaded against a real environment read-only; their write paths are untested.
@@ -28,7 +43,7 @@ npm test                           # envvar-matrix only: unit tests, no browser
 
 ToolBox: Settings → *Show Debug Menu* → Debug → *Load Local Tool* → pick `tools/<tool>`. Light and dark (Settings → theme) both.
 
-## 1. SSS Solution XRay — `tools/solution-xray`
+## 1. Solution XRay — `tools/solution-xray`
 
 Real-env test (no connection needed):
 - [ ] Add 2+ real solution zips (one managed, one unmanaged, ideally two versions of the same solution).
@@ -47,7 +62,7 @@ cd tools/solution-xray && npm run build && npm run validate && npm publish --acc
 ```
 Submit at https://www.powerplatformtoolbox.com/submit-tool: npm name `@simplesmoothsafe/pptb-solution-xray`, categories **Solutions, Troubleshooting, Comparisons**.
 
-## 2. SSS EnvVar & ConnRef Matrix — `tools/envvar-matrix`
+## 2. EnvVar & ConnRef Matrix — `tools/envvar-matrix`
 
 Real-env test (primary + secondary connection, Dev + Test):
 - [ ] Both live columns load; counts match `environmentvariabledefinitions` / `connectionreferences` in the maker portal.
@@ -81,7 +96,7 @@ Submit: `@simplesmoothsafe/pptb-envvar-matrix`, categories **Environments, Migra
 
 - [ ] Debug log (1.5.0; published to npm 2026-10-02 before this check, fixes go in 1.5.1): tick Debug log, Refresh, Save log: every `queryData` with its query text and result, no connection secret in the file. The switch is still on after reopening the tool.
 
-## 3. SSS Access Checker — `tools/access-checker`
+## 3. Access Checker — `tools/access-checker`
 
 Real-env test (one connection, a user with a mix of direct role + team role):
 - [ ] User typeahead finds by name / domain / email; disabled badge on a disabled user.
@@ -105,7 +120,7 @@ cd tools/access-checker && npm run build && npm run validate && npm publish --ac
 ```
 Submit: `@simplesmoothsafe/pptb-access-checker`, categories **Users & Security, Troubleshooting**.
 
-## 4. SSS Dependency Cleaner — `tools/dependency-cleaner`
+## 4. Dependency Cleaner — `tools/dependency-cleaner`
 
 > **1.5.0 published to npm 2026-10-06, before the real-environment checks below.** npm went 1.2.0 → 1.5.0: 1.3.0, 1.3.1 and 1.4.0 were never published on their own, so 1.5.0 is the first npm release with Slim, Cycles and Failed import. Fixes for any of them go in 1.5.1; do not unpublish.
 
@@ -134,7 +149,7 @@ Publish:
 cd tools/dependency-cleaner && npm run build && npm run validate && npm publish --access public
 ```
 
-## 5. SSS Offboarding Wizard — `tools/offboarding-wizard`
+## 5. Offboarding Wizard — `tools/offboarding-wizard`
 
 Real-env test (one connection, a sandbox user who owns a bit of everything, plus a second user as successor). **Do the first run against a sandbox**: this tool writes ownership and membership.
 
@@ -157,7 +172,7 @@ cd tools/offboarding-wizard && npm run build && npm run validate && npm publish 
 ```
 Submit: `@simplesmoothsafe/pptb-offboarding-wizard`, categories **Users & Security, Data**.
 
-## 6. SSS Audit Config Matrix — `tools/audit-matrix`
+## 6. Audit Config Matrix — `tools/audit-matrix`
 
 Real-env test (two connections to sandboxes whose audit configuration differs, or one connection plus a snapshot). **Metadata writes are real and need a publish**: sandbox first.
 

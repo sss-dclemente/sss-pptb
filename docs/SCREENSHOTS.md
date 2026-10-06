@@ -1,6 +1,8 @@
 # SCREENSHOTS — what to capture, per tool
 
-The eighteen images under `tools/*/docs/img/` are synthetic placeholders. `configurations.readmeUrl` points at `main`, so whatever is committed there is what the marketplace listing renders. Replacing them is the last blocking step before submission (`docs/RELEASE.md`).
+Marketplace review (2026-10) rejected synthetic screenshots: the policy is "Screenshots are real. Screenshots and GIFs must show the actual tool, not mock-ups." All synthetic images were removed from `tools/*/docs/img/` and from the READMEs; the e2e / `npm run screenshots` output now goes to the gitignored `docs/img-synthetic/`. Real ToolBox captures kept: Solution XRay `inventory-light.png` and `risk.png`, Access Checker `columns.png` (recapture: it still shows the old "SSS" name). `configurations.readmeUrl` points at `main`, so whatever is committed there is what the marketplace listing renders.
+
+Per shot below: capture it inside ToolBox, save it under `tools/<tool>/docs/img/` with the file name given, and add it back to the tool README under a `## Screenshots` section (after `## What this tool changes`), with the raw.githubusercontent.com `main` URL. Never commit an image from `docs/img-synthetic/`.
 
 Work through one tool at a time. Each shot below names the file to overwrite, the state to build, and what has to be visible for the image to earn its place.
 
@@ -18,7 +20,7 @@ Work through one tool at a time. Each shot below names the file to overwrite, th
 
 ---
 
-## 1. SSS Solution XRay — `tools/solution-xray/docs/img/`
+## 1. Solution XRay — `tools/solution-xray/docs/img/`
 
 Needs two or more real exported solution zips. Ideally two versions of the same solution, one of them managed, so Compare and the baseline scoring have something to say. No connection required.
 
@@ -50,7 +52,7 @@ The README caption says "with a dependency cycle". If your real solutions do not
 
 ---
 
-## 2. SSS EnvVar & ConnRef Matrix — `tools/envvar-matrix/docs/img/`
+## 2. EnvVar & ConnRef Matrix — `tools/envvar-matrix/docs/img/`
 
 Needs two connected environments (primary and secondary) with environment variables that genuinely differ. The value of this tool is the difference, so an all-green matrix is the wrong picture.
 
@@ -80,7 +82,7 @@ Environment variables tab with a **snapshot loaded as a third column**, theme sw
 
 ---
 
-## 3. SSS Access Checker — `tools/access-checker/docs/img/`
+## 3. Access Checker — `tools/access-checker/docs/img/`
 
 Needs one connection and a user with a mix of direct role and team role. The most persuasive shot is one where the verdict is **not** all-green — a denial with its reason explained is the whole point of the tool.
 
@@ -107,7 +109,7 @@ If you capture it, add it to `tools/access-checker/README.md` under the existing
 
 ---
 
-## 4. SSS Offboarding Wizard — `tools/offboarding-wizard/docs/img/`
+## 4. Offboarding Wizard — `tools/offboarding-wizard/docs/img/`
 
 Needs one connection and a sandbox user who owns a realistic mix — records in several tables, at least one active modern flow, a couple of personal views, a team, two roles. The tool's argument is *how much a leaving user silently holds*, so a thin inventory undersells it. Use a sandbox: these shots put a person's name, their teams and their roles on screen.
 
@@ -131,7 +133,7 @@ The results after a small applied plan, theme switched.
 - Ideally one failed row alongside the successes: an honest failure row is more convincing than a clean sheet
 - The manual-steps list visible if it fits
 
-## 5. SSS Audit Config Matrix — `tools/audit-matrix/docs/img/`
+## 5. Audit Config Matrix — `tools/audit-matrix/docs/img/`
 
 Needs two connections to environments whose audit configuration genuinely differs (dev vs test is the natural pair), or one connection plus a snapshot exported from the other. A matrix with no `≠` in it demonstrates nothing.
 
