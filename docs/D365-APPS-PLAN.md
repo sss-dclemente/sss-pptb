@@ -125,8 +125,8 @@ Built from §7 steps 1–3, for the **connection's** environment only (Dataverse
 | Step | Call | Notes |
 |---|---|---|
 | Installed apps | `listPackages` (Power Platform API), or the matrix's read for that environment | Packages mid-install are left out |
-| Solutions | `solutions?$filter=ismanaged eq true and isvisible eq true` | |
-| Package → solutions | `msdyn_solutionhistories?$select=msdyn_name,msdyn_packagename,msdyn_operation,msdyn_result&$filter=msdyn_operation eq 0 and msdyn_packagename ne null`; on error the same without `$filter` (virtual table), then filtered in code; on error again, anchors only | **UNVERIFIED**: that `msdyn_packagename` equals the Power Platform API package `uniqueName`. Plus the anchor: solution `uniquename` = package `uniqueName` |
+| Solutions | `solutions?$filter=ismanaged eq true` | No `isvisible` filter: anchors are hidden (2026-10-06, PSA-DEV Sandbox: 49 of 53 package anchors had `isvisible` false) |
+| Package → solutions | `msdyn_solutionhistories?$select=msdyn_name,msdyn_packagename,msdyn_operation,msdyn_result,msdyn_correlationid&$filter=msdyn_operation eq 0`; on error the same without `$filter` (virtual table), then filtered in code; on error again, anchors only | Verified 2026-10-06 (PSA-DEV Sandbox, 1679 rows): `msdyn_packagename` is `""` on every row; `msdyn_operation` 0 = Import. Rows are grouped by `msdyn_correlationid` (one install run; the all-zero id is a catch-all across months and is ignored): the runs that contain a package's anchor give its solutions. A run with two packages' anchors makes its solutions shared. `msdyn_packagename` is still used when set. Plus the anchor: solution `uniquename` = package `uniqueName` (all 53 matched) |
 | Components | `solutioncomponents` types 1 and 80 by `_solutionid_value`, 20 per `or` | |
 | Tables | `EntityDefinitions` (`IsCustomEntity` true, not intersect, not virtual) | `objectid` = `MetadataId` |
 | Rows | `RetrieveTotalRecordCount(EntityNames=@p1)?@p1=<JSON, URI-encoded>` via `queryData`, 50 per call; a 0 or a missing table re-checked with `<set>?$select=<pk>&$top=1` | Snapshot < 24 h. A live row the snapshot missed = written recently = in use |
@@ -139,6 +139,6 @@ Verdict: platform list (§6 names) → `platform`; no solutions → `not-found`;
 ### Probe (owner, 10 min)
 
 Debug log on, a connection to an environment with a few D365 apps, **Unused apps…**, Save log:
-- [ ] Does `msdyn_solutionhistories` answer the filtered query, and does `msdyn_packagename` match the package unique names (e.g. `msdyn_SalesApp`)? If most apps show *Solutions not found* or *anchor* only, send the log.
+- [x] Does `msdyn_solutionhistories` answer the filtered query, and does `msdyn_packagename` match the package unique names (e.g. `msdyn_SalesApp`)? The filter works; `msdyn_packagename` is always empty, so mapping uses `msdyn_correlationid` (2026-10-06, PSA-DEV: 53 of 53 packages mapped, was 4 solutions in total).
 - [ ] `RetrieveTotalRecordCount` response shape (`EntityRecordCountCollection.Keys/Values`).
 - [ ] Any app marked *Probably unused* that you know is used: which tables did it count?
