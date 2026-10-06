@@ -1,8 +1,6 @@
-# SSS D365 Apps Matrix
+# D365 Apps Matrix
 
 The Power Platform admin center's **Environment → Resources → Dynamics 365 apps** page, for many environments at once, inside [Power Platform ToolBox](https://www.powerplatformtoolbox.com). Rows are apps, columns are environments. Each cell shows the installed version, an available update, a failed install or an install in progress. Tick cells, preview, run: installs are queued one at a time per environment, environments run in parallel, and progress is followed live. No clicking through PPAC environment by environment.
-
-Built by [Simple Smooth Safe](https://simplesmoothsafe.com).
 
 ## What it does
 
@@ -15,7 +13,7 @@ Built by [Simple Smooth Safe](https://simplesmoothsafe.com).
   - Filter by name. The counts above the matrix (**updates**, **failed**, **in progress**) are toggles: press one or more to show only the apps in that state (any of them). **Clear filters** resets the name filter and the toggles.
 - **Select all failed**: ticks every failed install for a retry (rows hidden by the name filter are left out).
 - **Select all updates**: ticks every update, except packages flagged **custom upgrade**. Those handle their own upgrade; tick them by hand after reading their release notes.
-- **Preview → run**: the preview lists the installs per environment and warns about Production environments. The run does one install at a time per environment, with up to 3 environments in parallel. Each install is followed until it ends (an install can take an hour) and the result shows in the matrix and in the run table. **Stop waiting** stops following; installs already started keep running in the environment. Afterwards the environments are read again. The run section folds away when every install succeeded; **Only problems** hides the installs that succeeded, and **Dismiss** clears the run list.
+- **Preview → run**: the preview names every target environment with the number of apps to install or update in it, lists the installs per environment, says that installs and updates cannot be undone, and warns about Production environments. The run does one install at a time per environment, with up to 3 environments in parallel. Each install is followed until it ends (an install can take an hour) and the result shows in the matrix and in the run table. **Stop waiting** stops following; installs already started keep running in the environment. Afterwards the environments are read again. The run section folds away when every install succeeded; **Only problems** hides the installs that succeeded, and **Dismiss** clears the run list.
 - **Unused apps…** (read-only): for the **connection's** environment, which installed apps look unused.
   - Each app is mapped to its solutions: the solutions its package imported (solution history) plus its anchor solution (same unique name as the package).
   - The verdict comes from row counts in the tables that only that app's solutions contain. Tables and solutions shared with another installed app are listed but not counted, because they can hold the other app's data.
@@ -30,17 +28,24 @@ Built by [Simple Smooth Safe](https://simplesmoothsafe.com).
   - Run results CSV.
   - **pac script**: a PowerShell script with the same installs as `pac application install` lines, for CI or for a machine without ToolBox.
 
-## Screenshots
+## What this tool changes
 
-Synthetic sample data from the e2e harness (mocked ToolBox host). Replace with real captures.
+Installs and updates of Dynamics 365 apps are **irreversible**: there is no rollback to the previous version and this tool cannot uninstall an app. Everything else the tool does is read-only.
 
-![Matrix: updates, failed installs and installs in progress per environment](https://raw.githubusercontent.com/sss-dclemente/sss-pptb/main/tools/d365-apps/docs/img/matrix.png)
+**Power Platform writes** (only after you confirm the preview):
 
-![Preview before running installs, with the Production warning](https://raw.githubusercontent.com/sss-dclemente/sss-pptb/main/tools/d365-apps/docs/img/preview.png)
+- **Install, update or retry a Dynamics 365 app package** in an environment: `POST environments/{id}/applicationPackages/{uniqueName}/install` (Power Platform API, AppManagement, api-version 2024-10-01), one call per ticked cell. The same call installs an app that is not installed, updates an installed app to the newest version the environment offers, or retries a failed install. The app's package imports or upgrades its solutions and components in that environment.
+  - **Scope**: exactly the ticked cells (single cells, **Select all updates**, **Select all failed**), including any ticked cell in a row or column hidden by the filters (the preview flags those). One install at a time per environment, up to 3 environments in parallel.
+  - **Confirmation**: the **Preview…** dialog is the only way to start a run. It names each target environment (display name, type and URL) with its number of apps, lists every install with its from/to version, warns about Production environments and custom-upgrade packages, and states that installs and updates cannot be undone. The run button is the danger button when a Production environment is in the plan.
+  - **Backup**: not offered by this tool and not possible through this API. Take a backup or copy of the environment in the Power Platform admin center before running if you may need to go back.
+  - **Reversible**: no. The Power Platform API has no rollback and no uninstall, and an install that has started cannot be cancelled (**Stop waiting** only stops following it). To remove an app, delete its solutions in the environment by hand (the **Unused apps** report lists them).
+- **Reads**: environments, installed and available app packages, install operation status (Power Platform API); for the **Unused apps** report, solutions, solution history, table metadata, `RetrieveTotalRecordCount` and one-row reads (Dataverse Web API, connection's environment only). The report changes nothing.
 
-![After a run: results per install](https://raw.githubusercontent.com/sss-dclemente/sss-pptb/main/tools/d365-apps/docs/img/run.png)
+**Files saved to disk** (only where you choose, through the ToolBox save dialog): Matrix CSV, Run results CSV, Unused apps report CSV, the **pac script** (`.ps1`; running it yourself performs the same irreversible installs, and its header says so) and the debug log.
 
-![Matrix, dark theme](https://raw.githubusercontent.com/sss-dclemente/sss-pptb/main/tools/d365-apps/docs/img/matrix-dark.png)
+**Browser storage** (per viewer, this tool only): the environment selection, hidden environment columns, filters and toggles, and the debug log switch, in `localStorage`.
+
+**Nothing else.** The tool never uninstalls apps, never deletes or edits records, solutions, components, security roles or environment settings, and never changes environment configuration.
 
 ## Setup
 
@@ -60,7 +65,7 @@ One connection is enough: the token covers every environment the account can see
 1. Open the tool on a connection set up as above.
 2. **Environments…**: tick the environments to compare, then **Load**.
 3. **Select all updates**, or tick cells one by one (update, retry, install).
-4. **Preview…**, check the list, **Run**.
+4. **Preview…**, check the target environments, the app count per environment and the list (installs and updates cannot be undone), **Run**.
 5. Keep the tool open while it runs.
 
 ## Limitations
@@ -85,7 +90,7 @@ All calls go from ToolBox to the Power Platform API (`api.powerplatform.com`) th
 
 ## Install
 
-**From the ToolBox marketplace**: search for "SSS D365 Apps Matrix" once listed.
+**From the ToolBox marketplace**: search for "D365 Apps Matrix" once listed.
 
 **From source**
 
@@ -105,9 +110,18 @@ npm run dev-watch   # rebuild on change; reload the tool tab in ToolBox
 npm test            # unit tests: response parsing, version compare, matrix cells, plan, run queue, exports
 npm run e2e         # Playwright test against dist/ with a mocked host (needs playwright + Chromium)
 npm run validate    # @pptb/validate manifest rules
+npm run screenshots # synthetic captures of the mocked host into docs/img-synthetic/ (gitignored; not for the README)
 ```
 
 Stack: TypeScript, Vite, no framework. Types from `@pptb/types`.
+
+## AI Assistance
+
+Substantial parts of this tool's code and documentation were generated with Claude Code (Anthropic) and reviewed and maintained by the contributors listed in `package.json`. Testing status against real Dataverse environments is stated per feature under Limitations.
+
+## Credits
+
+Built and maintained by Duarte Clemente ([Simple Smooth Safe](https://simplesmoothsafe.com)).
 
 ## License
 

@@ -8,11 +8,11 @@ export const MOCK = `
 (() => {
   const M = window.__mock = { gets: [], posts: [], saved: [], notes: [], listeners: [], fail403: false, active: {}, maxActive: 0, maxEnvs: 0 };
   const envs = [
-    { id: 'env-dev', displayName: 'SSS Dev', type: 'Sandbox', state: 'Ready', dataverseId: 'org-dev', url: 'https://sss-dev.crm4.dynamics.com', geo: 'europe' },
-    { id: 'env-prod', displayName: 'SSS Prod', type: 'Production', state: 'Ready', dataverseId: 'org-prod', url: 'https://sss.crm4.dynamics.com', geo: 'europe' },
+    { id: 'env-dev', displayName: 'Contoso Dev', type: 'Sandbox', state: 'Ready', dataverseId: 'org-dev', url: 'https://contoso-dev.crm4.dynamics.com', geo: 'europe' },
+    { id: 'env-prod', displayName: 'Contoso Prod', type: 'Production', state: 'Ready', dataverseId: 'org-prod', url: 'https://contoso.crm4.dynamics.com', geo: 'europe' },
     { id: 'env-teams', displayName: 'Teams Room', type: 'Teams', state: 'Ready', geo: 'europe' },
-    { id: 'env-empty', displayName: 'SSS Empty', type: 'Developer', state: 'Ready', dataverseId: 'org-empty', url: 'https://sss-empty.crm4.dynamics.com', geo: 'europe' },
-    { id: 'env-broken', displayName: 'SSS Broken', type: 'Sandbox', state: 'Ready', dataverseId: 'org-broken', url: 'https://sss-broken.crm4.dynamics.com', geo: 'europe' },
+    { id: 'env-empty', displayName: 'Contoso Empty', type: 'Developer', state: 'Ready', dataverseId: 'org-empty', url: 'https://contoso-empty.crm4.dynamics.com', geo: 'europe' },
+    { id: 'env-broken', displayName: 'Contoso Broken', type: 'Sandbox', state: 'Ready', dataverseId: 'org-broken', url: 'https://contoso-broken.crm4.dynamics.com', geo: 'europe' },
   ];
   M.envs = envs; // the tests add environments later (many-environment preview)
   const P = (uniqueName, version, state, extra = {}) => ({ uniqueName, localizedName: uniqueName.replace(/^msdyn_/, '').toUpperCase(), version, state, publisherName: 'Microsoft', ...extra });
@@ -144,7 +144,7 @@ export const MOCK = `
     },
   };
   window.toolboxAPI = {
-    connections: { getActiveConnection: async () => ({ id: 'c1', name: 'SSS Dev', url: 'https://sss-dev.crm4.dynamics.com', environment: 'Dev', environmentColor: '#0f766e' }), getSecondaryConnection: async () => null },
+    connections: { getActiveConnection: async () => ({ id: 'c1', name: 'Contoso Dev', url: 'https://contoso-dev.crm4.dynamics.com', environment: 'Dev', environmentColor: '#0f766e' }), getSecondaryConnection: async () => null },
     utils: { getCurrentTheme: async () => 'light', showNotification: async (o) => { M.notes.push(o); } },
     events: { on(cb) { M.listeners.push(cb); } },
     fileSystem: { saveFile: async (name, content) => { M.saved.push({ name, content }); return '/tmp/' + name; }, selectPath: async () => null, readText: async () => '', readBinary: async () => null },

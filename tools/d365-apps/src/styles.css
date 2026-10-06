@@ -104,3 +104,7 @@ dialog .dlg-foot { display: flex; gap: var(--s-2); justify-content: flex-end; pa
 dialog input[type="search"] { font: inherit; font-size: var(--fs-caption); background: var(--bg); border: 1px solid var(--border-color); border-radius: var(--radius-sm); padding: var(--s-1) var(--s-2); }
 .btn-danger { background: var(--status-bad-fg); border-color: var(--status-bad-fg); color: var(--fg-on-accent); }
 .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.danger-banner { border-left: 3px solid var(--status-bad-fg); background: var(--status-bad-bg); color: var(--status-bad-fg); padding: var(--s-2) var(--s-3); border-radius: var(--radius-sm); margin-bottom: var(--s-2); }
+.plan-scope { margin-bottom: var(--s-2); }
+.plan-scope p { margin: 0 0 var(--s-1); }
+.plan-scope ul { margin: 0; padding-left: var(--s-5); }
