@@ -1,7 +1,7 @@
 {
   "name": "@simplesmoothsafe/pptb-solution-xray",
-  "version": "1.2.0",
-  "displayName": "SSS Solution XRay",
+  "version": "1.2.1",
+  "displayName": "Solution XRay",
   "description": "Offline Dataverse solution zip analysis: component inventory, compare/diff, upgrade risk score and multi-solution install order. No connection required.",
   "main": "index.html",
   "icon": "icon.svg",

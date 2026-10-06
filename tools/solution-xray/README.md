@@ -1,8 +1,6 @@
-# SSS Solution XRay
+# Solution XRay
 
 Offline analysis of Dataverse solution zips inside [Power Platform ToolBox](https://www.powerplatformtoolbox.com). No connection required. The zip never leaves your machine.
-
-Built by [Simple Smooth Safe](https://simplesmoothsafe.com).
 
 ## What it does
 
@@ -15,21 +13,28 @@ Load one or more exported solution zips (managed or unmanaged) and get:
 
 Every tab exports its result as JSON. The Compare export is named `<A>-<version>_vs_<B>-<version>.diff.json` and honours the *Hide root-component rows* filter (recorded in its `filter` field).
 
+## What this tool changes
+
+**Nothing in any environment.** The tool is offline: it reads exported solution zips from disk and sends no request to Dataverse or Power Platform, so it makes no create, update, delete, import, publish, layer, schema, ownership or security change anywhere. It does not modify the zip files you load either; they are read into memory and discarded when you remove them, click *Clear all* or close the tool.
+
+The only things it writes:
+
+- **Files you save** — *Export JSON* on each tab (`<solution>-<version>.xray.json`, `<A>-<version>_vs_<B>-<version>.diff.json`, `<solution>-<version>.risk.json`, `install-order.json`) and *Save log* in the debug footer (`solution-xray-debug-<timestamp>.txt`; its header lists the ToolBox connections by name and URL, read from ToolBox, not from Dataverse). Each is written only where you choose in the ToolBox save dialog (in a plain browser, the standard download).
+- **Browser localStorage (per viewer, this tool only)** — view settings (Compare filters and search, *Hide root-component rows*, Inventory search, *Hide system tables*) under `sss-view:solution-xray`, and the *Debug log* switch under `sss-debug:solution-xray`. The theme follows ToolBox and is not stored.
+
+Nothing else: no network calls, no telemetry, no other files, no settings outside this tool.
+
 ## Screenshots
 
-Inventory (light) and upgrade risk captured inside Power Platform ToolBox with the sample zips. Dark theme and install order are still synthetic.
+Captured inside Power Platform ToolBox with the sample zips.
 
 ![Inventory, light theme](https://raw.githubusercontent.com/sss-dclemente/sss-pptb/main/tools/solution-xray/docs/img/inventory-light.png)
 
-![Inventory, dark theme](https://raw.githubusercontent.com/sss-dclemente/sss-pptb/main/tools/solution-xray/docs/img/inventory-dark.png)
-
 ![Upgrade risk](https://raw.githubusercontent.com/sss-dclemente/sss-pptb/main/tools/solution-xray/docs/img/risk.png)
-
-![Install order with a dependency cycle](https://raw.githubusercontent.com/sss-dclemente/sss-pptb/main/tools/solution-xray/docs/img/install-order.png)
 
 ## Install
 
-**From the ToolBox marketplace** — search for "SSS Solution XRay" once listed.
+**From the ToolBox marketplace** — search for "Solution XRay" once listed.
 
 **From npm (ToolBox Debug menu)** — Settings → enable *Show Debug Menu* → Debug → *Install from npm* → `@simplesmoothsafe/pptb-solution-xray`.
 
@@ -78,6 +83,14 @@ npm run e2e         # Playwright smoke test against dist/ (needs playwright + Ch
 ```
 
 Stack: TypeScript, Vite, [JSZip](https://stuk.github.io/jszip/). Types from `@pptb/types`. No framework.
+
+## AI Assistance
+
+Substantial parts of this tool's code and documentation were generated with Claude Code (Anthropic) and reviewed and maintained by the contributors listed in `package.json`. Real-environment testing status is stated in this README where a feature has not yet been verified.
+
+## Credits
+
+Built and maintained by Duarte Clemente ([Simple Smooth Safe](https://simplesmoothsafe.com)).
 
 ## License
 
