@@ -66,8 +66,10 @@ const MOCK = `
   let seq = 100;
   window.toolboxAPI = {
     connections: {
-      getActiveConnection: async () => envs.primary.conn,
-      getSecondaryConnection: async () => envs.secondary.conn,
+      // ToolBox ≥ 1.2.7 slot API; legacy getters throw so the test proves host.ts prefers slots (other tools' e2e cover the legacy path)
+      getConnections: async () => [envs.primary.conn, envs.secondary.conn],
+      getActiveConnection: async () => { throw new Error('legacy getActiveConnection called'); },
+      getSecondaryConnection: async () => { throw new Error('legacy getSecondaryConnection called'); },
     },
     utils: { getCurrentTheme: async () => 'light', showNotification: async (o) => { window.__mock.notes.push(o); } },
     events: { on(cb) { listeners.push(cb); } },
