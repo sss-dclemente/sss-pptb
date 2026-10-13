@@ -1,0 +1,21 @@
+# Atualizações semanais de npm, agrupadas num PR por pasta.
+# tools/_shared não tem package.json: o Vite inclui-o no bundle de cada ferramenta.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directories:
+      - /tools/access-checker
+      - /tools/audit-matrix
+      - /tools/d365-apps
+      - /tools/dependency-cleaner
+      - /tools/envvar-matrix
+      - /tools/offboarding-wizard
+      - /tools/solution-xray
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 10
+    groups:
+      npm-dependencies:
+        patterns:
+          - "*"
