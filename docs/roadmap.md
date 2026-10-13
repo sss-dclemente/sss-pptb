@@ -17,7 +17,7 @@
 ## Now (Q4 2026)
 - **E1 Marketplace**: concluir passos do owner da revisão; publicar d365-apps 0.3.3.
 - **E2 Verificação live**: Cycles e d365-apps (probe §5 do D365-APPS-PLAN não correu antes da publicação).
-- **E3 Telemetria mínima de adoção** (downloads npm / MAU do PPTB) para chegar aos 10 MAU **[inferido]**.
+- **E3 Adoção** (sem telemetria nas ferramentas): registo mensal de downloads npm e de MAU/downloads/rating do catálogo público do PPTB em [ADOPTION.md](ADOPTION.md), revisto em cada release. Meta do badge: 2 de 3 sinais; o backlog marca 10 MAU **[inferido]**.
 
 ## Next (Q1–Q2 2027)
 - **E4 XRay v1.1 Live mode**: ExportSolution da ligação ativa, diff zip↔ambiente, MissingDependencies resolvidas.
@@ -44,4 +44,4 @@
 1. Estado da revisão do marketplace PPTB — falta algo do teu lado?
 2. Estas ferramentas ficam gratuitas para sempre ou há plano pago/pro?
 3. Prioridade: XRay live mode ou levar as 0.x a 1.0?
-4. Queres métricas de uso? (respeitando a ausência de telemetria nas ferramentas)
+4. Métricas de uso: sim, só totais já públicos (npm e catálogo PPTB), em [ADOPTION.md](ADOPTION.md). Sem telemetria nas ferramentas.

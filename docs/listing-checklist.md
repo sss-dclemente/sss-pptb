@@ -58,7 +58,7 @@ Pedido à parte, em My Tools → Get Verified, 1–2 semanas ([PPTB-NOTES.md](PP
 | Ícone SVG em `dist/` | |
 | `version` ≥ 1.0.0 | O intake aceita 0.x; o badge não |
 | Saúde de bugs | menos de 5 issues abertas; resposta em ≤ 10 dias |
-| 2 de 3 métricas de uso | MAU ≥ 10, downloads ≥ 50, ≥ 1 review com nota ≥ 3. Dispensáveis |
+| 2 de 3 métricas de uso | MAU ≥ 10, downloads ≥ 50, ≥ 1 review com nota ≥ 3. Dispensáveis. Leitura pública, sem telemetria, em [ADOPTION.md](ADOPTION.md) |
 
 ### Prazo que esconde as ferramentas (2027-01-31)
 
@@ -172,5 +172,5 @@ Categorias: Users & Security, Comparisons, Solutions. `minAPI` 1.2.0. Ligações
 
 1. **Owner, listagem.** Nas quatro já revistas (Access Checker, Dependency Cleaner, D365 Apps, Audit Matrix): fechar o teste que ainda está aberto, pôr as capturas em falta no README de `main`, e responder à revisão. Na Dependency Cleaner, referenciar no README as quatro imagens que já estão em `docs/img/`. Publicar D365 Apps 0.3.3.
 2. **Owner, as outras três.** Confirmar se XRay, EnvVar e Offboarding chegaram a ser submetidas. EnvVar e Offboarding não têm capturas. XRay não tem o par escuro nem a ordem de instalação. Offboarding não tem o caminho de escrita testado.
-3. **Verified, quando a listagem existir.** Versão ≥ 1.0.0 falta em Audit Matrix, D365 Apps e Offboarding (roadmap E6, 2027). Nas quatro que já estão em 1.x, o pedido em My Tools → Get Verified ainda depende das capturas, do teste declarado e de 2 das 3 métricas — ou do pedido de dispensa. O backlog usa 10 MAU como marca.
+3. **Verified, quando a listagem existir.** Versão ≥ 1.0.0 falta em Audit Matrix, D365 Apps e Offboarding (roadmap E6, 2027). Nas quatro que já estão em 1.x, o pedido em My Tools → Get Verified ainda depende das capturas, do teste declarado e de 2 das 3 métricas — ou do pedido de dispensa. O backlog usa 10 MAU como marca. A leitura de 2026-10-13 em [ADOPTION.md](ADOPTION.md) tem duas ferramentas no catálogo (XRay 2 MAU, EnvVar 1 MAU e 55 downloads) e cinco ainda por listar; nenhuma chega a 2 de 3.
 4. **Antes de 2027-01-31.** Migrar as sete para `features.connections` quando o Desktop 1.2.7 estiver estável. Até lá ficam nos campos legados, com o adaptador partilhado a preferir a API nova se o host a tiver.
