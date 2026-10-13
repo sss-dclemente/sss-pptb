@@ -63,10 +63,10 @@
     "jszip": "^3.10.1"
   },
   "devDependencies": {
-    "@pptb/types": "^1.2.5",
-    "@pptb/validate": "^1.0.2",
-    "typescript": "^5.6.0",
-    "vite": "^7.3.7"
+    "@pptb/types": "^1.2.6",
+    "@pptb/validate": "^1.0.5",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.4"
   },
   "files": [
     "dist"
