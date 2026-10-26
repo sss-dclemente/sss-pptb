@@ -166,7 +166,7 @@ const MOCK = `
   }
 
   window.toolboxAPI = {
-    connections: { getActiveConnection: async () => envs.primary.conn, getSecondaryConnection: async () => envs.secondary.conn },
+    connections: { getConnections: async () => [envs.primary.conn, envs.secondary.conn] },
     utils: { getCurrentTheme: async () => 'light', showNotification: async (o) => { M.notes.push(o); } },
     events: { on(cb) { M.listeners.push(cb); } },
     fileSystem: {

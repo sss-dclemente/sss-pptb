@@ -28,7 +28,9 @@ export default defineConfig(({ mode }) => ({
   publicDir: "../public",
   plugins: [fixHtmlForPPTB()],
   // shown in the debug log header (_shared/debug.ts); npm sets npm_package_version for `npm run build`
-  define: { __TOOL_VERSION__: JSON.stringify(process.env.npm_package_version ?? "dev") },
+  // __UNVERIFIED_WRITES__: apply/undo of Upgrade blockers, Failed import and Cycles (confirm-write.ts). Off in the
+  // release build (`vite build`, what npm ships); on in dev-watch and `--mode unverified` (live testing, e2e).
+  define: { __TOOL_VERSION__: JSON.stringify(process.env.npm_package_version ?? "dev"), __UNVERIFIED_WRITES__: JSON.stringify(mode !== "production") },
   build: {
     outDir: "../dist",
     emptyOutDir: true,

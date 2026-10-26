@@ -29,7 +29,7 @@ import {
 } from "./deps/failed";
 import { typeName, type SolutionInfo, type Target } from "./deps/types";
 import type { UComponent } from "./deps/upgrade";
-import { confirmWrite, plural } from "./confirm-write";
+import { confirmWrite, plural, writesOn } from "./confirm-write";
 import { getConnections, notify, openText, saveText, type LiveConnection } from "./host";
 
 export interface FailedContext {
@@ -486,8 +486,10 @@ export function initFailed(c: FailedContext): void {
   $("#fi-preview").addEventListener("click", () => void preview());
   $("#fi-backup").addEventListener("click", () => void downloadBackup());
   for (const id of ["#fi-prod-ack", "#fi-irrev"]) $(id).addEventListener("change", updateConfirm);
-  $("#fi-confirm").addEventListener("click", () => void confirm());
-  $("#fi-undo").addEventListener("click", () => void undo());
+  if (writesOn("#fi-fix-actions", "#fi-undo")) {
+    $("#fi-confirm").addEventListener("click", () => void confirm());
+    $("#fi-undo").addEventListener("click", () => void undo());
+  }
   $("#fi-export-md").addEventListener("click", () => void exportMd());
   render();
 }

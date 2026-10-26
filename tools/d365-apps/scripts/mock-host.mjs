@@ -144,7 +144,7 @@ export const MOCK = `
     },
   };
   window.toolboxAPI = {
-    connections: { getActiveConnection: async () => ({ id: 'c1', name: 'Contoso Dev', url: 'https://contoso-dev.crm4.dynamics.com', environment: 'Dev', environmentColor: '#0f766e' }), getSecondaryConnection: async () => null },
+    connections: { getConnections: async () => [({ id: 'c1', name: 'Contoso Dev', url: 'https://contoso-dev.crm4.dynamics.com', environment: 'Dev', environmentColor: '#0f766e' }), null] },
     utils: { getCurrentTheme: async () => 'light', showNotification: async (o) => { M.notes.push(o); } },
     events: { on(cb) { M.listeners.push(cb); } },
     fileSystem: { saveFile: async (name, content) => { M.saved.push({ name, content }); return '/tmp/' + name; }, selectPath: async () => null, readText: async () => '', readBinary: async () => null },

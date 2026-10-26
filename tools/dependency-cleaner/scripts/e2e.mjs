@@ -180,7 +180,7 @@ const MOCK = `
   const isGuid = (s) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(s);
 
   window.toolboxAPI = {
-    connections: { getActiveConnection: async () => envs.primary.conn, getSecondaryConnection: async () => envs.secondary.conn },
+    connections: { getConnections: async () => [envs.primary.conn, envs.secondary.conn] },
     utils: { getCurrentTheme: async () => 'light', showNotification: async (o) => { M.notes.push(o); } },
     events: { on(cb) { M.listeners.push(cb); } },
     fileSystem: {

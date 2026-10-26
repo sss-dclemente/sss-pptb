@@ -49,7 +49,7 @@ const MOCK = `
   window.__mock = { env, writes: [], saved: [], notes: [], nextOpen: null, failActivate: null };
   const flow = (id) => env.flows.find((f) => f.workflowid === id);
   window.toolboxAPI = {
-    connections: { getActiveConnection: async () => env.conn, getSecondaryConnection: async () => null },
+    connections: { getConnections: async () => [env.conn, null] },
     utils: { getCurrentTheme: async () => 'light', showNotification: async (o) => { window.__mock.notes.push(o); } },
     events: { on() {} },
     fileSystem: {

@@ -559,7 +559,7 @@ await checkDebugLog(page, assert, {
     assert(/^access-checker-debug-.*\.txt$/.test(f.name), "access-checker: debug log file name " + f.name);
     return f.content;
   },
-  expect: [[/\[call\] #\d+ toolboxAPI\.connections\.getActiveConnection/, "records start-up host calls"]],
+  expect: [[/\[call\] #\d+ toolboxAPI\.connections\.getConnections/, "records start-up host calls"]],
 });
 
 await finish();

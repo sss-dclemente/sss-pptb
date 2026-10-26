@@ -210,7 +210,7 @@ const MOCK = `
     execute: async () => { throw new Error('mock: execute must not be used'); },
   };
   window.toolboxAPI = {
-    connections: { getActiveConnection: async () => ({ id: 'c1', name: 'Contoso Dev', url: 'https://contoso-dev.crm4.dynamics.com', environment: 'Dev', environmentColor: '#0f766e' }), getSecondaryConnection: async () => null },
+    connections: { getConnections: async () => [({ id: 'c1', name: 'Contoso Dev', url: 'https://contoso-dev.crm4.dynamics.com', environment: 'Dev', environmentColor: '#0f766e' }), null] },
     utils: { getCurrentTheme: async () => 'light', showNotification: async (o) => { (window.__notes ??= []).push(o); } },
     events: { on: (h) => window.__handlers.push(h) },
     fileSystem: { selectPath: async () => null, readBinary: async () => new Uint8Array(), readText: async () => '', saveFile: async (name, content) => { window.__saved.push({ name, content }); return '/tmp/' + name; } },
@@ -765,7 +765,7 @@ await checkDebugLog(page, assert, {
     return f.content;
   },
   expect: [
-    [/\[call\] #\d+ toolboxAPI\.connections\.getActiveConnection/, "records start-up host calls"],
+    [/\[call\] #\d+ toolboxAPI\.connections\.getConnections/, "records start-up host calls"],
     [/\[call\] #\d+ dataverseAPI\./, "records Dataverse calls"],
   ],
 });

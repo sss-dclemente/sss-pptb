@@ -124,8 +124,7 @@ const MOCK = `
 
   window.toolboxAPI = {
     connections: {
-      getActiveConnection: async () => envs.primary.conn,
-      getSecondaryConnection: async () => (NO_SEC ? null : envs.secondary.conn),
+      getConnections: async () => [envs.primary.conn, (NO_SEC ? null : envs.secondary.conn)],
     },
     utils: { getCurrentTheme: async () => 'light', showNotification: async (o) => { window.__mock.notes.push(o); } },
     events: { on() {} },
@@ -1001,7 +1000,7 @@ await checkDebugLog(page, assert, {
     return f.content;
   },
   expect: [
-    [/\[call\] #\d+ toolboxAPI\.connections\.getActiveConnection/, "records start-up host calls"],
+    [/\[call\] #\d+ toolboxAPI\.connections\.getConnections/, "records start-up host calls"],
     [/\[call\] #\d+ dataverseAPI\./, "records Dataverse calls"],
   ],
 });

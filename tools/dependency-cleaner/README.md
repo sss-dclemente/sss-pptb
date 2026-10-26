@@ -2,6 +2,8 @@
 
 Why does my solution depend on `msdyn_*`, and how do I get rid of it? Inside [Power Platform ToolBox](https://www.powerplatformtoolbox.com): pick an unmanaged solution in dev, see every dependency on a managed solution the target environment does not have (Field Service, Sales, Customer Service, Project Operations…), see which component in *your* solution causes it, and fix it in place. Then export again and the import works.
 
+**Next to Solution Dependency Analyzer** (already in the marketplace; it analyzes solution dependencies, circular ones included): Dependency Cleaner starts from the import that fails or is about to fail and changes the solution so it works. It names the component in *your* unmanaged solution that pulls in a managed solution the target lacks, and fixes it in place (table to shell, msdyn columns stripped from forms and views, component removed) with preview, backup and restore. Slim strips from an unmanaged solution every managed component you did not customize. Upgrade blockers lists, before a managed upgrade, what it deletes and what blocks each delete. Failed import reads the error of an import that already failed and finds what still references the component.
+
 ## What it does
 
 - **Diagnose** — for each component of the solution, asks Dataverse for its required components (`RetrieveRequiredComponents`, 4 in parallel, with progress, cancel and a per-session cache), finds the managed solution that owns each one (see *How ownership is decided*), and groups the result by the component you can act on. A component that is itself owned by a managed solution (a Field Service column pulled in by "add all assets") counts too.
@@ -24,6 +26,8 @@ Why does my solution depend on `msdyn_*`, and how do I get rid of it? Inside [Po
 - **Export** — findings as JSON or CSV (cells a spreadsheet would read as a formula are prefixed with `'`).
 
 ## What this tool changes
+
+**In this release, Confirm and apply and Undo are off on the Upgrade blockers, Failed import and Cycles tabs**: their write paths are not verified against a live environment yet (see *Limitations*). Those tabs analyze, preview and export; the apply bar says so. The tables below describe the writes as they run in a build from source with writes on.
 
 Diagnose, Offline and every analysis (Upgrade blockers, Slim, Cycles, Failed import before you apply) only read. Dataverse is written only by **Confirm and apply** on the Fix, Upgrade blockers, Slim, Cycles and Failed import tabs, by **Apply restore**, **Undo…** (Cycles) and **Undo flow changes…** (Failed import). Each of these runs only after a preview that lists every operation, and the apply buttons stay disabled until the backup is saved. A last confirmation dialog then names the environment (connection name and url), the number of operations and what they change, and the way back, or says plainly that there is none. A connection that looks like Production needs an extra tick. Writes are refused when the connection changed since the preview or when the solution turns out to be managed.
 
@@ -165,6 +169,8 @@ Export the result as a Markdown checklist (import order, cycle rows, orphans) or
 
 **From the ToolBox marketplace** — search for "Dependency Cleaner" once listed.
 
+**From npm, without the marketplace** — see [Install without the marketplace](../../README.md#install-without-the-marketplace).
+
 **From source**
 
 ```bash
@@ -184,6 +190,7 @@ Then in ToolBox: Debug → *Load Local Tool* → select the `tools/dependency-cl
 
 ## Limitations
 
+- **Writes off in the release build** (npm, marketplace): Upgrade blockers, Failed import and Cycles analyze, preview and export only. To verify their writes on a live environment, build from source with writes on (`npm run dev-watch` or `npm run build:unverified`) and load it with Debug → *Load Local Tool*. Each tab gets its writes back in a release once its write path is verified.
 - **Failed import, UNVERIFIED against a live environment**: `msdyn_solutionhistories` through the host (filter on `msdyn_result`, `$orderby`/`$top` on a virtual table; the unfiltered fallback reads the newest 100 rows), `RemoveActiveCustomizations(SolutionComponentName='Workflow',ComponentId=<guid>)` through `queryData` (Learn writes `ComponentId=(<guid>)`, tried second), and the classification of a flow whose Active layer comes from a re-bind in the target. Each failed import names the first component it cannot delete: after a fix, the next import may stop on another one; scan again.
 - **Upgrade blockers, UNVERIFIED against a live environment**: the response shape of `RetrieveDependenciesForDelete` through the host, the `msdyn_componentlayers` filter (`msdyn_componentid` as a quoted string, `msdyn_solutioncomponentname` = `CanvasApp`, `AppModule`, `SystemForm`…) and `"Active"` as the unmanaged layer's name, `AddAppComponents` / `RemoveAppComponents` with `@odata.type` component references (`entity` / `entityid` for a table), and whether imported components keep their ids (apps, canvas apps and web resources are also matched by unique name). Run the probe in docs/UPGRADE-BLOCKERS-PLAN.md §4 first.
 - **Slim** (verified on a live environment, 1.3.0 → 1.3.1): the reads all answer (`primaryentityname`, `ismanaged` on every record-backed type, the layer component names). What the first run taught: platform components are `IsManaged = false` (hence the custom / System test) and Active layers are mostly phantom (hence the `msdyn_changes` test). One layer read per component that is not yours: a solution with 500 of them means 500 calls, 4 at a time, cancellable. The layer names of environment variables (`EnvironmentVariableDefinition`, `EnvironmentVariableValue`) are still UNVERIFIED: a type whose rows never come back lands in *Unknown: kept*.
@@ -207,11 +214,12 @@ All data stays between ToolBox and your Dataverse environments: the tool talks t
 ## Development
 
 ```bash
-npm run build       # typecheck + Vite IIFE bundle + dist checks
+npm run build       # typecheck + Vite IIFE bundle + dist checks (release: Upgrade blockers / Failed import / Cycles writes off)
+npm run build:unverified  # same, with those writes on, to verify them live (Load Local Tool)
 npm run dev-watch   # rebuild on change; reload the tool tab in ToolBox
 npm run validate    # @pptb/validate manifest rules
 npm run xml-test    # form / view XML stripping
-npm run e2e         # Playwright tests against dist/ with a mocked ToolBox host (needs playwright + Chromium): Diagnose/Fix/Restore, Upgrade blockers, Slim, Cycles, Failed import
+npm run e2e         # Playwright tests against dist/ with a mocked ToolBox host (needs playwright + Chromium): Diagnose/Fix/Restore, Upgrade blockers, Slim, Cycles, Failed import on the writes-on build, then the release build's gate; leaves dist/ as the release build
 ```
 
 Stack: TypeScript, Vite, no framework, JSZip (offline tab). Types from `@pptb/types`.

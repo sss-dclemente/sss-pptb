@@ -1,6 +1,6 @@
 {
   "name": "@simplesmoothsafe/pptb-d365-apps",
-  "version": "0.3.3",
+  "version": "0.3.4",
   "displayName": "D365 Apps Matrix",
   "description": "Dynamics 365 apps across environments: installed version, update available, failed install per app and environment. Tick cells, preview, run: installs are queued per environment, environments run in parallel, status is polled live. Power Platform API; pac script export. Read-only Unused apps report: row counts in each app's own tables.",
   "main": "index.html",
@@ -35,9 +35,8 @@
     "readmeUrl": "https://raw.githubusercontent.com/sss-dclemente/sss-pptb/main/tools/d365-apps/README.md"
   },
   "features": {
-    "multiConnection": "none",
-    "connectionRequirement": "required",
-    "minAPI": "1.2.6",
+    "connections": 1,
+    "minAPI": "1.2.7",
     "enabledForPowerPlatformAPI": true
   },
   "engines": {
@@ -53,8 +52,8 @@
     "screenshots": "node scripts/screenshots.mjs"
   },
   "devDependencies": {
-    "@pptb/types": "^1.2.5",
-    "@pptb/validate": "^1.0.2",
+    "@pptb/types": "^1.2.7",
+    "@pptb/validate": "^1.0.5",
     "typescript": "^5.6.0",
     "vite": "^7.3.7"
   },

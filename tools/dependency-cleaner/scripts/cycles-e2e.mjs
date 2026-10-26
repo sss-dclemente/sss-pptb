@@ -98,7 +98,7 @@ const MOCK = `
     throw new Error('mock: unexpected query ' + q);
   }
   window.toolboxAPI = {
-    connections: { getActiveConnection: async () => conn, getSecondaryConnection: async () => null },
+    connections: { getConnections: async () => [conn, null] },
     utils: { getCurrentTheme: async () => 'light', showNotification: async (o) => { M.notes.push(o); } },
     events: { on(cb) { M.listeners.push(cb); } },
     fileSystem: {

@@ -1,6 +1,6 @@
 {
   "name": "@simplesmoothsafe/pptb-offboarding-wizard",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "displayName": "Offboarding Wizard",
   "description": "A user is leaving: inventory everything they hold — records per table, flows, personal views and charts, queues, teams, roles, connection references, direct reports — pick a successor, preview the reassignment and apply it in one audited run.",
   "main": "index.html",
@@ -36,9 +36,8 @@
     "readmeUrl": "https://raw.githubusercontent.com/sss-dclemente/sss-pptb/main/tools/offboarding-wizard/README.md"
   },
   "features": {
-    "multiConnection": "none",
-    "connectionRequirement": "required",
-    "minAPI": "1.2.0"
+    "connections": 1,
+    "minAPI": "1.2.7"
   },
   "engines": {
     "node": ">=18.0.0"
@@ -51,8 +50,8 @@
     "e2e": "node scripts/e2e.mjs"
   },
   "devDependencies": {
-    "@pptb/types": "^1.2.5",
-    "@pptb/validate": "^1.0.2",
+    "@pptb/types": "^1.2.7",
+    "@pptb/validate": "^1.0.5",
     "typescript": "^5.6.0",
     "vite": "^7.3.7"
   },
