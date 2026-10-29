@@ -92,8 +92,7 @@ const MOCK = `
   window.__mock = { envs, nextOpen: null };
   window.toolboxAPI = {
     connections: {
-      getActiveConnection: async () => envs.primary.conn,
-      getSecondaryConnection: async () => envs.secondary.conn,
+      getConnections: async () => [envs.primary.conn, envs.secondary.conn],
     },
     utils: { getCurrentTheme: async () => 'light', showNotification: async () => {} },
     events: { on() {} },

@@ -8,7 +8,7 @@ import { fetchSolutionManaged, MetaCache, type DataverseLike } from "./deps/fetc
 import { typeName, type SolutionInfo } from "./deps/types";
 import { analyzeUpgrade, locationLabel, planUpgradeFixes, upgradeMarkdown, type Blocker, type BlockerFix, type BlockerLocation, type UComponent, type UpgradeAnalysis, type UpgradePlan } from "./deps/upgrade";
 import { executeOps, opLabel, type OpResult } from "./deps/write";
-import { confirmWrite, opsBreakdown, plural } from "./confirm-write";
+import { confirmWrite, opsBreakdown, plural, writesOn } from "./confirm-write";
 import { errorList } from "./error-list";
 import { notify, saveText, type LiveConnection } from "./host";
 
@@ -418,7 +418,7 @@ export function initUpgrade(c: UpgradeContext): void {
   $("#ub-preview").addEventListener("click", () => void preview());
   $("#ub-backup").addEventListener("click", () => void downloadBackup());
   $("#ub-prod-ack").addEventListener("change", updateConfirm);
-  $("#ub-confirm").addEventListener("click", () => void confirm());
+  if (writesOn("#ub-fix-actions")) $("#ub-confirm").addEventListener("click", () => void confirm());
   $("#ub-export-md").addEventListener("click", () => {
     if (analysis) void exportFile(`upgrade-preflight.${safeFileName(analysis.solution.uniqueName)}.md`, upgradeMarkdown(analysis), "text/markdown");
   });

@@ -24,7 +24,7 @@ O validador (`@pptb/validate` 1.0.2, «fonte única» do intake) exige no `packa
 | `configurations.repository` | URL com HEAD alcançável |
 | `configurations.readmeUrl` | URL alcançável cujo host não seja `github.com` — usar `raw.githubusercontent.com`. A página de manifesto diz que é opcional; o validador falha sem ela |
 | `icon` | caminho POSIX relativo para um `.svg` dentro de `dist/`, sem `..`, sem URL. Ausente = aviso. `currentColor` para o ícone seguir o tema |
-| `features.multiConnection` | obrigatório sempre que existe `features`: `none`, `optional` ou `required` |
+| `features.connections` | número exato 0–10 ou `{ min, max }`; exige `minAPI` 1.2.7. Não se combina com `multiConnection` / `connectionRequirement` (legados) |
 | `configurations.iconUrl` | proibido |
 
 `main` é `index.html` e resolve-se **dentro** de `dist/` ([PPTB-NOTES.md](PPTB-NOTES.md) §11). O build (`tools/_shared/check-dist.mjs`) recusa `dist/` sem `index.html` e `icon.svg`, com `type="module"`, com URL remota no HTML, com mais de um script, com `eval` / `new Function` ou com CSS remoto.
@@ -62,7 +62,7 @@ Pedido à parte, em My Tools → Get Verified, 1–2 semanas ([PPTB-NOTES.md](PP
 
 ### Prazo que esconde as ferramentas (2027-01-31)
 
-A partir do Desktop 1.2.7, `features.connections` substitui `multiConnection` e `connectionRequirement` ([PPTB-NOTES.md](PPTB-NOTES.md) §13). Depois de 2027-01-31, quem continuar nos campos legados fica Deprecated e sai do marketplace. `connections` exige `minAPI` 1.2.7 e `@pptb/validate` ≥ 1.0.4. A 2026-10-05 só existiam builds `v1.2.7-dev.*`, por isso a fase B ainda não se publica: um `minAPI` 1.2.7 fecha a porta a quem está em 1.2.6. O adaptador em `tools/_shared` já prefere `getConnections()` quando o host o tem.
+A partir do Desktop 1.2.7, `features.connections` substitui `multiConnection` e `connectionRequirement` ([PPTB-NOTES.md](PPTB-NOTES.md) §13). Depois de 2027-01-31, quem continuar nos campos legados fica Deprecated e sai do marketplace. `connections` exige `minAPI` 1.2.7 e `@pptb/validate` ≥ 1.0.4. Desktop 1.2.7 estável desde 2026-10-12: fase B feita a 2026-10-26, as 7 ferramentas usam `connections` + `minAPI` 1.2.7 e o adaptador em `tools/_shared` usa só `getConnections()`.
 
 | Ferramenta | Hoje (legado) | `connections` a publicar |
 |---|---|---|

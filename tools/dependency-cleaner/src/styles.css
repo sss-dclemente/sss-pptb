@@ -120,3 +120,5 @@ dialog .dlg-foot { display: flex; gap: var(--s-2); justify-content: flex-end; pa
 .cy-row .head select.fix { margin-left: auto; }
 .cy-row .head .cy-also { font-size: var(--fs-caption); color: var(--fg-muted); }
 .cy-orphan .head label.check { margin: 0; }
+/* release build: the apply bar of Upgrade blockers, Failed import and Cycles keeps only its note (confirm-write.ts writesOn) */
+.writes-off > :not(.unverified-note) { display: none !important; }

@@ -28,15 +28,12 @@ export interface LiveConnection {
   conn: ToolBoxAPI.Connection;
 }
 
-/** Slot API from ToolBox ≥ 1.2.7; older hosts only expose getActiveConnection/getSecondaryConnection. */
-type SlotApi = { getConnections?: () => Promise<Array<ToolBoxAPI.Connection | null>> };
-
+/** Connection slots in order (ToolBox ≥ 1.2.7, every tool's `minAPI`): slot 0 is primary, slot 1 secondary. */
 export async function getConnections(): Promise<LiveConnection[]> {
   const tb = toolbox();
   if (!tb?.connections) return [];
-  // Bound call: the host may rely on `this`. A rejected slot call falls back to the legacy getters.
-  const slots = await (tb.connections as SlotApi).getConnections?.().catch(() => undefined);
-  const [p, s] = slots ?? [await tb.connections.getActiveConnection().catch(() => null), await tb.connections.getSecondaryConnection?.().catch(() => null)];
+  // Bound call: the host may rely on `this`.
+  const [p, s] = await tb.connections.getConnections().catch(() => [] as Array<ToolBoxAPI.Connection | null>);
   const out: LiveConnection[] = [];
   if (p) out.push({ target: "primary", conn: p });
   if (s) out.push({ target: "secondary", conn: s });

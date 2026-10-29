@@ -227,7 +227,7 @@ export const mockHost = ({ securedColumns = [], fieldPermissions = [] } = {}) =>
     },
   };
   window.toolboxAPI = {
-    connections: { getActiveConnection: async () => ({ id: 'c1', name: 'Contoso Dev', url: 'https://contoso-dev.crm4.dynamics.com', environment: 'Dev', environmentColor: '#0f766e' }), getSecondaryConnection: async () => null },
+    connections: { getConnections: async () => [({ id: 'c1', name: 'Contoso Dev', url: 'https://contoso-dev.crm4.dynamics.com', environment: 'Dev', environmentColor: '#0f766e' }), null] },
     utils: { getCurrentTheme: async () => 'light', showNotification: async (o) => { (window.__notes ??= []).push(o); } },
     events: { on: (h) => window.__handlers.push(h) },
     fileSystem: { selectPath: async () => null, readBinary: async () => new Uint8Array(), readText: async () => '', saveFile: async (name, content) => { window.__saved.push({ name, content }); return '/tmp/' + name; } },

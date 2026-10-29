@@ -44,16 +44,15 @@ Optional:
 
 ```json
 "features": {
-  "multiConnection": "none",          // REQUIRED whenever features object present: none|optional|required
-  "connectionRequirement": "optional", // required|optional, default required
-  "minAPI": "1.2.0",                   // semver
+  "connections": { "min": 0, "max": 1 }, // Desktop >= 1.2.7: exact count 0-10 or { min, max }; replaces the legacy pair (§13)
+  "minAPI": "1.2.7",                     // semver; `connections` needs 1.2.7
   "enabledForPowerPlatformAPI": false
 },
 "cspExceptions": { "connect-src": [{ "domain": "…", "exceptionReason": "…", "optional": false }] }
 ```
 [docs/tool-development/manifest/page.mdx L77-148](https://github.com/PowerPlatformToolBox/pptb-docs-web/blob/main/src/app/tool-development/manifest/page.mdx)
 
-Connectionless tool (our case): `features: { multiConnection: "none", connectionRequirement: "optional" }`. `getActiveConnection()` returns `null` when none. [docs manifest L96-108]
+Connectionless tool (our case): `features: { connections: { min: 0, max: 1 } }`; `getConnections()` returns `[null]` when none. Before 1.2.7: `multiConnection: "none", connectionRequirement: "optional"` (legacy, §13). [docs manifest L96-108]
 
 No `keywords` requirement (no `pptb-tool` keyword anywhere in docs, samples, or tool-management). Samples use `["powerplatform","dataverse","toolbox","pptb"]`. [sample/html-sample/package.json; tm grep]
 
@@ -231,7 +230,7 @@ Verified badge (separate, 1-2 weeks, My Tools → Get Verified): README with scr
 | Topic | Docs | Sample / code | Used |
 |---|---|---|---|
 | `readmeUrl` | optional | validator: required | required |
-| `features.multiConnection` | examples omit it | validator: required when `features` present | always set |
+| `features.multiConnection` | examples omit it | validator (≤ 1.0.2): required when `features` present | legacy; replaced by `features.connections` (§13) |
 | `main` | `index.html` (manifest) vs `dist/index.html` (CSP page) | handler joins `<toolBaseDir>/dist/<main>` | `index.html`, resolved inside `dist/` — settled, see §11 |
 | File dialogs location | README `utils.saveFile` | typings + samples: `fileSystem.*` | `fileSystem.*` |
 | `pptb-validate` flags | `--json --skip-url-checks path` | CLI ignores all args | run from package root, no args |
@@ -274,6 +273,7 @@ Fix sent upstream: `replace(/@[^@/]+$/, "")` — strips a trailing `@<version>` 
 What this settles:
 
 - `main` resolves **inside `dist/`**. The handler joins `<toolBaseDir>/dist/<main>`, so `main: "index.html"` + `dist/index.html` is correct, and the §9 conflict is closed. No package-root `index.html` is needed; 0.1.2 shipped one on a wrong theory and 0.1.3 removed it.
+- **Fixed in Desktop 1.2.7** (source of tag v1.2.7: `indexOf("@", 1)` + `slice`, keeps the scope). Not yet re-run with our packages on 1.2.7.
 - The other two branches of the same function are fine: `localPath` (Load Local Tool) and `tool.id` (marketplace install). **Marketplace distribution is unaffected by this bug** — submission is not blocked by it.
 - `[ToolManager] Found pnpm globally installed` — the host installs tools with pnpm, whose `minimumReleaseAge` policy can hold a just-published version back for a while (observed: resolved 0.1.1 with "0.1.2 is available").
 
@@ -317,7 +317,7 @@ Source: PPTB developer release notice v1.2.7; [toolbox-api#multiple-connections]
 
 **Phase A (done).** `_shared/host.getConnections()` prefers `getConnections()` when the host has it, else falls back to the legacy getters. EnvVar Matrix e2e mocks the slot API (legacy getters throw); the other tools' e2e mock the legacy getters, so both paths stay covered.
 
-**Phase B (only after Desktop 1.2.7 is stable — as of 2026-10-05 only `v1.2.7-dev.*` builds exist).** `connections` needs `minAPI: "1.2.7"`, which locks every 1.2.6 user out, so do not ship it earlier. Per tool: drop the legacy pair, set `connections`, set `minAPI: "1.2.7"`, bump `@pptb/types` to 1.2.7 and `@pptb/validate` to ^1.0.4 (the locked 1.0.2 does not know `connections` and errors on a missing `multiConnection`), bump the tool version, run `npm run validate`.
+**Phase B (done 2026-10-26; Desktop 1.2.7 stable since 2026-10-12, `@pptb/types` 1.2.7 and `@pptb/validate` 1.0.5 latest).** Every tool is on `connections` with `minAPI: "1.2.7"` and `host.getConnections()` uses the slot API only; the e2e mocks expose `getConnections`. The per-tool plan docs keep their original manifest line as history. What was done: `connections` needs `minAPI: "1.2.7"`, which locks every 1.2.6 user out, so do not ship it earlier. Per tool: drop the legacy pair, set `connections`, set `minAPI: "1.2.7"`, bump `@pptb/types` to 1.2.7 and `@pptb/validate` to ^1.0.4 (the locked 1.0.2 does not know `connections` and errors on a missing `multiConnection`), bump the tool version, run `npm run validate`.
 
 | Tool | Legacy | `connections` |
 |---|---|---|

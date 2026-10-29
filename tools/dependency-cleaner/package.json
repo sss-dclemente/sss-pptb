@@ -1,8 +1,8 @@
 {
   "name": "@simplesmoothsafe/pptb-dependency-cleaner",
-  "version": "1.5.2",
+  "version": "1.6.0",
   "displayName": "Dependency Cleaner",
-  "description": "Why does my solution depend on msdyn_*? Find every dependency of an unmanaged solution on a managed solution the target environment lacks, see the component that causes it, and fix it in place: convert tables to shells, remove components, strip msdyn columns from forms and views. Upgrade blockers: before a managed upgrade, see what it deletes, what blocks each delete (custom pages, canvas apps, model-driven apps) and where to fix it. Slim: remove from an unmanaged solution every managed component you did not customize, convert all-assets tables to shells. Cycles: circular dependencies between your unmanaged solutions, the import order, and fixes through a base solution. Failed import: an upgrade already failed with \"component cannot be deleted because it is referenced by\": read the error from solution history, find what still references the component and fix it in that environment (remove active customizations, re-point a flow to another connection reference). Preview, backup and restore.",
+  "description": "Why does my solution depend on msdyn_*? Find every dependency of an unmanaged solution on a managed solution the target environment lacks, see the component that causes it, and fix it in place: convert tables to shells, remove components, strip msdyn columns from forms and views. Slim: remove from an unmanaged solution every managed component you did not customize, convert all-assets tables to shells. Preview, backup and restore. Read-only in this release (fix plan and export, apply off until verified on a live environment): Upgrade blockers (before a managed upgrade, what it deletes and what blocks each delete), Cycles (circular dependencies between your unmanaged solutions and the import order), Failed import (read \"component cannot be deleted because it is referenced by\" from solution history and find what still references it).",
   "main": "index.html",
   "icon": "icon.svg",
   "license": "MIT",
@@ -44,27 +44,31 @@
     "readmeUrl": "https://raw.githubusercontent.com/sss-dclemente/sss-pptb/main/tools/dependency-cleaner/README.md"
   },
   "features": {
-    "multiConnection": "optional",
-    "connectionRequirement": "required",
-    "minAPI": "1.2.0"
+    "connections": {
+      "min": 1,
+      "max": 2
+    },
+    "minAPI": "1.2.7"
   },
   "engines": {
     "node": ">=18.0.0"
   },
   "scripts": {
     "build": "tsc --noEmit && vite build && node scripts/check-dist.mjs",
+    "build:unverified": "tsc --noEmit && vite build --mode unverified && node scripts/check-dist.mjs",
     "dev-watch": "vite build --mode development --watch",
     "typecheck": "tsc --noEmit",
     "validate": "node node_modules/@pptb/validate/dist/cli.js",
-    "e2e": "node scripts/e2e.mjs && node scripts/upgrade-e2e.mjs && node scripts/slim-e2e.mjs && node scripts/cycles-e2e.mjs && node scripts/failed-e2e.mjs",
-    "xml-test": "node scripts/xml-test.mjs"
+    "e2e": "npm run build:unverified && node scripts/e2e.mjs && node scripts/upgrade-e2e.mjs && node scripts/slim-e2e.mjs && node scripts/cycles-e2e.mjs && node scripts/failed-e2e.mjs && npm run build && node scripts/release-e2e.mjs",
+    "xml-test": "node scripts/xml-test.mjs",
+    "prepublishOnly": "npm run build"
   },
   "dependencies": {
     "jszip": "^3.10.1"
   },
   "devDependencies": {
-    "@pptb/types": "^1.2.5",
-    "@pptb/validate": "^1.0.2",
+    "@pptb/types": "^1.2.7",
+    "@pptb/validate": "^1.0.5",
     "typescript": "^5.6.0",
     "vite": "^7.3.7"
   },

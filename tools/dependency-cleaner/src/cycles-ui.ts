@@ -8,7 +8,7 @@ import { Cancelled } from "./deps/diagnose";
 import { csvCell } from "./deps/export";
 import { fetchSolutionManaged, MetaCache, type DataverseLike, type DependencyRow } from "./deps/fetch";
 import { typeName, type SolutionInfo } from "./deps/types";
-import { confirmWrite, plural } from "./confirm-write";
+import { confirmWrite, plural, writesOn } from "./confirm-write";
 import { errorList } from "./error-list";
 import { notify, openText, saveText, type LiveConnection } from "./host";
 
@@ -478,8 +478,10 @@ export function initCycles(c: CyclesContext): void {
   $("#cy-preview").addEventListener("click", preview);
   $("#cy-backup").addEventListener("click", () => void downloadBackup());
   $("#cy-prod-ack").addEventListener("change", updateConfirm);
-  $("#cy-confirm").addEventListener("click", () => void confirm());
-  $("#cy-undo").addEventListener("click", () => void undo());
+  if (writesOn("#cy-fix-actions", "#cy-undo")) {
+    $("#cy-confirm").addEventListener("click", () => void confirm());
+    $("#cy-undo").addEventListener("click", () => void undo());
+  }
   $("#cy-export-md").addEventListener("click", () => {
     if (analysis) void exportFile("import-order.md", cyclesMarkdown(analysis), "text/markdown");
   });

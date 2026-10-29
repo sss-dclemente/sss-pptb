@@ -3,9 +3,27 @@
  * (operation count and what they change) and the way back (the backup and what restores it) or says plainly
  * that there is none.
  */
-import { h, showDialog } from "../../_shared/dom";
+import { $, h, showDialog } from "../../_shared/dom";
 import type { Op } from "./deps/write";
 import type { LiveConnection } from "./host";
+
+declare const __UNVERIFIED_WRITES__: boolean | undefined;
+
+/**
+ * The writes of Upgrade blockers, Failed import and Cycles are not verified against a live environment yet (README,
+ * Limitations). The release build leaves them out: analysis, plan and exports stay. Dev-watch and
+ * `vite build --mode unverified` keep them, to verify them live (Load Local Tool) and for the e2e.
+ */
+export const unverifiedWrites = typeof __UNVERIFIED_WRITES__ === "boolean" && __UNVERIFIED_WRITES__;
+
+/** Release build: the tab's apply bar shows only a note (styles.css `.writes-off`), its undo button is hidden; false. */
+export function writesOn(bar: string, undo?: string): boolean {
+  if (unverifiedWrites) return true;
+  $(bar).classList.add("writes-off");
+  $(bar).append(h("p", { class: "warnings unverified-note" }, "Apply is off in this release: these writes have not been verified against a live environment yet. Make the changes in the plan above by hand, or export it."));
+  if (undo) $(undo).hidden = true;
+  return false;
+}
 
 export interface WriteConfirm {
   title: string;
