@@ -200,6 +200,7 @@ Submit: `@simplesmoothsafe/pptb-audit-matrix`, categories **Users & Security, Co
 
 ## After publish
 
+- [ ] Adoption snapshot, in the same release change: `node scripts/adoption-snapshot.mjs`, then paste the printed section at the top of the register in [ADOPTION.md](ADOPTION.md). Public aggregate counts only (npm tarball requests, plus PPTB catalog MAU / downloads / rating). npm downloads are not people and are not the Verified MAU threshold. Do not add telemetry to a tool to fill this in.
 - [ ] ToolBox → Debug → *Install from npm* → each package name; smoke test once more from the published build (README, LICENSE, src are stripped at intake, only `package.json` + `dist/` ship).
 - [x] Root `README.md`: change "unpublished" to the published version per tool.
 - [ ] Commit real screenshots + README edits; `readmeUrl` points at `main`, so the marketplace picks them up on the next daily sync.
