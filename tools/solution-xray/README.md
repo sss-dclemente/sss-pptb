@@ -1,6 +1,6 @@
 # Solution XRay
 
-Offline analysis of Dataverse solution zips inside [Power Platform ToolBox](https://www.powerplatformtoolbox.com). No connection required. The zip never leaves your machine.
+Offline analysis of Dataverse solution zips inside [Power Platform ToolBox](https://www.powerplatformtoolbox.com). No connection required for offline use: every tab works on zips from disk. The zip never leaves your machine. With a ToolBox connection, *live mode* also exports a solution from that environment (read-only) and checks your zip against it before you import.
 
 ## What it does
 
@@ -11,18 +11,23 @@ Load one or more exported solution zips (managed or unmanaged) and get:
 - **Upgrade risk** — a 0–100 heuristic score built from capped factors with evidence and advice for each: missing dependencies (a dependency on solution `Active` is scored as a blocker: the component exists only as unmanaged customization in the source environment and must be added to the solution or a prerequisite solution), unmanaged import, system (non-prefixed) tables included with all subcomponents, plugins, cloud flows whose connection references are not shipped, environment variables without values, canvas apps, size, publisher-prefix hygiene. Pick a baseline zip (the previous version) to also score removed tables, removed columns, version regressions (a lower version is blocked for managed imports; the same version is allowed but flagged lightly) and managed/unmanaged flips.
 - **Install order** — load every solution you plan to import; the tool builds the dependency graph from `MissingDependencies` and shared tables (a table belongs to the solution that creates it; system tables such as `account` never create edges), runs a topological sort (Kahn) and reports the order, the reason for each edge, dependencies on solutions you did not load (including `Active`, i.e. unmanaged components missing from the export), and any dependency cycle with a concrete path.
 
+- **Check zip against environment (live mode, needs a connection)** — the sidebar's *Environment* panel lists the connected environment's solutions (`System`, `Active`, `Default`, `Basic`, hidden and `msdyn*` solutions are left out; managed solutions are listed but cannot be picked, because Dataverse does not export them). *Check zip against environment* exports the picked solution with `ExportSolution`, loads it into the sidebar like any zip, tagged `env: <connection name>`, and points *Compare* (A = environment, B = your zip) and *Upgrade risk* (your zip, baseline = environment) at the pair; the panel shows a summary (version direction, added / changed / removed, risk score) with links to both tabs. *Load only* exports without comparing. Every tab works on the exported solution unchanged. Without a connection the panel is disabled with a hint and nothing changes for offline use.
+
 Every tab exports its result as JSON. The Compare export is named `<A>-<version>_vs_<B>-<version>.diff.json` and honours the *Hide root-component rows* filter (recorded in its `filter` field).
 
 ## What this tool changes
 
-**Nothing in any environment.** The tool is offline: it reads exported solution zips from disk and sends no request to Dataverse or Power Platform, so it makes no create, update, delete, import, publish, layer, schema, ownership or security change anywhere. It does not modify the zip files you load either; they are read into memory and discarded when you remove them, click *Clear all* or close the tool.
+**Nothing in any environment.** It makes no create, update, delete, import, publish, layer, schema, ownership or security change anywhere. It does not modify the zip files you load either; they are read into memory and discarded when you remove them, click *Clear all* or close the tool.
+
+- **Offline (no connection, or live mode unused)** — the tool reads exported solution zips from disk and sends no request to Dataverse or Power Platform.
+- **Live mode (with a connection)** — two read-only requests through ToolBox's Dataverse API, to the connected (primary) environment only: `getSolutions` (the solution list, when the connection is opened or *↻* is clicked) and the `ExportSolution` action (only when you click *Check zip against environment* or *Load only*). `ExportSolution` packages the solution and returns it; it changes nothing in the environment, though the export runs on the server and may be recorded in the environment's own logs like any export. The exported zip is kept in memory only, like a zip from disk; it is not written to disk unless you export a tab's JSON.
 
 The only things it writes:
 
 - **Files you save** — *Export JSON* on each tab (`<solution>-<version>.xray.json`, `<A>-<version>_vs_<B>-<version>.diff.json`, `<solution>-<version>.risk.json`, `install-order.json`) and *Save log* in the debug footer (`solution-xray-debug-<timestamp>.txt`; its header lists the ToolBox connections by name and URL, read from ToolBox, not from Dataverse). Each is written only where you choose in the ToolBox save dialog (in a plain browser, the standard download).
 - **Browser localStorage (per viewer, this tool only)** — view settings (Compare filters and search, *Hide root-component rows*, Inventory search, *Hide system tables*) under `sss-view:solution-xray`, and the *Debug log* switch under `sss-debug:solution-xray`. The theme follows ToolBox and is not stored.
 
-Nothing else: no network calls, no telemetry, no other files, no settings outside this tool.
+Nothing else: no network calls of its own (live mode goes through ToolBox), no telemetry, no other files, no settings outside this tool.
 
 ## Screenshots
 
@@ -56,12 +61,28 @@ The built `dist/index.html` also runs in a plain browser (file picker and downlo
 2. Pick a tab. *Inventory* and *Upgrade risk* work with one zip; *Compare* and *Install order* need two or more.
 3. *Export JSON* saves the current analysis.
 
+Live mode (connected in ToolBox):
+
+1. Add the zip you plan to import.
+2. In the sidebar's *Environment* panel pick the deployed solution (preselected when its unique name matches a loaded zip) and the zip to check.
+3. *Check zip against environment*. A spinner shows the elapsed time; *Cancel* stops waiting. Then read *Compare* and *Upgrade risk*.
+
+*Export as managed* (off by default) sends `Managed: true`; off exports the solution as it is in the environment (unmanaged), which keeps the *Managed / unmanaged mismatch* factor meaningful for a managed zip. An export already in the sidebar (same connection, same unique name, same managed flag) is reused; remove it to export again.
+
 Notes:
 
 - The tool reads `solution.xml`, `customizations.xml`, `Workflows/*.json` and `environmentvariabledefinitions/*/` (definition XML and `environmentvariablevalues.json`). Anything else in the zip is only counted.
 - If the same unique name is loaded twice (two versions), *Install order* uses the highest version (the first loaded on a tie); remove the other to change that.
 - Component type codes of 10000 and above are environment-specific (connection references, custom APIs, ...). They show as *Custom component (type N)* unless the zip reveals the table (a matching `connectionreferences` entry or a `customapis/` folder).
 - The risk score is a checklist, not a verdict. Read the evidence.
+
+## Limitations
+
+- **Live mode is not yet verified against a live environment.** The shape `dataverseAPI.execute` returns for `ExportSolution` is unconfirmed. The tool accepts `ExportSolutionFile` as base64 at the top level, inside a `data` / `body` / `value` wrapper, as JSON text, or as bytes, and checks the result is a zip; anything else fails with an error naming the keys it got (no data), and the debug log records the shape. Offline analysis is unaffected.
+- Managed solutions cannot be exported from an environment (Dataverse rule), so live mode works where the solution is unmanaged, typically a development environment. The panel lists managed solutions as not pickable.
+- *Cancel* cannot abort the host call: the export keeps running in the environment and ToolBox until it finishes, and its result is discarded.
+- Large solutions can take minutes to export and return tens of MB through ToolBox; the spinner says so after 15 s and a notification warns above 20 MB.
+- Live mode uses the primary connection only. The zip's declared missing dependencies are not yet resolved against the environment.
 
 ## Debug log
 
@@ -71,7 +92,7 @@ The file is written only where you save it. Secrets (keys named like password, s
 
 ## Privacy
 
-All processing happens in the tool's page. There is no network access: no telemetry, no CDN, no fonts, no API calls, and no CSP exceptions are requested. The zip is read from disk through the ToolBox file API (or the browser file picker) and stays in memory for the session.
+All processing happens in the tool's page. The tool has no network access of its own: no telemetry, no CDN, no fonts, and no CSP exceptions are requested. The only API calls are live mode's two read-only Dataverse requests, made through ToolBox when you are connected (see *What this tool changes*). The zip is read from disk through the ToolBox file API (or the browser file picker) and stays in memory for the session.
 
 ## Development
 
