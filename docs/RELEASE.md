@@ -63,7 +63,7 @@ Publish:
 ```bash
 cd tools/solution-xray && npm run build && npm run validate && npm publish --access public
 ```
-Submit at https://www.powerplatformtoolbox.com/submit-tool: npm name `@simplesmoothsafe/pptb-solution-xray`, categories **Solutions, Troubleshooting, Comparisons**.
+Submit at https://www.powerplatformtoolbox.com/submit-tool: npm name `@simplesmoothsafe/pptb-solution-xray`, categories **Solutions, Troubleshooting, Migration** (as listed in the catalog, checked 2026-11-18).
 
 ## 2. EnvVar & ConnRef Matrix — `tools/envvar-matrix`
 
