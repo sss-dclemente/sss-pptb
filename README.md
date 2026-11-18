@@ -13,7 +13,7 @@ Power Platform ToolBox tools by [Simple Smooth Safe](https://simplesmoothsafe.co
 
 Every tool is on npm, listed in the ToolBox marketplace or not. Needs ToolBox 1.2.7 or later and the Debug menu (Settings → *Show Debug Menu*).
 
-- **Install from npm**: Debug → *Install from npm* → the package name from the table above (e.g. `@simplesmoothsafe/pptb-dependency-cleaner`). ToolBox installs it with pnpm, so pnpm must be on the machine; pnpm can hold back a version published in the last few hours.
+- **Install from npm**: Debug → *Install from npm* → the package name from the table above (e.g. `@simplesmoothsafe/pptb-solution-xray`). ToolBox installs it with pnpm, so pnpm must be on the machine; pnpm can hold back a version published in the last few hours.
 - **From the package file** (no npm access on the machine, or to pin a version): download the tarball, `https://registry.npmjs.org/@simplesmoothsafe/pptb-<tool>/-/pptb-<tool>-<version>.tgz` (or `npm pack @simplesmoothsafe/pptb-<tool>`), extract it (`tar -xzf <file>.tgz`, also on Windows 10 and later), then Debug → *Load Local Tool* → the extracted `package` folder.
 
 To update, install the new version the same way.
