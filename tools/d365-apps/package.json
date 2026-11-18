@@ -2,7 +2,7 @@
   "name": "@simplesmoothsafe/pptb-d365-apps",
   "version": "0.3.4",
   "displayName": "D365 Apps Matrix",
-  "description": "Dynamics 365 apps across environments: installed version, update available, failed install per app and environment. Tick cells, preview, run: installs are queued per environment, environments run in parallel, status is polled live. Power Platform API; pac script export. Read-only Unused apps report: row counts in each app's own tables.",
+  "description": "See and install Dynamics 365 app versions and updates across many environments at once, through the Power Platform API.",
   "main": "index.html",
   "icon": "icon.svg",
   "license": "MIT",

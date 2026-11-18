@@ -2,6 +2,8 @@
 
 Offline analysis of Dataverse solution zips inside [Power Platform ToolBox](https://www.powerplatformtoolbox.com). No connection required. The zip never leaves your machine.
 
+**How it differs from Solution Explorer and Solution Dependency Analyzer** (also in the ToolBox catalog): both work against solutions in a connected environment. Solution XRay needs no connection: it reads exported solution zips offline, so you can inspect, compare, risk-score and order solutions before they reach any environment.
+
 ## What it does
 
 Load one or more exported solution zips (managed or unmanaged) and get:
@@ -32,9 +34,11 @@ Captured inside Power Platform ToolBox with the sample zips.
 
 ![Upgrade risk](https://raw.githubusercontent.com/sss-dclemente/sss-pptb/main/tools/solution-xray/docs/img/risk.png)
 
+**Owner to-do:** `inventory-dark.png` (Inventory, same solution and scroll position, dark theme) and `install-order.png` (Install order with three or more solutions, reason per edge) are not captured yet; see `docs/SCREENSHOTS.md` §1.
+
 ## Install
 
-**From the ToolBox marketplace** — search for "Solution XRay" once listed.
+**From the ToolBox marketplace** — search for "Solution XRay".
 
 **From npm (ToolBox Debug menu)** — Settings → enable *Show Debug Menu* → Debug → *Install from npm* → `@simplesmoothsafe/pptb-solution-xray`.
 
