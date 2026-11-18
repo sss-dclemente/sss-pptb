@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Synthetic import job log (importjob.data) for the e2e test: SolA 1.1.0.0 import that failed.
+     Mixes both shapes seen in real logs: <result> child elements (also inside <results>) and result attributes on the component. -->
+<importexportxml start="638670000000000000" stop="638670000600000000" progress="100" processed="true">
+  <solutionManifests>
+    <solutionManifest languagecode="1033" id="SolA" LocalizedName="SolA Display" processed="true">
+      <UniqueName>SolA</UniqueName>
+      <LocalizedNames><LocalizedName description="SolA Display" languagecode="1033" /></LocalizedNames>
+      <Descriptions />
+      <Version>1.1.0.0</Version>
+      <Managed>1</Managed>
+      <Publisher>
+        <UniqueName>ssspub</UniqueName>
+        <LocalizedNames><LocalizedName description="Simple Smooth Safe" languagecode="1033" /></LocalizedNames>
+      </Publisher>
+      <results />
+      <result result="failure" errorcode="0x80048541" errortext="Solution import failed: one or more components could not be imported." datetime="10:27:21.42" datetimeticks="638670000600000000" />
+    </solutionManifest>
+  </solutionManifests>
+  <upgradeSolutionPackageInformation>
+    <upgradeRequired>0</upgradeRequired>
+  </upgradeSolutionPackageInformation>
+  <entities>
+    <entity id="sss_project" LocalizedName="Project" OriginalName="Project" description="" processed="true">
+      <result result="success" errorcode="0" errortext="" datetime="10:27:01.10" datetimeticks="638670000100000000" />
+    </entity>
+    <entity id="sss_task" LocalizedName="Task" OriginalName="Task" description="" processed="true">
+      <results>
+        <result result="failure" errorcode="0x80044339" errortext="Cannot add a Relationship sss_project_sss_task: the referenced column sss_projectid, already exists." datetime="10:27:02.00" datetimeticks="638670000200000000" />
+      </results>
+    </entity>
+    <entity id="account" LocalizedName="Account" OriginalName="Account" description="" processed="true">
+      <result result="success" errorcode="0" errortext="" datetime="10:27:03.00" datetimeticks="638670000300000000" />
+      <result result="warning" errorcode="0x80040203" errortext="Ribbon customization for account was skipped." datetime="10:27:03.50" datetimeticks="638670000350000000" />
+    </entity>
+  </entities>
+  <nodes>
+    <node id="SiteMap" LocalizedName="Site Map" processed="true">
+      <result result="success" errorcode="0" errortext="" />
+    </node>
+  </nodes>
+  <optionSets>
+    <optionSet id="sss_status" LocalizedName="Status" processed="true">
+      <result result="success" errorcode="0" errortext="" />
+    </optionSet>
+  </optionSets>
+  <securityroles>
+    <role id="{5f1d0000-0000-4000-8000-0000000000aa}" name="SSS User" processed="true">
+      <result result="success" errorcode="0" errortext="" />
+    </role>
+  </securityroles>
+  <webResources>
+    <webResource id="sss_/app.js" LocalizedName="app.js" processed="true" result="success" errorcode="0" errortext="" />
+  </webResources>
+  <workflows>
+    <workflow id="{1b2c3d4e-0000-4000-8000-000000000001}" name="NotifyPM" processed="true" result="failure" errorcode="0x80060467" errortext="Connection reference sss_sharedoffice365 has no connection, the flow cannot be activated." />
+  </workflows>
+  <connectionreferences>
+    <connectionreference id="sss_sharedoffice365" LocalizedName="Office 365" processed="true" result="warning" errorcode="0x80060467" errortext="Connection reference sss_sharedoffice365 has no connection." />
+  </connectionreferences>
+  <environmentvariabledefinitions>
+    <environmentvariabledefinition id="sss_apikey" LocalizedName="API Key" processed="true">
+      <result result="warning" errorcode="0x8004F01A" errortext="Environment variable sss_apikey has no value." />
+    </environmentvariabledefinition>
+  </environmentvariabledefinitions>
+</importexportxml>

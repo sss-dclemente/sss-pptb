@@ -703,6 +703,106 @@ assert((await reasonCount()) === 7, "reasons: expanded state kept across re-rend
 await page.click(`${edgeCell} .reasons-more`);
 assert((await reasonCount()) === 5 && (await reasonsMore()) === "(+2)", "reasons: 'Show less' folds back to 5");
 
+// ---- post-import tab: importjob.data viewer (offline file + paste; live path below with a mocked host) ----
+const IJ_FIXTURE = resolve(TOOL, "scripts/fixtures/importjob-sola.xml");
+const IJ_XML = readFileSync(IJ_FIXTURE, "utf8");
+await page.click("#btn-clear");
+await addOne("SolA_1_1_0_0_managed.zip", 1);
+await page.click('.tab[data-tab="postimport"]');
+assert(await page.isVisible("#tab-postimport"), "post-import: tab panel shown");
+assert(await page.$eval("#pi-live", (e) => e.hidden), "post-import: live controls hidden without a connection");
+assert((await page.textContent("#pi-body")).includes("No import job log"), "post-import: empty state before a log is loaded");
+assert(await page.$eval("#pi-export", (b) => b.disabled), "post-import: export disabled without a log");
+{
+  const [c] = await Promise.all([page.waitForEvent("filechooser"), page.click("#pi-open")]);
+  await c.setFiles(IJ_FIXTURE);
+}
+await page.waitForFunction(() => document.querySelector("#pi-body")?.textContent?.includes("Import job"));
+let pi = await page.textContent("#pi-body");
+assert(pi.includes("importjob-sola.xml") && pi.includes("SolA Display (SolA)") && pi.includes("1.1.0.0") && pi.includes("Managed"), "post-import: summary from the solution manifest");
+assert(pi.includes("0x80048541"), "post-import: solution-level error code shown");
+assert(pi.includes("2 failed") && pi.includes("3 warnings") && pi.includes("5 succeeded"), "post-import: result totals 2/3/5: " + (await page.textContent(".pi-totals")));
+const piRows = () => page.$$eval("#pi-body .card:last-child tbody tr", (els) => els.map((e) => ({ cls: e.className, cells: [...e.cells].map((c) => c.textContent.trim()) })));
+let rows = await piRows();
+assert(rows.length === 5 && rows.every((r) => /pi-(failure|warning)/.test(r.cls)), "post-import: default shows failures and warnings only (5)");
+assert(rows[0].cls === "pi-failure" && rows[1].cls === "pi-failure" && rows[2].cls === "pi-warning", "post-import: failures first, then warnings");
+const task = rows.find((r) => r.cells[0].startsWith("Task"));
+assert(task && task.cells[1] === "Table" && task.cells[2] === "failure" && task.cells[3] === "0x80044339" && task.cells[4].includes("Cannot add a Relationship"), "post-import: <results>/<result> child parsed: " + JSON.stringify(task?.cells));
+const flow = rows.find((r) => r.cells[0].startsWith("NotifyPM"));
+assert(flow && flow.cells[1] === "Process" && flow.cells[3] === "0x80060467", "post-import: result attributes on the component parsed (workflow by name, guid id): " + JSON.stringify(flow?.cells));
+const acct = rows.find((r) => r.cells[0].startsWith("Account"));
+assert(acct && acct.cells[2] === "warning" && acct.cells[3] === "0x80040203", "post-import: worst of several results wins (account success + warning)");
+const types = await page.$$eval('#pi-body details.card:has(h3:text-is("Results by type")) tbody tr', (els) => els.map((e) => [...e.cells].map((c) => c.textContent)));
+const tableRow = types.find((t) => t[0] === "Table");
+assert(tableRow && tableRow.join("|") === "Table|3|1|1|1", "post-import: per-type counts for tables: " + tableRow);
+assert(types[0][0] === "Process" || types[0][0] === "Table", "post-import: types with failures sort first: " + types.map((t) => t[0]));
+assert(types.some((t) => t[0] === "Node") && types.some((t) => t[0] === "Security role") && types.some((t) => t[0] === "Environment variable"), "post-import: node, role and env var types labelled");
+const codes = await page.$$eval('#pi-body details.card:has(h3:text-is("Top error codes")) tbody tr', (els) => els.map((e) => [...e.cells].map((c) => c.textContent)));
+assert(codes[0]?.[0] === "0x80060467" && codes[0]?.[1] === "2" && codes.length === 4, "post-import: top error code 0x80060467 x2, 4 codes: " + JSON.stringify(codes));
+// link to the loaded zip's inventory (SolA 1.1.0.0 defines sss_task, the flow, the connection reference and the env var; not account)
+const linkOf = (name) =>
+  page.$$eval("#pi-body .card:last-child tbody tr", (els, n) => els.find((e) => e.cells[0].textContent.startsWith(n))?.querySelector(".pi-link")?.title ?? null, name);
+assert((await linkOf("Task"))?.includes("sss_task"), "post-import: failed table links to its inventory entry");
+assert((await linkOf("NotifyPM"))?.includes("NotifyPM"), "post-import: failed flow linked by workflow id");
+assert((await linkOf("Account")) === null, "post-import: no link for a component the zip does not define");
+await page.$$eval("#pi-body .card:last-child tbody tr", (els) => els.find((e) => e.cells[0].textContent.startsWith("Task")).querySelector(".pi-link").click());
+assert((await page.getAttribute('.tab[data-tab="inventory"]', "aria-selected")) === "true" && (await page.inputValue("#inv-q")) === "sss_task", "post-import: link opens Inventory searching the component");
+assert((await page.textContent("#inv-body")).includes("sss_task"), "post-import: inventory shows the linked table");
+await page.fill("#inv-q", "");
+await page.dispatchEvent("#inv-q", "input");
+await page.click('.tab[data-tab="postimport"]');
+// show all + search
+await page.selectOption("#pi-show", "all");
+rows = await piRows();
+assert(rows.length === 10 && rows.at(-1).cls === "pi-success", "post-import: 'All results' shows all 10, successes last");
+await page.fill("#pi-q", "office 365");
+await page.dispatchEvent("#pi-q", "input");
+rows = await piRows();
+assert(rows.length === 1 && rows[0].cells[0].startsWith("Office 365"), "post-import: search filters components");
+// exports honour the filter
+{
+  const [d] = await Promise.all([page.waitForEvent("download"), page.click("#pi-export")]);
+  const j = JSON.parse(readFileSync(await d.path(), "utf8"));
+  assert(d.suggestedFilename() === "SolA-1.1.0.0.importjob.json", "post-import: JSON file name " + d.suggestedFilename());
+  assert(j.components.length === 1 && j.filter.show === "all" && j.filter.search === "office 365" && j.countsByType.length >= 6 && j.topErrorCodes[0].code === "0x80060467" && j.solution.result === "failure", "post-import: JSON export carries the filter, counts and codes");
+}
+await page.fill("#pi-q", "");
+await page.dispatchEvent("#pi-q", "input");
+await page.selectOption("#pi-show", "problems");
+{
+  const [d] = await Promise.all([page.waitForEvent("download"), page.click("#pi-export-csv")]);
+  const csvText = readFileSync(await d.path(), "utf8");
+  const lines = csvText.trim().split("\r\n");
+  assert(d.suggestedFilename() === "SolA-1.1.0.0.importjob.csv" && lines[0] === "component,key,type,result,error code,error text" && lines.length === 6, "post-import: CSV header + 5 rows: " + lines.length);
+  assert(lines.some((l) => l.startsWith('Task,sss_task,Table,failure,0x80044339,"Cannot add a Relationship sss_project_sss_task: the referenced column sss_projectid, already exists."')), "post-import: CSV quotes text with commas");
+}
+await page.screenshot({ path: resolve(OUT, "07-postimport.png") });
+// paste: a bad paste keeps the loaded log and shows the error; an Excel-XML log gets a pointed message
+await page.click("#pi-paste-toggle");
+await page.fill("#pi-xml", "<Workbook xmlns=\"urn:schemas-microsoft-com:office:spreadsheet\"><Worksheet/></Workbook>");
+await page.click("#pi-parse");
+pi = await page.textContent("#pi-body");
+assert(pi.includes("formatted (Excel XML) import log") && pi.includes("SolA Display"), "post-import: Excel-XML log rejected with a clear message, previous log kept");
+await page.fill("#pi-xml", "not xml <");
+await page.click("#pi-parse");
+assert((await page.textContent("#pi-body")).includes("Not valid XML"), "post-import: invalid XML reported");
+const allOk = IJ_XML.replace(/result="(failure|warning)"/g, 'result="success"');
+await page.fill("#pi-xml", allOk);
+await page.click("#pi-parse");
+pi = await page.textContent("#pi-body");
+assert(pi.includes("Pasted XML") && pi.includes("No failures or warnings") && pi.includes("All 10 components succeeded") && !pi.includes("Not valid XML"), "post-import: pasted log replaces the file one; all-success empty state");
+assert(await page.$eval("#pi-paste", (e) => e.hidden), "post-import: paste box closes after a successful read");
+// the two rejected pastes above notify an error (console.error in a plain browser): expected, not a page error
+const expected = errors.filter((e) => /Could not read import job log: Pasted XML/.test(e));
+assert(expected.length === 2 && expected[1].includes("Not valid XML: error on line 1"), "post-import: rejected pastes notify an error: " + expected.join(" | "));
+errors.splice(0, errors.length, ...errors.filter((e) => !expected.includes(e)));
+await page.click('#pi-body .empty-actions button:text-is("Show all")');
+assert((await piRows()).length === 10, "post-import: 'Show all' from the empty state");
+await page.evaluate(() => document.documentElement.setAttribute("data-theme", "dark"));
+await page.screenshot({ path: resolve(OUT, "08-postimport-dark.png") });
+await page.evaluate(() => document.documentElement.setAttribute("data-theme", "light"));
+await page.click('.tab[data-tab="inventory"]');
+
 // ---- debug mode (standalone: no host, the log still records the switch and saves as a download) ----
 await checkDebugLog(page, assert, {
   tool: "solution-xray",
@@ -828,5 +928,55 @@ await lpage.evaluate(() => {
 await lpage.waitForFunction(() => document.querySelector("#live-conn")?.textContent === "Not connected");
 assert((await lpage.$eval("#live-check", (b) => b.disabled)) && (await lpage.textContent("#live-hint")).includes("Connect to an environment"), "live: disconnect disables the panel");
 await lpage.close();
+
+// ---- post-import live path: mocked host with one connection; only the read-only importjobs query may be sent ----
+{
+  const IJ = readFileSync(resolve(TOOL, "scripts/fixtures/importjob-sola.xml"), "utf8");
+  const live = await launchPage(import.meta.url, {
+    width: 1280,
+    height: 900,
+    initScript: () => {
+      window.__calls = [];
+      const conn = { id: "c1", name: "Dev", url: "https://dev.example.test", environment: "Dev", isActive: true };
+      window.toolboxAPI = { connections: { getConnections: async () => [conn, null] }, events: { on: () => {} }, utils: {} };
+      const deny = (op) => async () => {
+        window.__calls.push(op);
+        throw new Error("mock: write " + op);
+      };
+      window.dataverseAPI = {
+        queryData: async (q) => {
+          window.__calls.push("queryData " + q);
+          return {
+            value: [
+              { importjobid: "11111111-0000-4000-8000-000000000001", solutionname: "SolA", progress: 100, completedon: "2026-11-17T10:27:21Z", data: window.__ijxml },
+              { importjobid: "11111111-0000-4000-8000-000000000002", solutionname: "SolB", progress: 12.5, completedon: null, data: null },
+            ],
+          };
+        },
+        create: deny("create"), update: deny("update"), delete: deny("delete"), execute: deny("execute"), publishCustomizations: deny("publishCustomizations"),
+      };
+    },
+  });
+  const lp = live.page;
+  const la = live.assert;
+  // registered after launchPage's initScript; both run before page scripts, queryData reads it at call time
+  await lp.addInitScript((x) => (window.__ijxml = x), IJ);
+  await lp.goto("file://" + TOOL + "/dist/index.html");
+  await lp.click('.tab[data-tab="postimport"]');
+  await lp.waitForFunction(() => !document.querySelector("#pi-live").hidden);
+  la(true, "post-import live: controls shown with a connection");
+  await lp.click("#pi-live-load");
+  await lp.waitForFunction(() => document.querySelectorAll("#pi-jobs option").length === 3);
+  const opts = await lp.$$eval("#pi-jobs option", (os) => os.map((o) => o.textContent));
+  la(opts[1].includes("SolA") && opts[1].includes("2026-11-17 10:27:21") && opts[1].includes("100%") && opts[2].includes("not completed") && opts[2].includes("13%"), "post-import live: jobs listed with name, completion, progress: " + opts.join(" | "));
+  await lp.selectOption("#pi-jobs", "0");
+  await lp.waitForFunction(() => document.querySelector("#pi-body")?.textContent?.includes("2 failed"));
+  la((await lp.textContent("#pi-body")).includes("Import job SolA (11111111-0000-4000-8000-000000000001)"), "post-import live: picked job parsed through the same parser");
+  await lp.selectOption("#pi-jobs", "1");
+  la((await lp.textContent("#pi-body")).includes("has no log data yet"), "post-import live: job without data explained");
+  const calls = await lp.evaluate(() => window.__calls);
+  la(calls.length === 1 && calls[0] === "queryData importjobs?$select=importjobid,solutionname,progress,completedon,data&$orderby=createdon desc&$top=20", "post-import live: exactly one read-only importjobs query, no writes: " + JSON.stringify(calls));
+  await live.finish();
+}
 
 await finish();

@@ -36,6 +36,7 @@
         <button class="tab" data-tab="compare" role="tab" type="button">Compare</button>
         <button class="tab" data-tab="risk" role="tab" type="button">Upgrade risk</button>
         <button class="tab" data-tab="order" role="tab" type="button">Install order</button>
+        <button class="tab" data-tab="postimport" role="tab" type="button">Post-import</button>
       </nav>
 
       <section id="tab-inventory" class="panel" role="tabpanel">
@@ -78,6 +79,9 @@
         </div>
         <div id="order-body" class="panel-body"></div>
       </section>
+
+      <!-- toolbar and body built by postimport.ts -->
+      <section id="tab-postimport" class="panel" role="tabpanel" hidden></section>
     </main>
   </div>
   <script type="module" src="./main.ts"></script>

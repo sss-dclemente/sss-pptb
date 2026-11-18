@@ -19,7 +19,9 @@ Extras once live:
 
 Risks: ExportSolution on large solutions takes minutes and returns tens of MB over IPC; add a spinner and size warning. Managed export of an unmanaged solution needs `Managed: true`.
 
-## v1.1 — Post-import tab (importjob viewer)
+## v1.1 — Post-import tab (importjob viewer) — done
+
+- [x] Built: offline file / paste and live `importjobs` source, failures-first table, counts per type, top error codes, JSON/CSV export, links to the loaded zip's inventory. Live source not yet verified against a live environment.
 
 Goal: replace reading `importjob.data` XML by hand.
 

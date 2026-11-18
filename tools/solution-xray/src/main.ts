@@ -2,6 +2,7 @@ import { mountDebug } from "../../_shared/debug-ui";
 import { $, badge, card, emptyState, filteredEmpty, foldAllButtons, foldCard, h, keepFold, shownOf, table, wireTabs, type Child } from "../../_shared/dom";
 import { persistControls, type PersistedControls } from "../../_shared/view-state";
 import { mountLive, type LiveUi } from "./live-ui";
+import { mountPostImport, renderPostImport } from "./postimport";
 import { filesFromDrop, initTheme, inToolbox, notify, pickZips, saveText } from "./host";
 import { diffSolutions, type DiffEntry, type SolutionDiff } from "./xray/diff";
 import { buildInventory, managedLabel, type InventoryGroup } from "./xray/inventory";
@@ -567,7 +568,7 @@ function checkAgainstEnv(env: SolutionInfo, zip: SolutionInfo): void {
 
 // ---------- orchestration ----------
 function renderActive(): void {
-  const renderers: Record<string, () => void> = { inventory: renderInventory, compare: renderCompare, risk: renderRisk, order: renderOrder };
+  const renderers: Record<string, () => void> = { inventory: renderInventory, compare: renderCompare, risk: renderRisk, order: renderOrder, postimport: renderPostImport };
   renderers[activeTab]?.();
 }
 
@@ -608,6 +609,16 @@ function wire(): void {
     renderAll();
   });
 
+  mountPostImport({
+    solutions: () => solutions,
+    showInInventory: (s, name) => {
+      $<HTMLSelectElement>("#inv-select").value = idOf(s);
+      const q = $<HTMLInputElement>("#inv-q");
+      q.value = name;
+      q.dispatchEvent(new Event("input")); // saves the search like typing it
+      $<HTMLButtonElement>('.tab[data-tab="inventory"]').click();
+    },
+  });
   wireTabs((name) => {
     activeTab = name;
     renderActive();
