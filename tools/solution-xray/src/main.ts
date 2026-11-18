@@ -1,11 +1,13 @@
 import { mountDebug } from "../../_shared/debug-ui";
 import { $, badge, card, emptyState, filteredEmpty, foldAllButtons, foldCard, h, keepFold, shownOf, table, wireTabs, type Child } from "../../_shared/dom";
 import { persistControls, type PersistedControls } from "../../_shared/view-state";
+import { mountLive, type LiveUi } from "./live-ui";
 import { filesFromDrop, initTheme, inToolbox, notify, pickZips, saveText } from "./host";
 import { diffSolutions, type DiffEntry, type SolutionDiff } from "./xray/diff";
 import { buildInventory, managedLabel, type InventoryGroup } from "./xray/inventory";
 import { computeInstallOrder, latestByName } from "./xray/order";
 import { parseSolutionZip } from "./xray/parse";
+import { envTag } from "./xray/live";
 import { hasPublisherPrefix, scoreRisk } from "./xray/risk";
 import type { AttributeInfo, SolutionInfo } from "./xray/types";
 
@@ -38,7 +40,8 @@ function selected(selector: string): SolutionInfo | undefined {
 }
 
 function label(s: SolutionInfo): string {
-  return `${s.displayName || s.uniqueName} ${s.version ? `v${s.version}` : ""} (${s.managed ? "managed" : "unmanaged"})`;
+  const env = envTag(s);
+  return `${s.displayName || s.uniqueName} ${s.version ? `v${s.version}` : ""} (${s.managed ? "managed" : "unmanaged"})${env ? ` · env: ${env.connectionName}` : ""}`;
 }
 
 // ---------- sidebar ----------
@@ -66,6 +69,7 @@ function renderSidebar(): void {
           { class: "meta" },
           badge(managedLabel(s.managedFlag), s.managed ? "ok" : "warn"),
           s.version ? badge(`v${s.version}`, "neutral") : null,
+          envTag(s) ? badge(`env: ${envTag(s)!.connectionName}`, "neutral", envTag(s)!.url) : null,
           h("span", { class: "mono" }, s.uniqueName),
           s.warnings.length ? badge(`${s.warnings.length} warning${s.warnings.length > 1 ? "s" : ""}`, "bad") : null,
         ),
@@ -89,6 +93,7 @@ function renderSidebar(): void {
     if (other) cmpB.value = idOf(other);
   }
   $("#btn-clear").toggleAttribute("disabled", !solutions.length);
+  live?.refresh();
 }
 
 // ---------- inventory ----------
@@ -551,6 +556,15 @@ function renderOrder(): void {
   );
 }
 
+// ---------- live mode (zip vs environment; logic in live-ui.ts) ----------
+let live: LiveUi | undefined;
+const openTab = (tab: string) => document.querySelector<HTMLButtonElement>(`.tab[data-tab="${tab}"]`)?.click();
+function checkAgainstEnv(env: SolutionInfo, zip: SolutionInfo): void {
+  for (const [sel, s] of [["#cmp-a", env], ["#cmp-b", zip], ["#risk-select", zip], ["#risk-baseline", env]] as const) $<HTMLSelectElement>(sel).value = idOf(s);
+  if (activeTab === "compare") renderCompare();
+  else openTab("compare");
+}
+
 // ---------- orchestration ----------
 function renderActive(): void {
   const renderers: Record<string, () => void> = { inventory: renderInventory, compare: renderCompare, risk: renderRisk, order: renderOrder };
@@ -648,4 +662,5 @@ function wire(): void {
 mountDebug(document.querySelector("footer"), "solution-xray");
 void initTheme((t) => document.documentElement.setAttribute("data-theme", t));
 wire();
+live = mountLive($("#live"), { solutions: () => solutions, add: (s) => { solutions.push(s); renderAll(); }, check: checkAgainstEnv, openTab });
 renderAll();
