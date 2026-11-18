@@ -76,12 +76,12 @@ Estado: **feito** (fase B, 2026-10-26).
 
 ## Estado por ferramenta
 
-Versões no `package.json` de `main`. O npm indicado é o que [RELEASE.md](RELEASE.md) e o [roadmap](roadmap.md) registam como publicado a 2026-10-06 (o patch de revisão).
+Versões no `package.json` de `main`. O npm indicado é o `latest` publicado a 2026-11-18 ([RELEASE.md](RELEASE.md)).
 
 | | XRay | EnvVar | D365 Apps |
 |---|---|---|---|
-| Versão no repo | 1.2.1 | 1.6.1 | 0.3.3 |
-| npm `latest` documentado | 1.2.1 | 1.6.1 | 0.3.2 |
+| Versão no repo | 1.3.1 | 1.6.2 | 1.0.0 |
+| npm `latest` documentado | 1.3.1 | 1.6.2 | 1.0.0 |
 | Manifesto (validador) | feito | feito | feito |
 | `displayName` sem prefixo | feito | feito | feito |
 | What this tool changes | feito | feito | feito |
@@ -95,44 +95,44 @@ Versões no `package.json` de `main`. O npm indicado é o que [RELEASE.md](RELEA
 | Capturas reais no README | parcial | em falta | feito |
 | Par claro e escuro no README | em falta | em falta | feito |
 | Teste por uma pessoa | em falta | em falta | parcial |
-| Publicado no npm | feito | feito | parcial |
+| Publicado no npm | feito | feito | feito |
 | `npm audit` high/critical | feito | feito | feito |
-| `version` ≥ 1.0.0 | feito | feito | em falta |
-| Submissão ao marketplace | owner | owner | feito |
+| `version` ≥ 1.0.0 | feito | feito | feito |
+| Submissão ao marketplace | feito (listada) | feito (listada) | feito (não listada) |
 | Revisão | — | — | owner |
 | Métricas 2 de 3 | owner | owner | owner |
 | Pedido Get Verified | owner | owner | owner |
 
 `npm audit` a 2026-10-13: 0 info, 0 low, 0 moderate, 0 high, 0 critical em cada lockfile. Saúde de bugs, à data do roadmap: 0 issues reais abertas (o digest semanal não é um defeito de ferramenta). A regra dos 10 dias só se mede no marketplace, depois da listagem.
 
-### Solution XRay — `@simplesmoothsafe/pptb-solution-xray` — 1.2.1
+### Solution XRay — `@simplesmoothsafe/pptb-solution-xray` — 1.3.1
 
 Categorias em [RELEASE.md](RELEASE.md): Solutions, Troubleshooting, Migration (como no catálogo, 2026-11-18). `minAPI` 1.0.20. Sem ligação.
 
 - **feito** — manifesto, licença MIT, ícone, sem CSP, secções de escrita (não escreve em lado nenhum), AI Assistance («reviewed and maintained»), Install e Usage.
 - **parcial** — README com `inventory-light.png` e `risk.png`, capturas reais no ToolBox com zips de amostra. Faltam `inventory-dark.png` e `install-order.png` ([SCREENSHOTS.md](SCREENSHOTS.md) §1).
 - **em falta** — as caixas de teste real em [RELEASE.md](RELEASE.md) §1 continuam por preencher. Sem esse teste a frase da AI fica em «reviewed and maintained».
-- **owner** — a ronda que devolveu «changes requested» não nomeia esta ferramenta, e o README ainda diz «once listed». Confirmar se a submissão já foi feita; se não, submeter. Badge Verified só depois das capturas em falta, do teste, e do pedido em My Tools (a versão já passa de 1.0.0).
+- **owner** — listada no catálogo (verificado a 2026-11-18). Badge Verified só depois das capturas em falta, do teste, e do pedido em My Tools (a versão já passa de 1.0.0).
 
-### EnvVar & ConnRef Matrix — `@simplesmoothsafe/pptb-envvar-matrix` — 1.6.1
+### EnvVar & ConnRef Matrix — `@simplesmoothsafe/pptb-envvar-matrix` — 1.6.2
 
 Categorias: Environments, Migration, Comparisons. `minAPI` 1.2.0. Ligações: `optional` / `required`.
 
 - **feito** — manifesto e política de README (excepto capturas). Várias funções já estão no npm.
 - **em falta** — não há secção Screenshots nem ficheiros em `tools/envvar-matrix/docs/img/`. A lista de [SCREENSHOTS.md](SCREENSHOTS.md) §2 (`envvars.png`, `preview.png`, `connrefs.png`, `snapshot-dark.png`) está por capturar. As caixas de teste real em [RELEASE.md](RELEASE.md) §2 estão por preencher; várias versões saíram antes dessa verificação.
-- **owner** — igual ao XRay: submissão não está registada na ronda de revisão. Sem capturas e sem teste, não há pedido de Verified que se aguente, mesmo com versão ≥ 1.0.0.
+- **owner** — listada no catálogo (verificado a 2026-11-18). Sem capturas e sem teste, não há pedido de Verified que se aguente, mesmo com versão ≥ 1.0.0.
 
-### D365 Apps Matrix — `@simplesmoothsafe/pptb-d365-apps` — 0.3.3 no repo, 0.3.2 no npm
+### D365 Apps Matrix — `@simplesmoothsafe/pptb-d365-apps` — 1.0.0
 
 Categorias: Environments, Comparisons, Solutions ([RELEASE.md](RELEASE.md) §7). `minAPI` 1.2.6, `enabledForPowerPlatformAPI: true`. Uma ligação, obrigatória.
 
 - **feito** — submetida. README com quatro capturas reais, incluindo `matrix-dark.png`. AI em «reviewed, tested and maintained». Teste de 2026-10-06: leitura, pré-visualização, uma atualização ponta a ponta (Storage Advisor Components 1.0.0.2 → 1.0.0.3), CSV, claro e escuro.
-- **parcial** — o probe §5 de [D365-APPS-PLAN.md](D365-APPS-PLAN.md) não fechou antes da publicação: «update available» é derivado e não foi comparado com o PPAC. Por verificar: retry, primeira instalação, vários ambientes em paralelo, script `pac` por executar, relatório Unused (no ambiente de teste quase não mapeou pacotes). O repo está em 0.3.3 (correcção do lote de contagens); o npm documentado ficou em 0.3.2.
-- **em falta** — versão 0.x. O badge Verified não aceita abaixo de 1.0.0. O roadmap (E6) deixa esse 1.0 para 2027.
-- **owner** — publicar 0.3.3 (o registo só vê `latest`) e responder à revisão. O pedido de Verified espera pelo 1.0.0, pelas métricas e pelo fecho do que o README ainda marca como não verificado.
+- **parcial** — o probe §5 de [D365-APPS-PLAN.md](D365-APPS-PLAN.md) não fechou antes da publicação: «update available» é derivado e não foi comparado com o PPAC. Por verificar: retry, primeira instalação, vários ambientes em paralelo, script `pac` por executar, relatório Unused (no ambiente de teste quase não mapeou pacotes). Repo e npm em 1.0.0 (2026-11-18).
+- **em falta** — ainda não aparece no catálogo (2026-11-18): revisão «changes requested» sem resposta.
+- **owner** — responder à revisão. Subida a 1.0.0 por decisão do owner antes do teste live (o roadmap E6 tinha-a para 2027). O pedido de Verified espera pelas métricas e pelo fecho do que o README ainda marca como não verificado.
 
 ## O que falta, por ordem
 
 1. **Owner, remoção (2026-11-18).** `npm deprecate` de access-checker, dependency-cleaner, offboarding-wizard e audit-matrix; retirar em powerplatformtoolbox.com as submissões pendentes de Access Checker, Dependency Cleaner e Audit Config Matrix.
-2. **Owner, listagem.** D365 Apps (já revista): fechar o teste aberto, publicar 0.3.3, responder à revisão. Confirmar se XRay e EnvVar chegaram a ser submetidas; EnvVar não tem capturas, XRay não tem o par escuro nem a ordem de instalação.
-3. **Verified, quando a listagem existir.** Versão ≥ 1.0.0 falta em D365 Apps (roadmap E6, 2027). XRay e EnvVar já em 1.x: o pedido em My Tools → Get Verified depende das capturas, do teste declarado e de 2 das 3 métricas — ou do pedido de dispensa. O backlog usa 10 MAU como marca.
+2. **Owner, listagem.** D365 Apps (já revista): fechar o teste aberto, responder à revisão. XRay e EnvVar estão listadas; EnvVar não tem capturas, XRay não tem o par escuro nem a ordem de instalação.
+3. **Verified, quando a listagem existir.** As três já em ≥ 1.0.0: o pedido em My Tools → Get Verified depende das capturas, do teste declarado e de 2 das 3 métricas — ou do pedido de dispensa. O backlog usa 10 MAU como marca.
