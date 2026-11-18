@@ -2,7 +2,7 @@
   "name": "@simplesmoothsafe/pptb-solution-xray",
   "version": "1.3.0",
   "displayName": "Solution XRay",
-  "description": "Offline Dataverse solution zip analysis: component inventory, compare/diff, upgrade risk score and multi-solution install order. No connection required.",
+  "description": "Dataverse solution zip analysis, offline or in read-only live mode: inventory, compare, upgrade risk, install order, import job logs.",
   "main": "index.html",
   "icon": "icon.svg",
   "license": "MIT",
