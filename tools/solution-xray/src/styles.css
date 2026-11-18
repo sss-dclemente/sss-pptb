@@ -59,3 +59,21 @@
   .sidebar { border-right: none; border-bottom: 1px solid var(--border-color); }
   .footer { margin-top: 0; }
 }
+
+/* Post-import (postimport.ts) */
+.pi-live { display: inline-flex; gap: var(--s-2); align-items: center; }
+.toolbar .pi-live .btn, .toolbar #pi-open, .toolbar #pi-paste-toggle { margin-left: 0; }
+.pi-paste { display: flex; flex-direction: column; gap: var(--s-2); padding: var(--s-3) var(--s-4); }
+.pi-paste textarea {
+  font-family: var(--font-mono); font-size: var(--fs-caption); color: var(--fg-primary);
+  background: var(--bg-card); border: 1px solid var(--border-color); border-radius: var(--radius-sm);
+  padding: var(--s-2); resize: vertical; width: 100%;
+}
+.pi-paste textarea:focus-visible { outline: none; box-shadow: var(--shadow-teal); }
+.pi-paste-actions { display: flex; gap: var(--s-2); }
+.pi-failure td:first-child { border-left: 3px solid var(--status-bad-fg); }
+.pi-warning td:first-child { border-left: 3px solid var(--status-warn-fg); }
+.pi-link { padding-block: 0; white-space: nowrap; }
+.pi-code { white-space: nowrap; }
+.toolbar #pi-open { flex: none; }
+.kv .pi-totals { flex-direction: row; align-items: center; } /* .kv div stacks its children */
