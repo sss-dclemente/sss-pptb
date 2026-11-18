@@ -54,6 +54,8 @@ Real-env test (no connection needed):
 - [ ] Install order: multi-solution set sorts by dependencies; missing dependency listed.
 - [ ] Export JSON writes via ToolBox save dialog.
 - [ ] Debug log (1.1.0; published to npm 2026-10-02 before this check, fixes go in 1.1.1): tick Debug log in the footer, add a zip, Save log: the .txt names the tool and 1.1.0 and records the switch and the file pick. Untick: nothing more is recorded.
+- [ ] Live mode (1.3.0; npm 1.2.1 → 1.3.0, 1.2.2 never published on its own): connected to a Dev env with an unmanaged solution, *Check zip against environment* exports it and fills Compare (A = env, B = zip) and Upgrade risk. If it fails, the debug log records the `ExportSolution` result shape: fix `src/xray/live.ts`. Managed solutions listed but not pickable.
+- [ ] Post-import (1.3.0): *Load recent import jobs* lists the env's last 20 jobs; pick a failed import: failures first, error codes and texts match the maker portal's import history. Open a downloaded `importjob.data` XML offline: same result. Any component type shown as a raw XML element name → add it to `TYPE_LABELS` in `src/xray/importjob.ts`.
 
 Screenshots (replace `docs/img/*.png`, keep file names): `inventory-light.png`, `inventory-dark.png`, `risk.png`, `install-order.png`. Then delete the line "Synthetic sample data. Replace with real captures before publishing." from `README.md`.
 
