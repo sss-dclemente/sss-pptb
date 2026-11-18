@@ -8,6 +8,7 @@ Source: https://github.com/PowerPlatformToolBox · https://www.powerplatformtool
 - Goal: SSS brand / reputation
 - First ship: weekend — port SSS XRay (`solution-xray.html`) to PPTB
 - Focus areas: ALM / solutions, Security / audit
+- **2026-11-18: catalog cut to 3 tools** (Solution XRay, EnvVar + ConnRef Matrix, D365 Apps Matrix). Access Checker, Offboarding Wizard, Audit Config Matrix and Dependency Cleaner were built, published, then removed from the repo (marketplace cap of 3 listed tools for a new publisher, catalog overlap, write paths never verified live, one maintainer). npm packages deprecated; last published versions remain installable. Items marked *(removed 2026-11-18)* below are history, not plans.
 - Scoring: `Score = Pain + 2×Vis − Cx` (1–5 each; Cx 5 = hard). Ratings = judgment, not data. Validate via PPTB Discord requests + XrmToolBox download counts.
 
 ## PPTB catalog snapshot (npm, 2026-09-20, ~55 tools)
@@ -45,17 +46,17 @@ Platform notes: PPTB v1.2.5 — private marketplace sources, CSP consent review,
 
 | # | Tool | Pain | Vis | Cx | Score |
 |---|---|---|---|---|---|
-| 1 | Access Checker | 5 | 5 | 3 | 12 |
+| 1 | ~~Access Checker~~ *(removed 2026-11-18)* | 5 | 5 | 3 | 12 |
 | 2 | EnvVar + ConnRef Matrix | 5 | 4 | 2 | 11 |
-| 3 | Offboarding Wizard | 4 | 5 | 3 | 11 |
+| 3 | ~~Offboarding Wizard~~ *(removed 2026-11-18)* | 4 | 5 | 3 | 11 |
 | 4 | XRay port | 3 | 4 | 1 | 10 |
 | 5 | Unmanaged Layer Sweeper | 5 | 4 | 3 | 10 |
 | 6 | Flow ALM Fixer | 5 | 4 | 3 | 10 |
 | 7 | Attribute Manager | 5 | 5 | 5 | 10 |
-| 8 | Audit Center (full) | 4 | 5 | 4 | 10 |
+| 8 | ~~Audit Center (full)~~ (cancelled with Audit Config Matrix) | 4 | 5 | 4 | 10 |
 | 9 | SPN / Admin Inventory | 3 | 4 | 2 | 9 |
 | 10 | Role Minimizer | 4 | 5 | 5 | 9 |
-| 11 | Audit Config Matrix | 3 | 3 | 1 | 8 |
+| 11 | ~~Audit Config Matrix~~ *(removed 2026-11-18)* | 3 | 3 | 1 | 8 |
 | 12 | Deployment Settings Builder | 4 | 3 | 2 | 8 |
 | 13 | Import Job Viewer | 4 | 3 | 2 | 8 |
 | 14 | Priv Escalation Paths | 2 | 4 | 2 | 8 |
@@ -72,17 +73,17 @@ Platform notes: PPTB v1.2.5 — private marketplace sources, CSP consent review,
 
 ## One-liners
 
-- **Access Checker** — "why can / can't user X do Y on record Z". `RetrievePrincipalAccess` + role / team / BU / share / hierarchy breakdown.
+- ~~**Access Checker**~~ *(removed 2026-11-18)* — "why can / can't user X do Y on record Z". `RetrievePrincipalAccess` + role / team / BU / share / hierarchy breakdown.
 - **EnvVar + ConnRef Matrix** — rows = env vars / conn refs, columns = environments. Missing values, diff, bulk set, export `deploymentSettings.json`.
-- **Offboarding Wizard** — user leaves → reassign records, flows, personal views, connections, queues in one run.
+- ~~**Offboarding Wizard**~~ *(removed 2026-11-18)* — user leaves → reassign records, flows, personal views, connections, queues in one run.
 - **XRay port** — solution zip analysis: inventory, diff, upgrade risk score, install order. v1.1: live mode (`ExportSolution`) → zip-vs-env pre-import check.
-- **Unmanaged Layer Sweeper** — managed components with active layer → bulk remove. Dry-run + export first. BUILT as the inverse: Dependency Cleaner 1.3.0 **Slim** tab removes managed components *without* an active layer from the solution (docs/SOLUTION-SLIMMER-PLAN.md); removing the layers themselves (`RemoveActiveCustomizations`) is still open.
+- **Unmanaged Layer Sweeper** — managed components with active layer → bulk remove. Dry-run + export first. Was BUILT as the inverse in Dependency Cleaner 1.3.0 **Slim** tab; Dependency Cleaner removed 2026-11-18 (layer findings in docs/PPTB-NOTES.md §14).
 - **Flow ALM Fixer** — post-import: flows off, conn ref unbound, owner = deploy SPN → bulk fix.
 - **Attribute Manager** — column type change / rename with data carry-over. High prestige, data-loss risk.
 - **Audit Center** — audit config + history extract + restore old values.
 - **SPN / Admin Inventory** — app users, roles, last use. Audit-ready export.
 - **Role Minimizer** — privileges vs actual usage → least-privilege role.
-- **Audit Config Matrix** — org / table / column audit flags, cross-env diff, bulk set. Seed for Audit Center.
+- ~~**Audit Config Matrix**~~ *(removed 2026-11-18)* — org / table / column audit flags, cross-env diff, bulk set. Seed for Audit Center.
 - **Import Job Viewer** — `importjob` XML → readable failure reason, per-component result.
 - **Priv Escalation Paths** — roles with `prvAssignRole`, `prvWriteRole`, act-on-behalf → risk flags.
 - **Solution Drift Monitor** — component hash snapshots → diff over time.
@@ -94,9 +95,9 @@ Platform notes: PPTB v1.2.5 — private marketplace sources, CSP consent review,
 
 1. **XRay port** — Cx 1, learn PPTB API
 2. **EnvVar + ConnRef Matrix** — absorbs Deployment Settings Builder (export button)
-3. **Access Checker** — absorbs Share Explorer + Column Security Matrix (tabs)
-4. **Offboarding Wizard** — reuses Access Checker security queries
-5. **Audit Config Matrix** → grows into Audit Center
+3. ~~**Access Checker**~~ *(removed 2026-11-18)* — absorbs Share Explorer + Column Security Matrix (tabs)
+4. ~~**Offboarding Wizard**~~ *(removed 2026-11-18)* — reuses Access Checker security queries
+5. ~~**Audit Config Matrix** → grows into Audit Center~~ *(removed 2026-11-18)*
 
 Merge: Import Job Viewer → XRay "post-import" tab.
 Parked: Attribute Manager, Role Minimizer (after audience exists).

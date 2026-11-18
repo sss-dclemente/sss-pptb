@@ -2,6 +2,8 @@
 > Rascunho. Fontes: README, docs/*-PLAN.md, docs/BACKLOG.md, commits, npm (2026-10-13). **[inferido]** = conclusão minha.
 
 ## Estado atual
+> **2026-11-18 — decisão do owner: ficam 3 ferramentas** (solution-xray, envvar-matrix, d365-apps). access-checker, audit-matrix, dependency-cleaner e offboarding-wizard removidas do repo (limite de 3 ferramentas listadas para publisher novo, sobreposição no catálogo, escritas não verificadas, um maintainer). Pacotes npm deprecados, não despublicados: as últimas versões publicadas continuam instaláveis. Submissões pendentes de Access Checker, Dependency Cleaner e Audit Config Matrix a retirar no marketplace. O resto desta secção é o estado a 2026-10-13.
+
 - 7 ferramentas publicadas no npm (`@simplesmoothsafe/pptb-*`), patch de revisão do marketplace a 2026-10-06:
   solution-xray 1.2.1 · envvar-matrix 1.6.1 · access-checker 1.2.2 · dependency-cleaner 1.5.2 · audit-matrix 0.2.2 · d365-apps 0.3.2 (repo já em 0.3.3) · offboarding-wizard 0.2.1.
 - `tools/_shared/` (host adapter, debug log, tokens); testes live em Sandbox/Developer com screenshots reais.
@@ -16,18 +18,18 @@
 
 ## Now (Q4 2026)
 - **E1 Marketplace**: concluir passos do owner da revisão; publicar d365-apps 0.3.3.
-- **E2 Verificação live**: Cycles e d365-apps (probe §5 do D365-APPS-PLAN não correu antes da publicação).
+- **E2 Verificação live**: d365-apps (probe §5 do D365-APPS-PLAN não correu antes da publicação). ~~Cycles~~ (Dependency Cleaner removida 2026-11-18).
 - **E3 Telemetria mínima de adoção** (downloads npm / MAU do PPTB) para chegar aos 10 MAU **[inferido]**.
 
 ## Next (Q1–Q2 2027)
 - **E4 XRay v1.1 Live mode**: ExportSolution da ligação ativa, diff zip↔ambiente, MissingDependencies resolvidas.
 - **E5 XRay v1.1 Post-import tab** (parser de `importjob.data`).
-- **E6 1.0 de audit-matrix, d365-apps, offboarding-wizard**.
+- **E6 1.0 de d365-apps** (~~audit-matrix, offboarding-wizard~~: removidas 2026-11-18).
 - **E7 Smaller items**: deploymentSettings.json scaffold, pesos de risco editáveis, settings persistidos.
 
 ## Later (H2 2027)
 - **E8 Inter-tool invocation** (`pptb.config.json`) entre ferramentas SSS.
-- **E9 "Audit Center"** a partir do audit-matrix.
+- ~~**E9 "Audit Center"** a partir do audit-matrix~~ — cancelado, audit-matrix removida 2026-11-18.
 - **E10 Ponte com dataverse-ops-mcp** (mesmos diagnósticos em UI e em MCP) **[inferido]**.
 
 ## Dependências
@@ -37,8 +39,8 @@
 
 ## Riscos
 - Dependência de uma plataforma de terceiros (regras do marketplace mudam — já houve patch de naming).
-- Ferramentas que escrevem (Dependency Cleaner remove componentes; offboarding) → risco reputacional se falharem em produção de clientes.
-- Dispersão: 7 ferramentas mantidas por uma pessoa/agentes **[inferido]**.
+- Ferramentas que escrevem → risco reputacional se falharem em produção de clientes. Mitigado a 2026-11-18: Dependency Cleaner e Offboarding removidas; ficam escritas em envvar-matrix e d365-apps.
+- Dispersão: eram 7 ferramentas mantidas por uma pessoa/agentes; reduzido a 3 a 2026-11-18.
 
 ## Perguntas para o Duarte
 1. Estado da revisão do marketplace PPTB — falta algo do teu lado?

@@ -1,6 +1,6 @@
 # SCREENSHOTS — what to capture, per tool
 
-Marketplace review (2026-10) rejected synthetic screenshots: the policy is "Screenshots are real. Screenshots and GIFs must show the actual tool, not mock-ups." All synthetic images were removed from `tools/*/docs/img/` and from the READMEs; the e2e / `npm run screenshots` output now goes to the gitignored `docs/img-synthetic/`. Real ToolBox captures kept: Solution XRay `inventory-light.png` and `risk.png`, Access Checker `columns.png` (recapture: it still shows the old "SSS" name). `configurations.readmeUrl` points at `main`, so whatever is committed there is what the marketplace listing renders.
+Marketplace review (2026-10) rejected synthetic screenshots: the policy is "Screenshots are real. Screenshots and GIFs must show the actual tool, not mock-ups." All synthetic images were removed from `tools/*/docs/img/` and from the READMEs; the e2e / `npm run screenshots` output now goes to the gitignored `docs/img-synthetic/`. Real ToolBox captures kept: Solution XRay `inventory-light.png` and `risk.png`. `configurations.readmeUrl` points at `main`, so whatever is committed there is what the marketplace listing renders.
 
 Per shot below: capture it inside ToolBox, save it under `tools/<tool>/docs/img/` with the file name given, and add it back to the tool README under a `## Screenshots` section (after `## What this tool changes`), with the raw.githubusercontent.com `main` URL. Never commit an image from `docs/img-synthetic/`.
 
@@ -8,11 +8,11 @@ Work through one tool at a time. Each shot below names the file to overwrite, th
 
 ## Before you start
 
-**Use a sandbox or trial environment, not a client one.** These images go into a public repo and a public marketplace listing. A real Dataverse environment puts table names, user names, security roles and record data in front of everyone who browses the catalogue. A developer or trial environment with data you own gives an equally real capture with none of that exposure. If you do use a live environment, check every shot for client-identifying values before committing — the Access Checker ones in particular put user names and role names on screen by design.
+**Use a sandbox or trial environment, not a client one.** These images go into a public repo and a public marketplace listing. A real Dataverse environment puts table names, user names, security roles and record data in front of everyone who browses the catalogue. A developer or trial environment with data you own gives an equally real capture with none of that exposure. If you do use a live environment, check every shot for client-identifying values before committing.
 
-**Keep the window the same size for all eighteen.** The e2e suites render at 1400×900 and the layouts are tuned for it. A consistent size makes the shots in a README look like one set.
+**Keep the window the same size for every shot.** The e2e suites render at 1400×900 and the layouts are tuned for it. A consistent size makes the shots in a README look like one set.
 
-**Theme** is Settings → theme in ToolBox. Five files want dark (`inventory-dark`, `snapshot-dark`, `columns-dark`, `report-dark`, `org-dark`); the rest are light.
+**Theme** is Settings → theme in ToolBox. Two files want dark (`inventory-dark`, `snapshot-dark`); the rest are light.
 
 **Load the tools with Debug → Load Local Tool.** Install-from-npm is broken in the host (PPTB-NOTES §11), so it is not an option until they ship the fix.
 
@@ -82,89 +82,9 @@ Environment variables tab with a **snapshot loaded as a third column**, theme sw
 
 ---
 
-## 3. Access Checker — `tools/access-checker/docs/img/`
+## 3–5. Access Checker, Offboarding Wizard, Audit Config Matrix
 
-Needs one connection and a user with a mix of direct role and team role. The most persuasive shot is one where the verdict is **not** all-green — a denial with its reason explained is the whole point of the tool.
-
-### `check.png` — light
-Check tab, a user and a record selected, verdicts rendered.
-- The per-right chips visible across the eight access rights
-- **At least one denial** alongside the grants
-- The chain that produced a verdict visible — role, team, business unit, ownership or share
-- The business-unit relation line and, if your environment has hierarchy security on, the hierarchy card
-
-If a `platform says otherwise` warning appears, do not screenshot it — note the case in `docs/BACKLOG.md` and fix it first. Shipping a listing image that shows the tool disagreeing with the platform would be a poor first impression.
-
-### `columns-dark.png` — dark
-Columns tab on a table with a **real field security profile**, theme switched.
-- Secured columns listed with Read / Update / Create per column
-- Mixed results, not all-allowed
-
-### `shares.png` — light, optional
-Shares tab, a record shared with a team the user belongs to.
-- The share listed with the `via team` badge
-- The `affects` badge showing it is the winning path
-
-If you capture it, add it to `tools/access-checker/README.md` under the existing screenshots with a caption like "Shares, with the path that grants access". If you skip it, nothing else changes.
-
----
-
-## 4. Offboarding Wizard — `tools/offboarding-wizard/docs/img/`
-
-Needs one connection and a sandbox user who owns a realistic mix — records in several tables, at least one active modern flow, a couple of personal views, a team, two roles. The tool's argument is *how much a leaving user silently holds*, so a thin inventory undersells it. Use a sandbox: these shots put a person's name, their teams and their roles on screen.
-
-### `inventory.png` — light
-Inventory tab, the leaver selected and the record scan finished.
-- The leaver header with business unit, manager and state
-- Several category cards with non-zero counts, at least one expanded to its detail table
-- The records-per-table card showing more than one table, and the active-modern-flow flag if the user has one
-
-This is the first image on the listing. Do not capture it mid-scan with a half-empty progress bar.
-
-### `plan.png` — light
-The preview dialog open, over the Plan & apply tab.
-- The successor selected and the per-category options visible behind the dialog
-- Operation counts per category in the dialog, with at least one warning or skip line (an owner team or an Entra group team does this nicely)
-- Some of the verbatim calls visible — they are what tells a reviewer the tool shows its work before writing
-
-### `report-dark.png` — dark
-The results after a small applied plan, theme switched.
-- One row per operation with its ok status
-- Ideally one failed row alongside the successes: an honest failure row is more convincing than a clean sheet
-- The manual-steps list visible if it fits
-
-## 5. Audit Config Matrix — `tools/audit-matrix/docs/img/`
-
-Needs two connections to environments whose audit configuration genuinely differs (dev vs test is the natural pair), or one connection plus a snapshot exported from the other. A matrix with no `≠` in it demonstrates nothing.
-
-### `matrix.png` — light
-Matrix tab, both environments loaded, nothing filtered.
-- Both environment columns with their connection names in the header
-- The counts row: tables audited, differences
-- Enough rows that the on/off mix is visible, with at least two `≠` markers on screen
-- A `locked` row if your environment has one
-
-### `columns.png` — light
-The same matrix with one table expanded to its columns.
-- The parent table row and its columns indented below it
-- At least one column differing between the environments
-- The column counts naming their scope
-
-### `differences.png` — light
-The "only differences" filter active.
-- Only differing rows left, and the count making clear how many
-- This is the shot that sells the tool to someone doing an environment comparison, so pick a table set where the differences are real and explicable
-
-### `preview.png` — light
-The preview dialog from **Plan: match other env**.
-- Each operation with its current value, planned value and reason
-- The count of operations, and the confirm/cancel buttons
-- No locked row anywhere in the list (if one appears, that is a bug, not a screenshot)
-
-### `org-dark.png` — dark
-Org settings tab, both environments side by side, theme switched.
-- The four switches per environment, with a real difference between them if you have one
-- If a field reads `unknown`, fix the attribute name before capturing — a listing image should not advertise a gap
+Removed 2026-11-18 together with Dependency Cleaner: tools deleted from this repo, npm packages deprecated (last published versions remain installable). No captures needed.
 
 ---
 
@@ -175,7 +95,6 @@ Per tool:
 1. Overwrite the files in `tools/<tool>/docs/img/`, same names.
 2. Delete the line `Synthetic sample data. Replace with real captures before publishing.` from `tools/<tool>/README.md`.
 3. Check each image once more for anything you would not want on a public listing.
-4. If you added `shares.png`, add its markdown to the access-checker README.
 
 Then commit and **push to `main`**. `readmeUrl` resolves against `main`, so the listing only picks the images up once they are there — not from a branch.
 

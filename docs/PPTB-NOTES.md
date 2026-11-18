@@ -304,7 +304,7 @@ Validate the guid before interpolating — `queryData` does no escaping either, 
 
 Bound operations are unaffected: the id goes into the path (`systemusers(<guid>)/Microsoft.Dynamics.CRM.RetrieveUserPrivileges`), never through the formatter. That is why `RetrieveUserPrivileges` worked while `RetrieveRolePrivilegesRole` did not.
 
-Cost us two releases: 0.1.4 fixed the binding (bound → unbound) but still went through `execute`, so it traded "Resource not found for the segment" for this error. 0.1.5 moved it to `queryData`. The access-checker e2e now rejects both wrong shapes.
+Cost us two releases: 0.1.4 fixed the binding (bound → unbound) but still went through `execute`, so it traded "Resource not found for the segment" for this error. 0.1.5 moved it to `queryData`. The access-checker e2e rejected both wrong shapes (tool removed 2026-11-18, see §14).
 
 
 ## 13. `features.connections` replaces `multiConnection` / `connectionRequirement` (Desktop 1.2.7, deadline 2027-01-31)
@@ -321,12 +321,46 @@ Source: PPTB developer release notice v1.2.7; [toolbox-api#multiple-connections]
 
 | Tool | Legacy | `connections` |
 |---|---|---|
-| access-checker | none / required | `1` |
-| offboarding-wizard | none / required | `1` |
+| ~~access-checker~~ (removed 2026-11-18) | none / required | `1` |
+| ~~offboarding-wizard~~ (removed 2026-11-18) | none / required | `1` |
 | d365-apps | none / required | `1` (keep `enabledForPowerPlatformAPI`) |
 | solution-xray | none / optional | `{ "min": 0, "max": 1 }` |
-| audit-matrix | optional / required | `{ "min": 1, "max": 2 }` |
-| dependency-cleaner | optional / required | `{ "min": 1, "max": 2 }` |
+| ~~audit-matrix~~ (removed 2026-11-18) | optional / required | `{ "min": 1, "max": 2 }` |
+| ~~dependency-cleaner~~ (removed 2026-11-18) | optional / required | `{ "min": 1, "max": 2 }` |
 | envvar-matrix | optional / required | `{ "min": 1, "max": 2 }` |
 
 Then the legacy fallback in `host.ts` can go, and the per-tool plan docs (`docs/*-PLAN.md`) and §1 above need the manifest line updated.
+
+## 14. Dataverse Web API findings carried over from removed tools (2026-11-18)
+
+Access Checker, Audit Config Matrix, Dependency Cleaner and Offboarding Wizard were removed from this repo on 2026-11-18 (marketplace cap of 3 tools for a new publisher, catalog overlap, write paths never verified live, one maintainer). Their npm packages are deprecated, not unpublished: the last published versions remain installable. Their plan docs are deleted; source is in git history before the removal commit. What they learned about the host and the Dataverse Web API, verified against live environments unless marked otherwise:
+
+**Security / privileges (Access Checker)**
+- `RetrieveUserPrivileges` returns only **Basic** depth for privileges inherited through team roles ([reference](https://learn.microsoft.com/en-us/power-apps/developer/data-platform/webapi/reference/retrieveuserprivileges)). Use `RetrieveUserPrivilegeByPrivilegeName` (one `Edm.String` per call, real effective depth incl. team roles) or `RetrievePrincipalAccess` per record. `RetrieveUserSetOfPrivilegesByNames` takes `Collection(Edm.String)`; the host serializes arrays without a collection branch → UNVERIFIED.
+- `RetrieveRolePrivilegesRole` needs a Guid parameter → `queryData`, not `execute` (§12). Depth codes: 0 Basic, 1 Local, 2 Deep, 3 Global.
+- `execute` on `systemuser` with `RetrievePrincipalAccess` and `Target: { entityLogicalName, id }` works; returns `AccessRights` as a comma-separated string.
+
+**Users / ownership (Offboarding Wizard)**
+- `systemuser.accessmode`: 3 Support User, 4 Non-interactive, 5 Delegated Admin.
+- `workflow.type`: 1 Definition, 2 Activation, 3 Template. Filter `type eq 1` server-side; activation copies outnumber definitions.
+- Reassign = `update` with `ownerid@odata.bind` (`AssignRequest` deprecated). Manager = `parentsystemuserid@odata.bind`.
+- `workflows`, `userqueries`, `userqueryvisualizations`, `queues`, `connectionreferences`, `connections` are user-owned with `_ownerid_value`. N:N names `systemuserroles_association`, `systemuserprofiles_association`, `teammembership_association`, `queuemembership_association` work with `associate` / `disassociate`.
+- `$count=true` → `@odata.count` reaches the tool through `queryData`, but **saturates at 5 000** silently; the `Prefer` header that would reveal overflow cannot be sent through `queryData`. No `$skip` in Dataverse; 5 000 rows per request ceiling.
+- Bridge-side UNVERIFIED: whether `@odata.bind` survives `update` unchanged; whether a failed write surfaces the Dataverse error body; `getAllEntitiesMetadata` `OwnershipType` as string vs flags integer (accept both).
+
+**Audit (Audit Config Matrix)**
+- `organization.isreadauditenabled` exists. `auditretentionperiodv2` can be null while legacy `auditretentionperiod` holds the value → read both, v2 wins when set; `-1` = forever.
+- UNVERIFIED: `updateEntityDefinition` forwarding `MSCRM.MergeLabels`; whether scoped `publishCustomizations(table)` suffices for column-level audit changes.
+
+**Solutions / dependencies / layers (Dependency Cleaner)**
+- `solutioncomponent.rootsolutioncomponentid` is a Uniqueidentifier, not a lookup: `_rootsolutioncomponentid_value` does not exist.
+- `RetrieveRequiredComponents` / `RetrieveDependenciesForDelete` through `queryData` (Guid params, §12) work; response `{ value: [dependency] }` with `dependentcomponentobjectid`, `dependentcomponenttype`, `dependentcomponentparentid` (all zeros if none), `dependentcomponentbasesolutionid`.
+- `RemoveSolutionComponent` Web API payload: `{ SolutionComponent: { "@odata.type": "Microsoft.Dynamics.CRM.solutioncomponent", solutioncomponentid: <component id> }, ComponentType, SolutionUniqueName }`. Passing `ComponentId` (SDK parameter name) fails with `0x80048d19 … not a valid parameter`.
+- `msdyn_componentlayers?$filter=msdyn_componentid eq '<id>' and msdyn_solutioncomponentname eq '<name>'`: guid **quoted**, `$select` **ignored** (returns large `msdyn_changes` / `msdyn_componentjson`), unmanaged layer `msdyn_solutionname = 'Active'`, `msdyn_order` ascending from base. Names that answer: `Entity`, `Attribute`, `Role`, `SavedQuery`, `SystemForm`, `Workflow`, `WebResource`, `OptionSet`, `AppModule`, `SiteMap`, `CanvasApp`, `EntityRelationship`, `SdkMessageProcessingStep`, `AppElement`.
+- Phantom Active layers: most `Active` rows carry `msdyn_changes.Attributes` empty or only bookkeeping (`modifiedon`, `modifiedby`, `overwritetime`, `solutionid`, `supportingsolutionid`, `componentstate`, `publishedon`, `versionnumber`, `importsequencenumber`, `statecode`, `statuscode`, `workflowidunique`). Do not treat them as customizations.
+- `ismanaged = false` ≠ custom: platform components (e.g. `owningteam` on `account`) are unmanaged too. Custom = unmanaged **and** `IsCustom*`.
+- `appmoduleid` / `canvasappid` **differ between environments** for the same app → match by unique name.
+- Reading all JS web resources with content in one `queryData` → host fails to parse (`Parse Error: JS Exception`). Read ids/names first, content in small batches (5).
+- Environment id from Dataverse: `RetrieveCurrentOrganization` (`AccessType` enum param) → `Detail.EnvironmentId` (see `PP-API-SPIKE.md`).
+- Solution history page source: `msdyn_solutionhistories`.
+

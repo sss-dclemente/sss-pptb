@@ -10,11 +10,7 @@ body:
       options:
         - SSS Solution XRay
         - SSS EnvVar & ConnRef Matrix
-        - SSS Access Checker
-        - SSS Dependency Cleaner
         - SSS D365 Apps Matrix
-        - SSS Offboarding Wizard
-        - SSS Audit Config Matrix
         - New tool
         - Other / not sure
     validations:

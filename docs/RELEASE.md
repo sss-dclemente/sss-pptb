@@ -1,5 +1,7 @@
 # RELEASE — owner-side steps per tool
 
+> **2026-11-18 — four tools removed.** Access Checker, Dependency Cleaner, Offboarding Wizard and Audit Config Matrix were removed from this repo (marketplace cap of 3 tools for a new publisher, catalog overlap, write paths never verified live, one maintainer). Their npm packages are deprecated, not unpublished: the last published versions remain installable. Their per-tool sections below are deleted; mentions in the 2026-10 history are kept as history. Reusable host / Web API findings: [PPTB-NOTES.md](PPTB-NOTES.md) §14. Kept: Solution XRay, EnvVar & ConnRef Matrix, D365 Apps Matrix.
+
 ## Marketplace review round (2026-10) — owner steps
 
 Reviews of Access Checker, Dependency Cleaner, D365 Apps Matrix and Audit Config Matrix came back "changes requested" against the [marketplace](https://docs.powerplatformtoolbox.com/policies/marketplace) and [AI-assisted development](https://docs.powerplatformtoolbox.com/policies/ai-assisted-development) policies. Fixed in the repo for all seven tools (patch versions):
@@ -99,106 +101,9 @@ Submit: `@simplesmoothsafe/pptb-envvar-matrix`, categories **Environments, Migra
 
 - [ ] Debug log (1.5.0; published to npm 2026-10-02 before this check, fixes go in 1.5.1): tick Debug log, Refresh, Save log: every `queryData` with its query text and result, no connection secret in the file. The switch is still on after reopening the tool.
 
-## 3. Access Checker — `tools/access-checker`
+## 3–6. Access Checker, Dependency Cleaner, Offboarding Wizard, Audit Config Matrix
 
-Real-env test (one connection, a user with a mix of direct role + team role):
-- [x] User typeahead finds by name / domain / email; disabled badge on a disabled user. (2026-10-06, PSA-DEV Sandbox)
-- [x] Table list excludes intersect/private tables; org-owned table shows Assign / Share as n/a. (Currency, 2026-10-06)
-- [ ] Table-level check: every chip's depth equals the effective depth in Security roles UI (`agrees` on all eight).
-- [ ] Record check: pick a record owned by another user in a child BU and one in a sibling BU; verdict chips match what the user actually sees (log in as them or use "Check access" in the model-driven app). Any `platform says otherwise` → note the case in `docs/BACKLOG.md`.
-- [ ] Record shared with a team the user belongs to: Shares tab lists it with `via team`; Check tab shows the share as the winning path.
-- [ ] Column security on a table with a secured column: Read / Update / Create match the field security profile UI.
-- [ ] Hierarchy: with hierarchy security on and the user as the owner's manager, the Hierarchy card appears. If the card says "state unknown", the organization row could not be read: check `fetchHierarchySettings` in `src/access/fetch.ts` (`ishierarchicalsecuritymodelenabled`, `maxdepthforhierarchicalsecuritymodel`, both documented on the organization table). A manager further above the owner than the organization's hierarchy depth gets no card.
-- [x] Table-level check on an activity table (Task) and on Note: chips agree (2026-10-06, no-role user only) (names come from entity metadata: `prv*Activity`, `prv*Note`).
-- [ ] Team role with *Member's privilege inheritance* = *Team privileges only* at Basic: a record the user owns is not reached through it; a record owned by that team is.
-- [ ] Record shared with the user for a right they hold no privilege for: the chip is denied and the "why" line says the share has no effect.
-- [x] Exports: JSON, shares CSV, columns CSV. (2026-10-06)
-- [ ] Debug log (1.1.0; published to npm 2026-10-02 before this check, fixes go in 1.1.1): tick Debug log, run a record check, Save log: user, privilege and share queries with results; a failed call shows its error.
-
-Screenshots: `check.png`, `check-dark.png` captured 2026-10-06 on PSA-DEV (no secured column or share there, so `columns-dark.png` / `shares.png` were not captured; old `columns.png` removed). UNVERIFIED on a live environment: mixed direct + team roles, cross-BU depth, shares, field security, Team privileges only, hierarchy.
-
-Publish:
-```bash
-cd tools/access-checker && npm run build && npm run validate && npm publish --access public
-```
-Submit: `@simplesmoothsafe/pptb-access-checker`, categories **Users & Security, Troubleshooting**.
-
-## 4. Dependency Cleaner — `tools/dependency-cleaner`
-
-> **1.5.0 published to npm 2026-10-06, before the real-environment checks below.** npm went 1.2.0 → 1.5.0: 1.3.0, 1.3.1 and 1.4.0 were never published on their own, so 1.5.0 is the first npm release with Slim, Cycles and Failed import. Fixes for any of them go in 1.5.1; do not unpublish.
-
-Real-env test, Upgrade blockers (1.1.0; published to npm 2026-10-02 before this check, fixes go in 1.1.1). Sandbox only: primary = Dev with the unmanaged solution, secondary = Test with it installed managed, a custom page still listed by a model-driven app.
-- [ ] Tick Debug log, Upgrade blockers → Analyze, Save log. The log answers the probe in docs/UPGRADE-BLOCKERS-PLAN.md §4: `RetrieveDependenciesForDelete` response shape, `msdyn_componentlayers` rows (and the unmanaged layer's name), `canvasappid` / `appmoduleid` equal or not between Dev and Test. Send the .txt; adjust `src/deps/upgrade.ts` if a shape differs.
-- [ ] Counts (removed / deleted / survive / blockers) match what a real stage-and-upgrade of the same solution reports in the target.
-- [ ] Remove from app on the page blocker: backup saved, `RemoveAppComponents` succeeds, the app no longer lists the page after publish, re-analysis drops the blocker. Restore puts the page back.
-- [ ] Runtime breaks: a JS web resource calling `navigateTo` with the page name is listed.
-- [ ] Exports: Markdown checklist and CSV.
-Slim (1.3.0 probed 2026-10-05 on SL sandbox, PP365ControlFlows; the 1.3.1 fix shipped in 1.5.0, published to npm 2026-10-06 before this check, fixes go in 1.5.1): results and the second-run checklist in docs/SOLUTION-SLIMMER-PLAN.md §4.
-- [x] Reads: `primaryentityname`, every `ismanaged`, layer names for tables / columns / roles / views / forms / processes / web resources / choices / apps / site maps.
-- [x] Apply failed on `RemoveSolutionComponent` (`ComponentId` is not a Web API parameter); nothing changed. 1.3.1 sends the `SolutionComponent` reference (also used by Fix and Restore).
-- [ ] 1.3.1 (in 1.5.0), Debug log on: platform badges on account / contact; *customized* only where Layers names a real change; apply two or three rows, then the whole plan; Analyzed again shows them gone; Restore re-adds.
-
-Cycles (1.4.0, shipped in 1.5.0; published to npm 2026-10-06 before this check, fixes go in 1.5.1): probe in docs/CYCLES-PLAN.md §4 with two sandbox solutions that need each other and an empty base solution.
-- [ ] Analyze: the cycle and its two rows; orphans plausible. Preview with the defaults: 0 cycles after, order base first. Apply, Analyzed again: 0 cycles; the base holds the column (with its table shell) and the table shell. Undo removes them. Export both managed, import in the shown order: no missing dependencies.
-Failed import (1.5.0; published to npm 2026-10-06 before this check, fixes go in 1.5.1). Sandbox only: a managed solution whose new version drops a connection reference that an unmanaged flow (or an Active layer of a managed flow) in Test still uses; import the new version, let it fail.
-- [ ] Debug log on, Failed import → Scan solution history: the failed run is listed (`msdyn_solutionhistories` filter accepted or the unfiltered fallback), the connection reference is named, its references are placed by layer.
-- [ ] Re-point the unmanaged flow: backup saved, the flow is off → updated → on, Checked again drops it; Undo flow changes puts it back.
-- [ ] Remove active customizations on the managed flow's Active layer: `RemoveActiveCustomizations` through `queryData` succeeds (or note which `ComponentId` form works), the layer is gone in See solution layers, Checked again drops it. Import again: the upgrade passes.
-- [ ] Paste the raw Failure details text: one component, same result.
-- [x] 1.1.1 (published to npm 2026-10-02): Diagnose and Upgrade blockers failed on their first query with `0x80060888: Could not find a property named '_rootsolutioncomponentid_value'` (first real-environment debug log). `rootsolutioncomponentid` is a Uniqueidentifier column, not a lookup; the e2e mocks now reject the wrong name like Dataverse does.
-
-Publish:
-```bash
-cd tools/dependency-cleaner && npm run build && npm run validate && npm publish --access public
-```
-
-## 5. Offboarding Wizard — `tools/offboarding-wizard`
-
-Real-env test (one connection, a sandbox user who owns a bit of everything, plus a second user as successor). **Do the first run against a sandbox**: this tool writes ownership and membership.
-
-> **Status, 2026-09-21.** Loaded in ToolBox against a real environment and exercised read-only: it connects, reads and renders. No plan was applied, so every write path below is still untested and none of the boxes are ticked on the strength of that session.
->
-> **0.1.0 published to npm 2026-10-02, before the write-path checks below.** Fixes go in 0.1.1; do not unpublish.
-- [ ] Leaver typeahead finds by name / domain / email; BU, manager, state, access mode and direct-report count are right. If access mode shows `—`, the attribute name is wrong: fix it in `src/offboard/fetch.ts`.
-- [ ] Record scan: the request count in the confirmation is plausible, the progress bar moves, Cancel stops it, and any table listed as *not scanned* is one that genuinely rejects the owner filter. Counts for two or three tables match an advanced find on the same owner.
-- [ ] Every other category is correct against the maker portal / admin centre: flows (an active modern flow is flagged), personal views and charts, queues owned, queue memberships, teams (owner vs Entra group), security roles, field security profiles, connection references, direct reports. Any category that errors → note the entity set or relationship name in `docs/OFFBOARDING-PLAN.md` §UNVERIFIED and fix `src/offboard/fetch.ts`.
-- [ ] Preview writes nothing: open it, read the verbatim calls, cancel, then confirm in the platform that nothing moved.
-- [ ] Apply a small plan (one table, a few records, one role, one team): each operation gets its own row, the records moved, the role and membership changed. Then a plan that includes something the connection user lacks the privilege for: it fails as one red row and the rest of the run continues.
-- [ ] Confirm the tool never touched the leaver's user record: still enabled, same access mode, same licence.
-- [ ] Exports: inventory JSON + CSV, apply report JSON + CSV, and the manual-steps list.
-
-Screenshots: `inventory.png`, `plan.png`, `report-dark.png`. Remove the synthetic-data line from `README.md`.
-
-Publish:
-```bash
-cd tools/offboarding-wizard && npm run build && npm run validate && npm publish --access public
-```
-Submit: `@simplesmoothsafe/pptb-offboarding-wizard`, categories **Users & Security, Data**.
-
-## 6. Audit Config Matrix — `tools/audit-matrix`
-
-Real-env test (two connections to sandboxes whose audit configuration differs, or one connection plus a snapshot). **Metadata writes are real and need a publish**: sandbox first.
-
-> **Status, 2026-09-21.** Loaded in ToolBox against a real environment and exercised read-only: it connects, reads and renders. No plan was applied, so every write path below is still untested and none of the boxes are ticked on the strength of that session.
->
-> **0.1.0 published to npm 2026-10-02, before the write-path checks below.** Fixes go in 0.1.1; do not unpublish.
-- [x] Matrix loads (2026-10-06, PSA-DEV Sandbox env: 1789 tables, 168 audited). Admin-centre cross-check of the count done on SL Sandbox only.
-- [x] A table from a managed solution that forbids the change shows as `locked` and cannot be ticked.
-- [x] Snapshot route only (2026-10-06, one connection): a snapshot from PSA-DEV loaded as the comparison shows `≠` exactly on the flags changed since. UNVERIFIED: a live secondary connection. Secondary connection populates the comparison column; `≠` appears exactly where the two environments really differ. Then export a snapshot from one, load it into the other, and check the same diff appears.
-- [x] Expand a table: its auditable columns load, the column counts name their scope, and a column you know is audited reads `on`.
-- [x] Org tab: no `unknown` on PSA-DEV (2026-10-06); `isreadauditenabled` and `auditretentionperiodv2` read fine. Matched the admin centre on SL Sandbox. Any field showing `unknown` names an attribute to fix in `src/audit/fetch.ts` — `isreadauditenabled` and `auditretentionperiodv2` are the two unverified ones.
-- [x] **Plan: match other env** builds a plan that never contains a locked row. Preview, cancel, and confirm nothing changed.
-- [x] Apply a small plan (one table flag, one column flag): rows report ok, then accept the scoped publish, then reload the matrix and see the new values. 2026-10-06 on PSA-DEV (`sss_ledger`), then reverted from the backup snapshot and published: 0 differences against the earlier snapshot.
-- [ ] UNVERIFIED (not tested live): a write that the environment rejects stays in the plan as a failed row and does not stop the batch.
-- [x] Exports: matrix CSV, JSON snapshot, plan CSV and plan PowerShell script generated. UNVERIFIED: the script has not been run.
-
-Screenshots: `matrix.png`, `columns.png`, `differences.png`, `preview.png`, `org-dark.png`. Remove the synthetic-data line from `README.md`.
-
-Publish:
-```bash
-cd tools/audit-matrix && npm run build && npm run validate && npm publish --access public
-```
-Submit: `@simplesmoothsafe/pptb-audit-matrix`, categories **Users & Security, Comparisons, Solutions**.
+Removed 2026-11-18 (see note at top). Do not publish new versions. Owner steps: `npm deprecate` each package and withdraw the pending marketplace submissions (Access Checker, Dependency Cleaner, Audit Config Matrix; Offboarding Wizard was never submitted).
 
 ## 7. D365 Apps Matrix — `tools/d365-apps`
 
