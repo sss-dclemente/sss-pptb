@@ -2,6 +2,8 @@
 
 The Power Platform admin center's **Environment → Resources → Dynamics 365 apps** page, for many environments at once, inside [Power Platform ToolBox](https://www.powerplatformtoolbox.com). Rows are apps, columns are environments. Each cell shows the installed version, an available update, a failed install or an install in progress. Tick cells, preview, run: installs are queued one at a time per environment, environments run in parallel, and progress is followed live. No clicking through PPAC environment by environment.
 
+No other tool in the ToolBox catalog (checked 2026-11-18) shows Dynamics 365 app versions across environments.
+
 ## What it does
 
 - **Environments**: lists every environment your account can see that has a Dataverse database. Pick the columns; the selection is remembered. The first time, the connection's own environment is used.
