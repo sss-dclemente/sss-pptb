@@ -143,7 +143,7 @@ Categorias: **não estão escritas** em [RELEASE.md](RELEASE.md). Escolher até 
 
 ### D365 Apps Matrix — `@simplesmoothsafe/pptb-d365-apps` — 0.3.3 no repo, 0.3.2 no npm
 
-Categorias: **não estão escritas** em [RELEASE.md](RELEASE.md). `minAPI` 1.2.6, `enabledForPowerPlatformAPI: true`. Uma ligação, obrigatória.
+Categorias: Environments, Comparisons, Solutions ([RELEASE.md](RELEASE.md) §7). `minAPI` 1.2.6, `enabledForPowerPlatformAPI: true`. Uma ligação, obrigatória.
 
 - **feito** — submetida. README com quatro capturas reais, incluindo `matrix-dark.png`. AI em «reviewed, tested and maintained». Teste de 2026-10-06: leitura, pré-visualização, uma atualização ponta a ponta (Storage Advisor Components 1.0.0.2 → 1.0.0.3), CSV, claro e escuro.
 - **parcial** — o probe §5 de [D365-APPS-PLAN.md](D365-APPS-PLAN.md) não fechou antes da publicação: «update available» é derivado e não foi comparado com o PPAC. Por verificar: retry, primeira instalação, vários ambientes em paralelo, script `pac` por executar, relatório Unused (no ambiente de teste quase não mapeou pacotes). O repo está em 0.3.3 (correcção do lote de contagens); o npm documentado ficou em 0.3.2.
