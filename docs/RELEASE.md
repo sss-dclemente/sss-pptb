@@ -198,6 +198,10 @@ cd tools/audit-matrix && npm run build && npm run validate && npm publish --acce
 ```
 Submit: `@simplesmoothsafe/pptb-audit-matrix`, categories **Users & Security, Comparisons, Solutions**.
 
+## 7. D365 Apps Matrix — `tools/d365-apps`
+
+Submit (or set in the reply to the review): `@simplesmoothsafe/pptb-d365-apps`, categories **Environments, Comparisons, Solutions**. Environments: an admin task done per environment, the same place as Environment Manager. Comparisons: the matrix compares app versions across environments. Solutions: each install or update imports the app's solutions, and Unused apps maps apps to solutions.
+
 ## After publish
 
 - [ ] ToolBox → Debug → *Install from npm* → each package name; smoke test once more from the published build (README, LICENSE, src are stripped at intake, only `package.json` + `dist/` ship).
