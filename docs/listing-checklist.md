@@ -109,7 +109,7 @@ Versões no `package.json` de `main`. O npm indicado é o que [RELEASE.md](RELEA
 
 ### Solution XRay — `@simplesmoothsafe/pptb-solution-xray` — 1.2.1
 
-Categorias em [RELEASE.md](RELEASE.md): Solutions, Troubleshooting, Comparisons. `minAPI` 1.0.20. Sem ligação.
+Categorias em [RELEASE.md](RELEASE.md): Solutions, Troubleshooting, Migration (como no catálogo, 2026-11-18). `minAPI` 1.0.20. Sem ligação.
 
 - **feito** — manifesto, licença MIT, ícone, sem CSP, secções de escrita (não escreve em lado nenhum), AI Assistance («reviewed and maintained»), Install e Usage.
 - **parcial** — README com `inventory-light.png` e `risk.png`, capturas reais no ToolBox com zips de amostra. Faltam `inventory-dark.png` e `install-order.png` ([SCREENSHOTS.md](SCREENSHOTS.md) §1).
