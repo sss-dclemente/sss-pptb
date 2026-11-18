@@ -1,6 +1,8 @@
 # Usability audit — show / hide what matters
 
-Scope: all 7 tools. Question: can the user hide the noise and reveal the part of the content they need?
+> **2026-11-18:** Access Checker, Dependency Cleaner, Offboarding Wizard and Audit Config Matrix were removed from this repo (npm packages deprecated; last published versions remain installable). Their per-tool sections and rows are deleted below; cross-cutting S-items stay as history.
+
+Scope: all 7 tools at the time (3 kept). Question: can the user hide the noise and reveal the part of the content they need?
 Method: read each tool's UI code, built it, ran its mocked e2e, reviewed screenshots. Fix status in §5.
 Checked per screen: collapse/expand (+ visible affordance, expand/collapse all), filters + "N of M" counts, column visibility, noise hidden by default, detail on demand, empty states + "Clear filters", persistence of toggles, ARIA.
 
@@ -23,12 +25,7 @@ Severity: **H** = user misses or misreads content / acts on rows they cannot see
 
 | Tool | Where | Bug |
 |---|---|---|
-| Audit Matrix | `audit/matrix.ts:102` | Text search only matches table fields, so `visibleColumns` column-name branch never runs: searching `telephone1` → "No tables match". |
-| Audit Matrix | `audit/write.ts:64`, `main.ts:263`, `main.ts:527` | Selected rows hidden by a filter still get planned; "Plan: match other env" ignores filters. |
 | D365 Apps | `main.ts:438-441` | "Select all updates" ignores the name filter ("Select all failed" respects it) → silently ticks hidden rows. |
-| Offboarding | `offboard/fetch.ts:378`, `plan.ts:91` | `isdefault` not selected → BU default team listed; with `teamRemove` default on, plan includes a removal Dataverse always refuses. |
-| Offboarding | `main.ts:280`, `index.html:125-130` | "Hide tables with no records" actually hides tables that could not be scanned (scan never returns 0-record tables). |
-| Offboarding | `main.ts:606` | Scan filter after scan doesn't filter the records card and collapses every open card. |
 | Solution XRay | `main.ts:183` vs `:168` | Compare header counts include root rows the list hides; when only root rows differ → false "No differences". |
 
 ## 3. Per tool
@@ -61,32 +58,6 @@ Has: text filter, Only differences, Only missing/unbound, Solution filter (survi
 | E9 | L | `styles.css:41-42`, `main.ts:287` | Only row border marks difference; badges untooltipped; "value/managed" badge on every cell. → Per-cell diff tint, badge tooltips, "Compact" (non-ok badges only, default on). |
 | E10 | L | `main.ts:1099-1120,1338`, `:118`, `:604-646`, `:256` | Preview mixes skipped rows; run log unfilterable; Flows-off mixes blocked/ready + ignores solution scope; no select-all. → "Hide skipped (n)", "Only failures", "Only ready", header checkbox. |
 
-### Access Checker
-Has: Why list `<details>` per right (all closed).
-| # | Sev | Where | Gap → fix |
-|---|---|---|---|
-| A1 | H | `styles.css:49` | Why rows have no expand cue (S1). |
-| A2 | H | `main.ts:291` | Denied / "platform disagrees" rows start closed. → `open` when `platform==="no" \|\| agrees===false`. |
-| A3 | H | `main.ts:308-322` | Roles table lists every role even with no privilege on this table. → "Hide roles with no privilege on this table" (on) + "2 of 15". |
-| A4 | M | `main.ts:276` | 10-column Roles table not narrowable to the right in question. → Verdict chips as buttons: open Why row + highlight that column. |
-| A5 | M | `main.ts:374-381` | Shares tab: 60 principals, affecting ones not first or counted. → Search, "Only shares affecting {user}", sort affecting first, count in title. |
-| A6 | M | `main.ts:416-418` | Column security unfilterable. → Name search, "Only columns with a denied right", "n of N". |
-| A7 | M | `main.ts:346-349` | Roles/Ownership/Shares/Hierarchy cards not foldable. → `foldCard` (Hierarchy closed) + expand/collapse all for Why. |
-| A8 | L | `main.ts:274`, `:334`, `:344` | "granted\*", depth names unexplained; teams one long line; notes banner always full. → `title` legends; teams "+N"; notes first line + `<details>`. |
-
-### Dependency Cleaner
-Has: Diagnose "Show present in target" (off); upgrade Resolved/Survives/Deleted fold cards (closed).
-| # | Sev | Where | Gap → fix |
-|---|---|---|---|
-| D1 | H | `main.ts:271-299,529`, `styles.css:172` | Fix/Restore diff blocks always open → Confirm bar screens away. → `<details>` "formxml diff (−N/+M)" closed + expand/collapse all. |
-| D2 | H | `main.ts:333-357` | Shell "leaving" list flat (200+ checkboxes). → Per-card search, type filter, "Only leaving" (on >30), Keep/Drop all shown, "38 of 212". |
-| D3 | M | `main.ts:263,582` | No in-results search/type filter in Diagnose/Offline (Filter box needs re-run). → Client-side find + type select, "12 of 80", Clear. |
-| D4 | M | `main.ts:582-592` | Offline ignores present-in-target toggle. → Apply `#show-safe`. |
-| D5 | M | `upgrade-ui.ts:172,221` | Dev/Release/Target sections + Runtime breaks not foldable. → `foldCard(open)`; Runtime breaks closed when >10. |
-| D6 | M | `main.ts:262`, `upgrade-ui.ts:212` | Errors cut to 3. → "Show all N" `<details>`. |
-| D7 | M | `main.ts:76,198` | Owning-solution lists hover-only. → Chip as `<button aria-expanded>` inline reveal. |
-| D8 | L | `upgrade-ui.ts:130-143,159`, `index.html:18-19` | Layers caption always shown; report-only blockers lack label; Findings export shown disabled on all tabs. → Layers disclosure (open for membership warning); "Fix by hand in Dev" badge; hide exports off Diagnose. |
-
 ### D365 Apps Matrix
 Has: name filter, "Only updates / failed", "Show not installed" (off); env picker dialog (persisted); Unused "Show all" + per-app `<details>`.
 | # | Sev | Where | Gap → fix |
@@ -100,40 +71,11 @@ Has: name filter, "Only updates / failed", "Show not installed" (off); env picke
 | P7 | M | `unused-ui.ts:49,83-116` | Closing Unused discards report; no filters; long notes always shown. → Hide/Show with cache + Re-run; verdict badges as filters; name filter; "How verdicts work" fold. |
 | P8 | L | `main.ts:210,343-349`, `:257`, `styles.css:34` | Env dialog no ticked count/type filter; preview groups unfoldable; checkbox label uses GUID; long names nowrap. → "N of M ticked" + type select; per-env `<details>`; env name in label; ellipsis + `title`. |
 
-### Offboarding Wizard
-Has: 12 inventory fold cards (records open if found, rest closed); scan filter + "hide tables with no records".
-| # | Sev | Where | Gap → fix |
-|---|---|---|---|
-| O1 | H | `main.ts:255`, `fetch.ts:325` | Flags ("active flow breaks when owner disabled") hidden inside closed cards. → Open flagged cards by default + "n flagged" warn badge. |
-| O2 | H | `main.ts:237,606-607` | Filter/re-render collapses cards; records card ignores filter (§2). → `openCats` set; "Filter tables" inside records card. |
-| O3 | H | `main.ts:548-553` | Results list every op in plan order; 1 failure in 2,000 buried. → "Failed (n) / All (n)" (Failed default), failures first, summary link. |
-| O4 | M | `main.ts:550`, `tokens.css:200-203` | Full error in nowrap badge → table overflows sideways. → `badge("failed")` + wrapping `<details>` error cell. |
-| O5 | M | `main.ts:280` | Mislabelled checkbox (§2). → "Show N tables that could not be scanned" (off), in records card. |
-| O6 | M | `main.ts:254` | Empty categories rendered as full "0" cards. → Hidden by default + one caption "Nothing held in: …". |
-| O7 | M | `fetch.ts:378`, `plan.ts:91` | BU default team (§2). → Select `isdefault`, filter + "show system teams", skip in plan. |
-| O8 | M | `main.ts:52,438-440` | Preview capped at 25 ops; skipped list unlabeled. → Per-category `<details>`, "Skipped (n)" closed, "Show all N". |
-| O9 | L | `fetch.ts:431,447,492-494`, `main.ts:319-324` | Same long note per row; raw relationship names in headers; options shown for empty categories; no per-card search >20 items. → Note once in caption; names to `title`; hide irrelevant options; per-card filter. |
-
-### Audit Config Matrix
-Has: text search, Audit on/off/all, Only differences, Layer custom/managed, Has audited/secured columns; ▸/▾ expander (`aria-expanded`).
-| # | Sev | Where | Gap → fix |
-|---|---|---|---|
-| M1 | H | `audit/matrix.ts:102` | Column-name search bug (§2). → Keep table if any loaded column matches; caption "column names match expanded tables only". |
-| M2 | H | `audit/matrix.ts:105,108` | "Has audited columns" and column-level "Only differences" silently drop unexpanded tables. → Label "(expanded tables)" + "Load columns for N visible tables" (concurrency 3, Cancel). |
-| M3 | H | `audit/fetch.ts:46,59` | Hundreds of OOB tables; "custom" = unmanaged, not publisher. → Fetch `IsCustomEntity`; Origin all/custom/Microsoft, default custom when >100 tables. |
-| M4 | H | `main.ts:96,234` | Counts ignore filters. → "42 of 913 tables shown" + Clear filters (also in empty state). |
-| M5 | M | `audit/write.ts:64`, `main.ts:248,263,527` | Hidden selections still planned (§2). → "12 selected (3 hidden)", select-all-visible header, "Plan: match (visible N)". |
-| M6 | M | — | No "Only changeable" (locked rows stay in diff view). → Toggle, off by default. |
-| M7 | M | `main.ts:403,455` | Expanded rows / loaded columns lost on Refresh and after Apply. → Keep `expanded`, reload their columns. |
-| M8 | M | `main.ts:149,167,483` | Expander tiny; rebuild drops keyboard focus. → "expand to load" cell as button; restore focus by logical name. |
-| M9 | M | `main.ts:324,378,409` | Plan, preview, results are flat lists (300-row dialog). → Summary first, per-table `foldCard`s closed, × per item; results failures first + "Only failures". |
-| M10 | L | `main.ts:136,160,185,252` | Locked reason hidden; empty comparison/Diff columns shown with no comparison. → Badge `title` with managed property; hide columns when `!matrix.other`. |
-
 ## 4. Recommended order
 
 1. **Shared pass** (one PR, every tool benefits): S1 chevron, S2 expand/collapse all, S3 fold-state memory, S4 `viewState` persistence, S5 count + Clear filters, S6 ARIA, S8 sticky columns.
 2. **Bugs** from §2 (7 items, each small and independently testable in the existing e2e mocks).
-3. **High per-tool items** that make the user miss content: X1, E2, A2/A3, D1/D2, P2, O1/O3, M2/M3.
+3. **High per-tool items** that make the user miss content: X1, E2, P2 (A/D/O/M items: tools removed).
 4. Medium/low as each tool's next minor version.
 
 ## 5. Status
@@ -145,40 +87,24 @@ Done (shared pass + §2 bugs), each covered by new e2e assertions:
 - **Wired per tool:**
   - Solution XRay: X2, fold keys, expand/collapse all, saved "Hide root-component rows".
   - EnvVar Matrix: E1, E3, E8, Clear filters, saved filters + Solution + tab.
-  - Access Checker: A1, A2, expand/collapse all on Why.
-  - Dependency Cleaner: upgrade fold keys + expand/collapse all, saved toggles, Diagnose empty-state action.
   - D365 Apps: P1, P3, count + Clear filters, saved filters.
-  - Offboarding Wizard: O1, O2, O5, O7, expand/collapse all.
-  - Audit Matrix: M1, M4, M5, saved filters.
 
 Done (per-tool High items, second round):
 
 - Solution XRay: X1 change-type + name filters, big categories start closed.
 - EnvVar Matrix: E2 Columns menu (hidden columns excluded from differences).
-- Access Checker: A3 hide roles with no privilege on the table (System Administrator always shown).
-- Dependency Cleaner: D1 folded XML diffs with line counts, D2 shell list search / type / Only leaving / bulk keep-drop.
 - D365 Apps: P2 hide empty environments + ✕ per column (hidden ticks flagged in Preview).
-- Offboarding Wizard: O3 Failed / All results, failures first; O4 long errors fold and wrap.
-- Audit Matrix: M2 "Load columns for N visible tables" + relabelled column filters; M3 Origin filter via IsCustomEntity.
 
 Done (Medium items, third round):
 
 - Solution XRay: X3 Inventory search, X4 full risk evidence with +N more, X5 labelled field diffs, X6 per-table column lists.
 - EnvVar Matrix: E4 value clamp with more/less, E5 matrix-only controls hidden in Consolidate, E6 foldable consolidate cards, E7 Missing vs Not deployed filters.
-- Access Checker: A4 verdict chips focus a right, A5 Shares search/filter, A6 Column security search/filter, A7 foldable Check cards.
-- Dependency Cleaner: D3 find + type filters, D4 Offline present-in-target, D5 foldable upgrade sections, D6 Show all errors, D7 owning solutions inline.
 - D365 Apps: P4 status badges as filters, P5 foldable run section with Only problems / Dismiss, P6 one-line cell notes, P7 Unused report kept, filterable, notes folded.
-- Offboarding Wizard: O6 empty categories hidden, O8 preview grouped with Skipped fold and no 25 cap.
-- Audit Matrix: M6 Only changeable, M7 expanded rows kept across refresh/apply, M8 expander button + focus restore, M9 grouped plan / preview / results.
 
 Done (Low items, fourth round):
 
 - Solution XRay: X7 Hide system tables (no publisher prefix, same rule as Risk) + one Other collections card; X8 install-order reasons expand.
 - EnvVar Matrix: E9 per-cell diff tint, badge tooltips, Compact badges; E10 Hide skipped in previews, run log filters, Only ready + solution scope on Flows that are off, select-all-shown.
-- Access Checker: A8 verdict / depth tooltips + Depth legend, teams +N, notes folded, no repeated single-path Why text.
-- Dependency Cleaner: D8 Layers fold per blocker, report-only fix label, Findings exports only on Diagnose.
 - D365 Apps: P8 Environments dialog ticked count + type filter, preview folds per environment, readable checkbox labels, long names cut.
-- Offboarding Wizard: O9 notes once per card, friendly headers, relevant plan options only, per-card filter; queue checkbox reason, aria-live progress.
-- Audit Matrix: M10 lock reasons on hover, no comparison columns without a comparison.
 
-All audit items are done. Fixed in passing: Audit Matrix "Compare with: none" snapping back; EnvVar endless retry on a failed solution flow read.
+All audit items are done. Fixed in passing: EnvVar endless retry on a failed solution flow read.

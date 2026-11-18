@@ -25,11 +25,7 @@ jobs:
             const TOOLS = [
               { label: 'tool:solution-xray',      name: 'SSS Solution XRay',           keys: [/solution[- ]?xray/i, /\bxray\b/i] },
               { label: 'tool:envvar-matrix',      name: 'SSS EnvVar & ConnRef Matrix', keys: [/envvar/i, /env(ironment)? var/i, /conn ?ref/i, /connection reference/i, /deploymentsettings/i] },
-              { label: 'tool:access-checker',     name: 'SSS Access Checker',          keys: [/access[- ]checker/i] },
-              { label: 'tool:dependency-cleaner', name: 'SSS Dependency Cleaner',      keys: [/dependency[- ]cleaner/i, /upgrade blocker/i, /msdyn_/i] },
               { label: 'tool:d365-apps',          name: 'SSS D365 Apps Matrix',        keys: [/d365[- ]apps/i, /unused apps/i] },
-              { label: 'tool:offboarding-wizard', name: 'SSS Offboarding Wizard',      keys: [/offboarding/i] },
-              { label: 'tool:audit-matrix',       name: 'SSS Audit Config Matrix',     keys: [/audit[- ](config|matrix)/i] },
             ];
             const LABELS = [
               { name: 'triage',      color: 'fbca04', description: 'New, not sorted by a maintainer yet' },

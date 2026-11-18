@@ -1,12 +1,14 @@
 # Lista de verificação — listagem no marketplace PPTB e badge Verified
 
+> **2026-11-18 — quatro ferramentas removidas.** Access Checker, Dependency Cleaner, Offboarding Wizard e Audit Config Matrix saíram do repositório (limite de 3 ferramentas listadas para publisher novo, sobreposição no catálogo, caminhos de escrita nunca verificados em live, um só maintainer). Pacotes npm deprecados, não despublicados: as últimas versões publicadas continuam instaláveis. Owner: `npm deprecate` dos quatro e retirar as submissões pendentes de Access Checker, Dependency Cleaner e Audit Config Matrix (Offboarding Wizard nunca foi submetida). Ficam: Solution XRay, EnvVar & ConnRef Matrix, D365 Apps Matrix.
+
 Estado lido do repositório a 2026-10-13. Nada nesta lista publica no npm nem submete ferramentas.
 
 Fontes: [PPTB-NOTES.md](PPTB-NOTES.md) §§1, 7 e 13; [RELEASE.md](RELEASE.md); [SCREENSHOTS.md](SCREENSHOTS.md); [PORT-PLAN.md](PORT-PLAN.md); [BACKLOG.md](BACKLOG.md); `package.json`, README e `docs/img/` de cada ferramenta. `npm audit` corrido no mesmo dia sobre cada `package-lock.json`.
 
 Legenda: **feito** · **parcial** · **em falta** · **owner** (passo fora do repositório: submissão, resposta à revisão, pedido do badge, métricas).
 
-As sete ferramentas: Solution XRay, EnvVar & ConnRef Matrix, Access Checker, Dependency Cleaner, D365 Apps Matrix, Offboarding Wizard, Audit Config Matrix.
+As três ferramentas mantidas: Solution XRay, EnvVar & ConnRef Matrix, D365 Apps Matrix.
 
 ## O que a plataforma exige
 
@@ -62,48 +64,44 @@ Pedido à parte, em My Tools → Get Verified, 1–2 semanas ([PPTB-NOTES.md](PP
 
 ### Prazo que esconde as ferramentas (2027-01-31)
 
-A partir do Desktop 1.2.7, `features.connections` substitui `multiConnection` e `connectionRequirement` ([PPTB-NOTES.md](PPTB-NOTES.md) §13). Depois de 2027-01-31, quem continuar nos campos legados fica Deprecated e sai do marketplace. `connections` exige `minAPI` 1.2.7 e `@pptb/validate` ≥ 1.0.4. Desktop 1.2.7 estável desde 2026-10-12: fase B feita a 2026-10-26, as 7 ferramentas usam `connections` + `minAPI` 1.2.7 e o adaptador em `tools/_shared` usa só `getConnections()`.
+A partir do Desktop 1.2.7, `features.connections` substitui `multiConnection` e `connectionRequirement` ([PPTB-NOTES.md](PPTB-NOTES.md) §13). Depois de 2027-01-31, quem continuar nos campos legados fica Deprecated e sai do marketplace. `connections` exige `minAPI` 1.2.7 e `@pptb/validate` ≥ 1.0.4. Desktop 1.2.7 estável desde 2026-10-12: fase B feita a 2026-10-26, as ferramentas usam `connections` + `minAPI` 1.2.7 e o adaptador em `tools/_shared` usa só `getConnections()`.
 
 | Ferramenta | Hoje (legado) | `connections` a publicar |
 |---|---|---|
-| Access Checker | none / required | `1` |
-| Offboarding Wizard | none / required | `1` |
 | D365 Apps Matrix | none / required, com `enabledForPowerPlatformAPI` | `1` |
 | Solution XRay | none / optional | `{ "min": 0, "max": 1 }` |
-| Audit Config Matrix | optional / required | `{ "min": 1, "max": 2 }` |
-| Dependency Cleaner | optional / required | `{ "min": 1, "max": 2 }` |
 | EnvVar & ConnRef Matrix | optional / required | `{ "min": 1, "max": 2 }` |
 
-Estado nas sete: **em falta**, de propósito, até o Desktop 1.2.7 estável.
+Estado: **feito** (fase B, 2026-10-26).
 
 ## Estado por ferramenta
 
 Versões no `package.json` de `main`. O npm indicado é o que [RELEASE.md](RELEASE.md) e o [roadmap](roadmap.md) registam como publicado a 2026-10-06 (o patch de revisão).
 
-| | XRay | EnvVar | Access | Dep. Cleaner | D365 Apps | Offboarding | Audit |
-|---|---|---|---|---|---|---|---|
-| Versão no repo | 1.2.1 | 1.6.1 | 1.2.2 | 1.5.2 | 0.3.3 | 0.2.1 | 0.2.2 |
-| npm `latest` documentado | 1.2.1 | 1.6.1 | 1.2.2 | 1.5.2 | 0.3.2 | 0.2.1 | 0.2.2 |
-| Manifesto (validador) | feito | feito | feito | feito | feito | feito | feito |
-| `displayName` sem prefixo | feito | feito | feito | feito | feito | feito | feito |
-| What this tool changes | feito | feito | feito | feito | feito | feito | feito |
-| Credits + `contributors` | feito | feito | feito | feito | feito | feito | feito |
-| Ícone SVG `currentColor` | feito | feito | feito | feito | feito | feito | feito |
-| Zero `cspExceptions` | feito | feito | feito | feito | feito | feito | feito |
-| Tema claro/escuro no código | feito | feito | feito | feito | feito | feito | feito |
-| README: instalar e usar | feito | feito | feito | feito | feito | feito | feito |
-| `## AI Assistance` | feito | feito | feito | feito | feito | feito | feito |
-| Frase «tested» | em falta | em falta | feito | em falta | feito | em falta | feito |
-| Capturas reais no README | parcial | em falta | parcial | em falta | feito | em falta | feito |
-| Par claro e escuro no README | em falta | em falta | feito | em falta | feito | em falta | feito |
-| Teste por uma pessoa | em falta | em falta | parcial | parcial | parcial | parcial | parcial |
-| Publicado no npm | feito | feito | feito | feito | parcial | feito | feito |
-| `npm audit` high/critical | feito | feito | feito | feito | feito | feito | feito |
-| `version` ≥ 1.0.0 | feito | feito | feito | feito | em falta | em falta | em falta |
-| Submissão ao marketplace | owner | owner | feito | feito | feito | owner | feito |
-| Revisão | — | — | owner | owner | owner | — | owner |
-| Métricas 2 de 3 | owner | owner | owner | owner | owner | owner | owner |
-| Pedido Get Verified | owner | owner | owner | owner | owner | owner | owner |
+| | XRay | EnvVar | D365 Apps |
+|---|---|---|---|
+| Versão no repo | 1.2.1 | 1.6.1 | 0.3.3 |
+| npm `latest` documentado | 1.2.1 | 1.6.1 | 0.3.2 |
+| Manifesto (validador) | feito | feito | feito |
+| `displayName` sem prefixo | feito | feito | feito |
+| What this tool changes | feito | feito | feito |
+| Credits + `contributors` | feito | feito | feito |
+| Ícone SVG `currentColor` | feito | feito | feito |
+| Zero `cspExceptions` | feito | feito | feito |
+| Tema claro/escuro no código | feito | feito | feito |
+| README: instalar e usar | feito | feito | feito |
+| `## AI Assistance` | feito | feito | feito |
+| Frase «tested» | em falta | em falta | feito |
+| Capturas reais no README | parcial | em falta | feito |
+| Par claro e escuro no README | em falta | em falta | feito |
+| Teste por uma pessoa | em falta | em falta | parcial |
+| Publicado no npm | feito | feito | parcial |
+| `npm audit` high/critical | feito | feito | feito |
+| `version` ≥ 1.0.0 | feito | feito | em falta |
+| Submissão ao marketplace | owner | owner | feito |
+| Revisão | — | — | owner |
+| Métricas 2 de 3 | owner | owner | owner |
+| Pedido Get Verified | owner | owner | owner |
 
 `npm audit` a 2026-10-13: 0 info, 0 low, 0 moderate, 0 high, 0 critical em cada lockfile. Saúde de bugs, à data do roadmap: 0 issues reais abertas (o digest semanal não é um defeito de ferramenta). A regra dos 10 dias só se mede no marketplace, depois da listagem.
 
@@ -124,23 +122,6 @@ Categorias: Environments, Migration, Comparisons. `minAPI` 1.2.0. Ligações: `o
 - **em falta** — não há secção Screenshots nem ficheiros em `tools/envvar-matrix/docs/img/`. A lista de [SCREENSHOTS.md](SCREENSHOTS.md) §2 (`envvars.png`, `preview.png`, `connrefs.png`, `snapshot-dark.png`) está por capturar. As caixas de teste real em [RELEASE.md](RELEASE.md) §2 estão por preencher; várias versões saíram antes dessa verificação.
 - **owner** — igual ao XRay: submissão não está registada na ronda de revisão. Sem capturas e sem teste, não há pedido de Verified que se aguente, mesmo com versão ≥ 1.0.0.
 
-### Access Checker — `@simplesmoothsafe/pptb-access-checker` — 1.2.2
-
-Categorias: Users & Security, Troubleshooting. `minAPI` 1.2.0. Uma ligação, obrigatória.
-
-- **feito** — submetida. Patch de revisão no repo e no npm 1.2.2 (capturas reais, secção do que muda, AI a dizer «reviewed, tested and maintained»). `check.png` e `check-dark.png` no README. Versão ≥ 1.0.0. `npm audit` limpo.
-- **parcial** — teste de 2026-10-06 no Sandbox PSA-DEV: pesquisa de utilizador, tabela sem papel e System Administrator, tabela da organização, Task e Note, um registo, exportações, claro e escuro. Por verificar no vivo: papéis directos misturados com papéis de equipa, profundidade entre unidades de negócio, partilhas, segurança de colunas, *Team privileges only*, hierarquia. Faltam `columns-dark.png` e, se houver dados, `shares.png`.
-- **owner** — responder à revisão / reenviar quando essas caixas fecharem ([RELEASE.md](RELEASE.md), topo). Pedido do badge e métricas (2 de 3, dispensáveis; o backlog pede 10 MAU) ficam para depois da listagem.
-
-### Dependency Cleaner — `@simplesmoothsafe/pptb-dependency-cleaner` — 1.5.2
-
-Categorias: **não estão escritas** em [RELEASE.md](RELEASE.md). Escolher até 3 da lista oficial na submissão (ou na resposta à revisão, se o formulário já as tiver). `minAPI` 1.2.0. Ligações: `optional` / `required`.
-
-- **feito** — submetida; npm 1.5.2 com o patch de revisão. Manifesto, zero CSP, versão ≥ 1.0.0, audit limpo. A frase da AI mantém-se em «reviewed and maintained», alinhada com as linhas UNVERIFIED que ainda estão no README.
-- **parcial** — Slim verificado ao ler um ambiente live (1.3.0 → 1.3.1). Cycles (1.4.0, foi no 1.5.0) **não** foi verificado em live. Upgrade blockers e Failed import continuam UNVERIFIED no README. O apply do Slim 1.3.1 está por repetir.
-- **em falta** — `diagnose.png`, `confirm.png`, `slim.png` e `cycles.png` estão em `tools/dependency-cleaner/docs/img/` e **não** entram no README, portanto o `readmeUrl` não os mostra. Nenhuma captura escura.
-- **owner** — responder à revisão depois de ligar as capturas no README, de as completar com um tema escuro, e de fechar o teste live (Cycles incluído).
-
 ### D365 Apps Matrix — `@simplesmoothsafe/pptb-d365-apps` — 0.3.3 no repo, 0.3.2 no npm
 
 Categorias: **não estão escritas** em [RELEASE.md](RELEASE.md). `minAPI` 1.2.6, `enabledForPowerPlatformAPI: true`. Uma ligação, obrigatória.
@@ -150,27 +131,8 @@ Categorias: **não estão escritas** em [RELEASE.md](RELEASE.md). `minAPI` 1.2.6
 - **em falta** — versão 0.x. O badge Verified não aceita abaixo de 1.0.0. O roadmap (E6) deixa esse 1.0 para 2027.
 - **owner** — publicar 0.3.3 (o registo só vê `latest`) e responder à revisão. O pedido de Verified espera pelo 1.0.0, pelas métricas e pelo fecho do que o README ainda marca como não verificado.
 
-### Offboarding Wizard — `@simplesmoothsafe/pptb-offboarding-wizard` — 0.2.1
-
-Categorias: Users & Security, Data. `minAPI` 1.2.0. Uma ligação, obrigatória. Escreve propriedade e membros: o primeiro plano aplicado é num sandbox.
-
-- **feito** — manifesto, secção do que muda (o pré-visualizar nomeia o ambiente e diz que não há undo na ferramenta), AI em «reviewed and maintained», Install e Usage.
-- **parcial** — a 2026-09-21 foi carregada contra um ambiente real, só leitura. Nenhum plano foi aplicado ([RELEASE.md](RELEASE.md) §5).
-- **em falta** — sem capturas (`inventory.png`, `plan.png`, `report-dark.png`). Versão 0.2.1, abaixo de 1.0.0.
-- **owner** — submissão não está na ronda «changes requested». Testar as escritas, capturar, e só então subir a 1.0 e pedir o badge. O roadmap (E6) agenda esse 1.0 para o primeiro semestre de 2027.
-
-### Audit Config Matrix — `@simplesmoothsafe/pptb-audit-matrix` — 0.2.2
-
-Categorias: Users & Security, Comparisons, Solutions. `minAPI` 1.2.0. Ligações: `optional` / `required`.
-
-- **feito** — submetida; npm 0.2.2. As cinco capturas de [SCREENSHOTS.md](SCREENSHOTS.md) §5 estão no README, com `org-dark.png`. AI em «reviewed, tested and maintained». A 2026-10-06, no PSA-DEV: matriz, bloqueados, snapshot, colunas, organização, plano, apply de uma tabela e de uma coluna, reversão pela cópia de segurança, exportações.
-- **parcial** — por verificar: uma escrita que o ambiente recusa (deve ficar como linha falhada), o script PowerShell por correr, e uma segunda ligação live (o diff testado foi contra snapshot).
-- **em falta** — versão 0.2.2. Bloqueia o badge até ao 1.0 (roadmap E6).
-- **owner** — responder à revisão. Get Verified depois do 1.0.0 e das métricas.
-
 ## O que falta, por ordem
 
-1. **Owner, listagem.** Nas quatro já revistas (Access Checker, Dependency Cleaner, D365 Apps, Audit Matrix): fechar o teste que ainda está aberto, pôr as capturas em falta no README de `main`, e responder à revisão. Na Dependency Cleaner, referenciar no README as quatro imagens que já estão em `docs/img/`. Publicar D365 Apps 0.3.3.
-2. **Owner, as outras três.** Confirmar se XRay, EnvVar e Offboarding chegaram a ser submetidas. EnvVar e Offboarding não têm capturas. XRay não tem o par escuro nem a ordem de instalação. Offboarding não tem o caminho de escrita testado.
-3. **Verified, quando a listagem existir.** Versão ≥ 1.0.0 falta em Audit Matrix, D365 Apps e Offboarding (roadmap E6, 2027). Nas quatro que já estão em 1.x, o pedido em My Tools → Get Verified ainda depende das capturas, do teste declarado e de 2 das 3 métricas — ou do pedido de dispensa. O backlog usa 10 MAU como marca.
-4. **Antes de 2027-01-31.** Migrar as sete para `features.connections` quando o Desktop 1.2.7 estiver estável. Até lá ficam nos campos legados, com o adaptador partilhado a preferir a API nova se o host a tiver.
+1. **Owner, remoção (2026-11-18).** `npm deprecate` de access-checker, dependency-cleaner, offboarding-wizard e audit-matrix; retirar em powerplatformtoolbox.com as submissões pendentes de Access Checker, Dependency Cleaner e Audit Config Matrix.
+2. **Owner, listagem.** D365 Apps (já revista): fechar o teste aberto, publicar 0.3.3, responder à revisão. Confirmar se XRay e EnvVar chegaram a ser submetidas; EnvVar não tem capturas, XRay não tem o par escuro nem a ordem de instalação.
+3. **Verified, quando a listagem existir.** Versão ≥ 1.0.0 falta em D365 Apps (roadmap E6, 2027). XRay e EnvVar já em 1.x: o pedido em My Tools → Get Verified depende das capturas, do teste declarado e de 2 das 3 métricas — ou do pedido de dispensa. O backlog usa 10 MAU como marca.
