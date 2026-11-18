@@ -2,6 +2,8 @@
 
 Environment variables and connection references across environments, as one matrix, inside [Power Platform ToolBox](https://www.powerplatformtoolbox.com). See what is missing, what differs, copy values between environments with a preview, and export `deploymentSettings.json`.
 
+**How it differs from Environment Variable Manager** (also in the ToolBox catalog): that tool views, edits and exports environment variables in one environment, by solution. This one compares environments side by side, covers connection references (bind, consolidate, clean up) as well, and reads and writes `deploymentSettings.json`.
+
 ## What it does
 
 - **Matrix** — rows are environment variables (or connection references), columns are environments. Each cell shows the effective value and where it comes from: `value` (a value row exists), `default` (definition default only), `missing` (neither), `absent` (definition not in that environment); hover a badge for what it means. Rows with differences or gaps are marked, and each cell whose value differs from the first visible column is tinted. **Compact** (on by default, remembered) shows only the badges that need attention: `value`, `bound` and `managed` are hidden, `default`, `missing`, `absent`, `unbound`, duplicate value rows and connector differences stay. The header checkbox selects or clears the rows shown.
@@ -41,9 +43,18 @@ The tool never creates, changes or deletes environment variable definitions, nev
 
 Nothing else.
 
+## Screenshots
+
+**Owner to-do: not captured yet.** Real ToolBox captures still to take (per `docs/SCREENSHOTS.md` §2), saved under `tools/envvar-matrix/docs/img/` and linked here with raw.githubusercontent.com `main` URLs:
+
+- `envvars.png` (light): Environment variables tab, two environment columns, a value missing in one, a value that differs, a masked secret, the filter row.
+- `preview.png` (light): copy preview with update, create and skip rows, skipped secrets.
+- `connrefs.png` (light): Connection references tab, bound and unbound references with connector and connection.
+- `snapshot-dark.png` (dark): a snapshot loaded as a third column, labelled as a snapshot.
+
 ## Install
 
-**From the ToolBox marketplace** — search for "EnvVar & ConnRef Matrix" once listed.
+**From the ToolBox marketplace** — search for "EnvVar & ConnRef Matrix".
 
 **From npm (ToolBox Debug menu)** — Settings → enable *Show Debug Menu* → Debug → *Install from npm* → `@simplesmoothsafe/pptb-envvar-matrix`.
 

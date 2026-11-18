@@ -259,10 +259,17 @@ const solN = await zip({
 const files = { "SolL.zip": solL, "SolO.zip": solO, "SolM.zip": solM, "SolN.zip": solN, "SolK.zip": solK, "SolA_1_0_0_0.zip": solA1, "SolA_1_1_0_0_managed.zip": solA2, "SolB_2_0_0_0_managed.zip": solB, "SolC_1_0_0_0_managed.zip": solC, "SolD.zip": solD, "SolE.zip": solE, "SolF.zip": solF, "SolF_copy.zip": solF, "SolG.zip": solG, "SolH_1_0.zip": solH1, "SolH_1_1.zip": solH2, "SolI_1.zip": solI1, "SolI_2.zip": solI2, "SolJ_1.zip": solJ1, "SolJ_2.zip": solJ2 };
 for (const [n, b] of Object.entries(files)) writeFileSync(resolve(OUT, n), b);
 
-const { page, assert, finish, errors } = await launchPage(import.meta.url, { width: 1280, height: 900 });
+const { browser, page, errors, assert, finish } = await launchPage(import.meta.url, { width: 1280, height: 900 });
 await page.goto("file://" + TOOL + "/dist/index.html");
 
 assert((await page.textContent("#host-mode")).includes("Standalone"), "standalone mode detected");
+// live mode without a connection: disabled with a hint, offline use unaffected
+await page.waitForFunction(() => document.querySelector("#live-conn")?.textContent === "Not connected");
+assert(
+  (await page.$eval("#live-check", (b) => b.disabled)) && (await page.$eval("#live-load", (b) => b.disabled)) && (await page.$eval("#live-solution", (s) => s.disabled)) && (await page.$eval("#live", (e) => e.classList.contains("is-disabled"))),
+  "live: no connection -> picker and buttons disabled",
+);
+assert((await page.textContent("#live-hint")).includes("Connect to an environment") && (await page.textContent("#live-hint")).includes("Offline analysis needs no connection"), "live: no connection -> hint");
 
 // load A1, A2, B, C
 const [chooser] = await Promise.all([page.waitForEvent("filechooser"), page.click("#btn-add")]);
@@ -680,8 +687,8 @@ assert((await tableNames()).join() === "abc_thing" && (await invCardOf("Tables")
 await page.uncheck("#inv-hide-sys");
 
 // ---- install order reasons (X8): "(+N)" reveals the full list inline ----
-await addOne("SolM.zip", 3);
-await addOne("SolN.zip", 4);
+await addOne("SolM.zip", 4); // SolA, SolL, SolO already loaded
+await addOne("SolN.zip", 5);
 await page.click('.tab[data-tab="order"]');
 const edgeCell = "#order-body .reasons"; // the only edge: SolM -> SolN
 const reasonCount = () => page.$eval(edgeCell, (el) => el.firstChild.textContent.split("; ").length);
@@ -806,6 +813,121 @@ await checkDebugLog(page, assert, {
     return readFileSync(await dl.path(), "utf8");
   },
 });
+
+// ---- live mode (zip vs environment) against a mocked ToolBox host ----
+// Mock: one connection, getSolutions with internal / msdyn / hidden / managed rows, ExportSolution returning SolA 1.0.0.0
+// unmanaged as base64. `shape` switches the result shape the tool must accept (the real one is UNVERIFIED).
+const LIVE_MOCK = ({ b64 }) => {
+  const m = (window.__mock = { calls: [], notes: [], listeners: [], shape: "plain", conns: [{ id: "c1", name: "Dev", url: "https://dev.crm4.dynamics.com", environment: "Dev" }, null], release: null });
+  const file = { "@odata.context": "https://dev.crm4.dynamics.com/api/data/v9.2/$metadata#Microsoft.Dynamics.CRM.ExportSolutionResponse", ExportSolutionFile: b64 };
+  window.toolboxAPI = {
+    connections: { getConnections: async () => m.conns },
+    utils: { showNotification: async (n) => void m.notes.push(n), getCurrentTheme: async () => "light" },
+    events: { on: (cb) => void m.listeners.push(cb) },
+  };
+  m.emit = (event) => m.listeners.forEach((cb) => cb(null, { event }));
+  const row = (uniquename, ismanaged, extra = {}) => ({ solutionid: uniquename + "-id", uniquename, friendlyname: uniquename + " Display", version: "1.0.0.0", ismanaged, isvisible: true, ...extra });
+  window.dataverseAPI = {
+    getSolutions: async (cols) => {
+      m.calls.push({ op: "getSolutions", cols });
+      return { value: [row("Default", false), row("Active", false), row("System", true), row("msdynce_Sales", true), row("Hidden", false, { isvisible: false }), row("ThirdParty", true), row("SolA", false)] };
+    },
+    execute: async (req) => {
+      m.calls.push({ op: "execute", req });
+      if (m.shape === "slow") await new Promise((r) => (m.release = r));
+      if (m.shape === "bad") return { foo: 1 };
+      if (m.shape === "wrapped") return { data: JSON.stringify(file) };
+      return file;
+    },
+  };
+};
+const lpage = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+lpage.on("pageerror", (e) => errors.push("live pageerror: " + e.message));
+lpage.on("console", (msg) => {
+  if (msg.type() === "error") errors.push("live console: " + msg.text());
+});
+await lpage.addInitScript(LIVE_MOCK, { b64: Buffer.from(solA1).toString("base64") });
+await lpage.goto("file://" + TOOL + "/dist/index.html");
+await lpage.waitForFunction(() => document.querySelector("#live-conn")?.textContent === "Connected: Dev" && !document.querySelector("#live-solution").disabled);
+assert(true, "live: connection shown");
+const liveOpts = await lpage.$$eval("#live-solution option", (os) => os.map((o) => [o.value, o.disabled]));
+assert(JSON.stringify(liveOpts) === '[["SolA",false],["ThirdParty",true]]', "live: picker hides Default/Active/System/msdyn*/invisible, managed listed disabled: " + JSON.stringify(liveOpts));
+assert((await lpage.$eval("#live-check", (b) => b.disabled)) && (await lpage.textContent("#live-hint")).includes("Add the zip"), "live: check disabled until a zip is loaded");
+const [lch] = await Promise.all([lpage.waitForEvent("filechooser"), lpage.click("#btn-add")]);
+await lch.setFiles([resolve(OUT, "SolA_1_1_0_0_managed.zip")]);
+await lpage.waitForFunction(() => !document.querySelector("#live-check").disabled);
+assert((await lpage.$eval("#live-zip", (s) => s.selectedOptions[0].textContent)).startsWith("SolA Display v1.1.0.0"), "live: zip picker preselects the loaded zip");
+await lpage.click("#live-check");
+await lpage.waitForFunction(() => document.querySelectorAll("#solution-list li:not(.empty)").length === 2 && document.querySelector('.tab[data-tab="compare"]').getAttribute("aria-selected") === "true");
+const lcalls = await lpage.evaluate(() => window.__mock.calls.filter((c) => c.op === "execute"));
+assert(lcalls.length === 1 && JSON.stringify(lcalls[0].req) === '{"operationName":"ExportSolution","operationType":"action","parameters":{"SolutionName":"SolA","Managed":false}}', "live: ExportSolution action request: " + JSON.stringify(lcalls[0]?.req));
+const lside = await lpage.textContent("#solution-list");
+assert(lside.includes("env: Dev") && (await lpage.getAttribute("#solution-list .badge[title='https://dev.crm4.dynamics.com']", "title")) !== null, "live: exported solution tagged in the sidebar");
+assert((await lpage.$eval("#cmp-a", (s) => s.selectedOptions[0].textContent)).includes("env: Dev") && (await lpage.$eval("#cmp-b", (s) => s.selectedOptions[0].textContent)).includes("v1.1.0.0"), "live: Compare A = environment, B = zip");
+const lcmp = await lpage.textContent("#cmp-body");
+assert(lcmp.includes("upgrade") && lcmp.includes("sss_project.sss_budget") && lcmp.includes("sss_task"), "live: compare env -> zip shows the changes");
+const lres = await lpage.textContent("#live-result");
+assert(/over SolA v1\.0\.0\.0 in Dev/.test(lres) && lres.includes("upgrade") && /risk \d+ (Low|Medium|High)/.test(lres), "live: check summary in the panel: " + lres);
+await lpage.click('#live-result button[data-open="risk"]');
+assert((await lpage.$eval("#risk-baseline", (s) => s.selectedOptions[0].textContent)).includes("env: Dev"), "live: Upgrade risk baseline = environment");
+const lrisk = await lpage.textContent("#risk-body");
+assert(lrisk.includes("Columns removed since baseline") && lrisk.includes("Managed / unmanaged mismatch") && lrisk.includes("over SolA 1.0.0.0"), "live: risk scored with the environment as baseline");
+await lpage.screenshot({ path: resolve(OUT, "20-live-check.png") });
+await lpage.click("#live-check");
+await lpage.waitForTimeout(200);
+assert((await lpage.evaluate(() => window.__mock.calls.filter((c) => c.op === "execute").length)) === 1, "live: second check reuses the loaded export");
+
+// wrapped JSON-text result + managed export, through "Load only" and the debug log
+await checkDebugLog(lpage, assert, {
+  tool: "solution-xray",
+  act: async () => {
+    await lpage.evaluate(() => (window.__mock.shape = "wrapped"));
+    await lpage.check("#live-managed");
+    await lpage.click("#live-load");
+    await lpage.waitForFunction(() => document.querySelectorAll("#solution-list li:not(.empty)").length === 3);
+  },
+  readSaved: async (click) => {
+    const [dl] = await Promise.all([lpage.waitForEvent("download"), click()]);
+    return readFileSync(await dl.path(), "utf8");
+  },
+  expect: [
+    [/dataverseAPI\.execute .*"ExportSolution"/, "records the ExportSolution call"],
+    [/\[live\] ExportSolution result shape "\{data: string\(\d+\)\}"/, "records the result shape (no data)"],
+    [/\[live\] ExportSolutionFile decoded: \d+ bytes/, "records the decoded size"],
+  ],
+});
+const lmanaged = await lpage.evaluate(() => window.__mock.calls.filter((c) => c.op === "execute").at(-1).req.parameters);
+assert(lmanaged.Managed === true, "live: 'Export as managed' sends Managed: true");
+await lpage.uncheck("#live-managed");
+
+// cancel: busy state with spinner, buttons disabled, late result discarded
+await lpage.click("#btn-clear");
+await lpage.evaluate(() => (window.__mock.shape = "slow"));
+await lpage.click("#live-load");
+await lpage.waitForSelector("#live-busy:not([hidden])");
+assert((await lpage.textContent("#live-busy-text")).startsWith("Exporting SolA") && (await lpage.$eval("#live-load", (b) => b.disabled)) && (await lpage.$("#live-busy .spinner")) !== null, "live: spinner + elapsed time while exporting, buttons disabled");
+await lpage.click("#live-cancel");
+assert((await lpage.$eval("#live-busy", (e) => e.hidden)) && !(await lpage.$eval("#live-load", (b) => b.disabled)), "live: cancel restores the panel at once");
+await lpage.evaluate(() => window.__mock.release());
+await lpage.waitForTimeout(300);
+assert((await lpage.$$("#solution-list li:not(.empty)")).length === 0, "live: result arriving after cancel is discarded");
+
+// unknown result shape: clear error, nothing added
+await lpage.evaluate(() => (window.__mock.shape = "bad"));
+await lpage.click("#live-load");
+await lpage.waitForFunction(() => window.__mock.notes.some((n) => n.title === "Export failed"));
+const lbad = await lpage.evaluate(() => window.__mock.notes.find((n) => n.title === "Export failed").body);
+assert(lbad.includes("no ExportSolutionFile") && lbad.includes("{foo: number}") && (await lpage.$$("#solution-list li:not(.empty)")).length === 0, "live: unknown result shape -> error with the shape, nothing loaded: " + lbad);
+assert((await lpage.evaluate(() => window.__mock.calls.filter((c) => c.op === "execute").length)) === 4 && (await lpage.evaluate(() => window.__mock.calls.every((c) => c.op === "getSolutions" || c.req.operationName === "ExportSolution"))), "live: only getSolutions and ExportSolution are called");
+
+// disconnect: back to the disabled state
+await lpage.evaluate(() => {
+  window.__mock.conns = [null, null];
+  window.__mock.emit("connection:updated");
+});
+await lpage.waitForFunction(() => document.querySelector("#live-conn")?.textContent === "Not connected");
+assert((await lpage.$eval("#live-check", (b) => b.disabled)) && (await lpage.textContent("#live-hint")).includes("Connect to an environment"), "live: disconnect disables the panel");
+await lpage.close();
 
 // ---- post-import live path: mocked host with one connection; only the read-only importjobs query may be sent ----
 {

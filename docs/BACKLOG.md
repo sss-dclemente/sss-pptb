@@ -2,7 +2,7 @@
 
 Not built. Ordered by expected value. v1 = offline zip analysis only.
 
-## v1.1 — Live mode (zip vs environment)
+## v1.1 — Live mode (zip vs environment) — done, unreleased (ExportSolution result shape not yet verified against a live environment; Extras open)
 
 Goal: pre-import check without leaving ToolBox. Pick a connection, pull the deployed solution, run the same pipeline, diff against the zip you are about to import.
 
