@@ -891,6 +891,13 @@ const LIVE_MOCK = ({ b64 }) => {
       if (m.shape === "wrapped") return { data: JSON.stringify(file) };
       return file;
     },
+    // dependency lookups: sss_invoice exists, ext_thing answers an empty list, a metadata 404 is read as missing
+    queryData: async (q) => {
+      m.calls.push({ op: "queryData", q });
+      if (q.includes("'sss_invoice'")) return { value: [{ LogicalName: "sss_invoice" }] };
+      if (q.includes("'ext_thing'")) throw new Error("Request failed with status code 404");
+      return { value: [] };
+    },
   };
 };
 const lpage = await browser.newPage({ viewport: { width: 1280, height: 900 } });
@@ -928,6 +935,25 @@ await lpage.screenshot({ path: resolve(OUT, "20-live-check.png") });
 await lpage.click("#live-check");
 await lpage.waitForTimeout(200);
 assert((await lpage.evaluate(() => window.__mock.calls.filter((c) => c.op === "execute").length)) === 1, "live: second check reuses the loaded export");
+
+// missing dependencies resolved against the environment (Inventory card, read-only lookups)
+const [dch] = await Promise.all([lpage.waitForEvent("filechooser"), lpage.click("#btn-add")]);
+await dch.setFiles([resolve(OUT, "SolC_1_0_0_0_managed.zip")]);
+await lpage.click('.tab[data-tab="inventory"]');
+await lpage.evaluate(() => {
+  const sel = document.querySelector("#inv-select");
+  sel.value = [...sel.options].find((o) => o.textContent.startsWith("SolC")).value;
+  sel.dispatchEvent(new Event("change"));
+});
+await lpage.evaluate(() => (document.querySelector("#inv-deps-check").closest("details").open = true));
+await lpage.click("#inv-deps-check");
+await lpage.waitForFunction(() => document.querySelector("#inv-deps-status")?.textContent.includes("missing here,"));
+const dstat = await lpage.textContent("#inv-deps-status");
+const drows = await lpage.$$eval("#inv-body table", (ts) => [...ts].find((t) => t.textContent.includes("Needed by")).innerText);
+assert(dstat.startsWith("1 missing here, 1 present") && /sss_invoice[^\n]*present/.test(drows) && /ext_thing[^\n]*missing here/.test(drows), "live deps: present / missing here per row: " + dstat);
+const dq = await lpage.evaluate(() => window.__mock.calls.filter((c) => c.op === "queryData").map((c) => c.q));
+assert(dq.length === 2 && dq.every((q) => q.startsWith("EntityDefinitions?$select=LogicalName&$filter=LogicalName eq '")), "live deps: one EntityDefinitions lookup per required table: " + JSON.stringify(dq));
+await lpage.click('button[aria-label="Remove SolC"]');
 
 // wrapped JSON-text result + managed export, through "Load only" and the debug log
 await checkDebugLog(lpage, assert, {
@@ -970,7 +996,7 @@ await lpage.click("#live-load");
 await lpage.waitForFunction(() => window.__mock.notes.some((n) => n.title === "Export failed"));
 const lbad = await lpage.evaluate(() => window.__mock.notes.find((n) => n.title === "Export failed").body);
 assert(lbad.includes("no ExportSolutionFile") && lbad.includes("{foo: number}") && (await lpage.$$("#solution-list li:not(.empty)")).length === 0, "live: unknown result shape -> error with the shape, nothing loaded: " + lbad);
-assert((await lpage.evaluate(() => window.__mock.calls.filter((c) => c.op === "execute").length)) === 4 && (await lpage.evaluate(() => window.__mock.calls.every((c) => c.op === "getSolutions" || c.req.operationName === "ExportSolution"))), "live: only getSolutions and ExportSolution are called");
+assert((await lpage.evaluate(() => window.__mock.calls.filter((c) => c.op === "execute").length)) === 4 && (await lpage.evaluate(() => window.__mock.calls.every((c) => c.op === "getSolutions" || c.op === "queryData" || c.req.operationName === "ExportSolution"))), "live: only getSolutions, ExportSolution and read-only queries are called");
 
 // disconnect: back to the disabled state
 await lpage.evaluate(() => {

@@ -22,11 +22,15 @@ export interface LiveContext {
   /** Point Compare (A = env, B = zip) and Upgrade risk (zip over env) at the pair and open Compare. */
   check: (env: SolutionInfo, zip: SolutionInfo) => void;
   openTab: (tab: string) => void;
+  /** The connection changed (or was resolved at start). */
+  onConnection: () => void;
 }
 
 export interface LiveUi {
   /** Re-sync the zip picker and summary with the loaded solutions (call after every sidebar render). */
   refresh: () => void;
+  /** Current primary connection, null when not connected. */
+  connection: () => LiveConnection | null;
 }
 
 const mb = (n: number): string => `${(n / 1024 / 1024).toFixed(1)} MB`;
@@ -208,6 +212,7 @@ export function mountLive(root: HTMLElement, ctx: LiveContext): LiveUi {
       envSolutions = [];
       listError = null;
       dlog("info", "live", conn ? `connection: ${conn.conn.name}` : "no connection");
+      ctx.onConnection();
       if (conn) await loadList();
     }
     fillSolutions();
@@ -309,5 +314,6 @@ export function mountLive(root: HTMLElement, ctx: LiveContext): LiveUi {
       fillZips();
       update();
     },
+    connection: () => conn,
   };
 }

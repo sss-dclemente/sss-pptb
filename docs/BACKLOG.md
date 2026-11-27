@@ -14,7 +14,7 @@ Flow:
 5. Pre-import report = *Compare* (env → zip) + *Upgrade risk* with env as baseline. One button: "Check zip against environment".
 
 Extras once live:
-- Resolve the zip's `MissingDependencies` against the environment: query `solutioncomponent` / `dependency` tables (or `RetrieveMissingDependencies` via `execute`) to turn "declared missing" into "actually missing here".
+- ~~Resolve the zip's `MissingDependencies` against the environment~~ done (2026-11-27, unreleased): Inventory card *Check in <env>*, one read-only lookup per required component (`src/xray/deps-live.ts`). `RetrieveMissingDependencies` not used: it needs the solution already in the target.
 - Use `dataverseAPI.getImportJobStatus` after a `deploySolution` triggered elsewhere (see post-import tab).
 
 Risks: ExportSolution on large solutions takes minutes and returns tens of MB over IPC; add a spinner and size warning. Managed export of an unmanaged solution needs `Managed: true`.
