@@ -312,6 +312,18 @@ let risk = await page.textContent("#risk-body");
 assert(/\d+ \/ 100/.test(risk), "risk score rendered");
 assert(risk.includes("Unmanaged solution") && risk.includes("System tables included") && risk.includes("connection references not in this solution") && risk.includes("no default and no value"), "risk factors A1");
 const scoreA1 = Number(risk.match(/(\d+) \/ 100/)[1]);
+// weights: unmanaged ×0 drops its 10 pts, saved, "Why?" explains the rule, reset restores
+const scoreNow = async () => Number((await page.textContent("#risk-body .score .num")).match(/\d+/)[0]);
+await page.click('button[popovertarget="why-unmanaged"]');
+assert(await page.isVisible("#why-unmanaged") && (await page.textContent("#why-unmanaged")).includes("10 pts when the solution is unmanaged"), "why popover shows the rule");
+await page.keyboard.press("Escape");
+await page.fill("#w-unmanaged", "0");
+await page.press("#w-unmanaged", "Enter");
+assert((await scoreNow()) === scoreA1 - 10 && (await page.inputValue("#w-unmanaged")) === "0", "weight 0 removes unmanaged points, factor still listed");
+assert((await page.evaluate(() => localStorage.getItem("sss-view:solution-xray"))).includes('"riskWeights":{"unmanaged":0}'), "weights persisted");
+assert(await page.isVisible("#risk-reset"), "reset shown with custom weights");
+await page.click("#risk-reset");
+assert((await scoreNow()) === scoreA1 && !(await page.isVisible("#risk-reset")), "reset restores default weights");
 await page.selectOption("#risk-select", { index: 1 });
 await page.selectOption("#risk-baseline", { index: 1 }); // index 0 = "none"
 risk = await page.textContent("#risk-body");
