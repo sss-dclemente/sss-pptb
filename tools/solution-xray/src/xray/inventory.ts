@@ -76,7 +76,12 @@ export function buildInventory(s: SolutionInfo): Inventory {
         detail: `${e.type ?? "?"} · default: ${e.hasDefault ? "yes" : "no"} · value: ${e.hasValue ? "yes" : "no"}`,
       })),
     },
-    { key: "pluginAssemblies", label: "Plugin assemblies", count: s.pluginAssemblies.length, items: s.pluginAssemblies.map((p) => ({ name: p.name, detail: p.detail })) },
+    {
+      key: "pluginAssemblies",
+      label: "Plugin assemblies",
+      count: s.pluginAssemblies.length,
+      items: s.pluginAssemblies.map((p) => ({ name: p.name, detail: [p.sizeBytes == null ? null : fmtBytes(p.sizeBytes), p.detail].filter(Boolean).join(" · ") || undefined })),
+    },
     {
       key: "pluginSteps",
       label: "Plugin steps",
@@ -84,6 +89,9 @@ export function buildInventory(s: SolutionInfo): Inventory {
       items: s.pluginSteps.map((p) => ({ name: p.name, detail: [p.message, p.entity, p.stage ? `stage ${p.stage}` : null].filter(Boolean).join(" · ") })),
     },
     { key: "customControls", label: "Custom controls (PCF)", count: s.customControls.length, items: s.customControls },
+    { key: "templates", label: "Document templates", count: s.templates.length, items: s.templates },
+    { key: "entityMaps", label: "Column mappings", count: s.entityMaps.length, items: s.entityMaps },
+    { key: "entityDataProviders", label: "Virtual table data providers", count: s.entityDataProviders.length, items: s.entityDataProviders },
     ...Object.entries(s.otherCollections).map(([k, n]) => ({ key: `other:${k}`, label: k, count: n, items: [] })),
   ];
 

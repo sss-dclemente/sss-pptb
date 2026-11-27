@@ -49,20 +49,20 @@ ${attrs.map(([a, t]) => `        <attribute PhysicalName="${a}"><Type>${t}</Type
       <SavedQueries><savedqueries>${"<savedquery><savedqueryid>{1}</savedqueryid></savedquery>".repeat(views)}</savedqueries></SavedQueries>
     </Entity>`;
 
-const customizationsXml = ({ entities = "", workflows = "", extra = "" }) => `<?xml version="1.0" encoding="utf-8"?>
+const customizationsXml = ({ entities = "", workflows = "", extra = "", templates = "", entityMaps = "", dataProviders = "" }) => `<?xml version="1.0" encoding="utf-8"?>
 <ImportExportXml version="9.2.24" SolutionPackageVersion="9.2" languagecode="1033" generatedBy="CrmLive">
   <Entities>${entities}
   </Entities>
   <Roles><Role name="SSS User" id="{aaa}" /></Roles>
   <Workflows>${workflows}</Workflows>
   <FieldSecurityProfiles />
-  <Templates />
-  <EntityMaps />
+  <Templates>${templates}</Templates>
+  <EntityMaps>${entityMaps}</EntityMaps>
   <EntityRelationships />
   <OrganizationSettings />
   <optionsets><optionset Name="sss_status" localizedName="Status" /></optionsets>
   <CustomControls />
-  <EntityDataProviders />
+  <EntityDataProviders>${dataProviders}</EntityDataProviders>
   ${extra}
   <Languages><Language>1033</Language></Languages>
 </ImportExportXml>`;
@@ -91,11 +91,15 @@ const solA1 = await zip({
   "customizations.xml": customizationsXml({
     entities: entity("sss_project", "Project", [["sss_name", "nvarchar"], ["sss_budget", "money"]]) + entity("account", "Account", [["sss_tier", "picklist"]], 2, 3),
     workflows: flowWf(FLOW_ID, "NotifyPM", []),
+    templates: `<Template><Title>Account Summary</Title><AssociatedEntityTypeCode>account</AssociatedEntityTypeCode><FileName>/Templates/AccountSummary.docx</FileName></Template>`,
+    entityMaps: `<EntityMap><EntitySource>account</EntitySource><EntityTarget>contact</EntityTarget><AttributeMaps><AttributeMap><AttributeSource>name</AttributeSource><AttributeTarget>sss_name</AttributeTarget></AttributeMap></AttributeMaps></EntityMap>`,
+    dataProviders: `<EntityDataProvider Name="SSS SQL Provider"><DataSourceLogicalName>sss_sqlsource</DataSourceLogicalName></EntityDataProvider>`,
     extra: `<environmentvariabledefinitions><environmentvariabledefinition schemaname="sss_apikey"><displayname>API Key</displayname><type>100000005</type></environmentvariabledefinition></environmentvariabledefinitions>
-    <SolutionPluginAssemblies><PluginAssembly FullName="SSS.Plugins, Version=1.0.0.0, Culture=neutral, PublicKeyToken=abc" /></SolutionPluginAssemblies>
+    <SolutionPluginAssemblies><PluginAssembly FullName="SSS.Plugins, Version=1.0.0.0, Culture=neutral, PublicKeyToken=abc"><FileName>/PluginAssemblies/SSSPlugins-1A2B/SSSPlugins.dll</FileName></PluginAssembly></SolutionPluginAssemblies>
     <SdkMessageProcessingSteps><SdkMessageProcessingStep Name="SSS.Plugins.OnCreate" PluginTypeName="SSS.Plugins.OnCreate"><SdkMessageId>Create</SdkMessageId><PrimaryEntity>sss_project</PrimaryEntity><Stage>40</Stage></SdkMessageProcessingStep></SdkMessageProcessingSteps>`,
   }),
   [`Workflows/NotifyPM-${FLOW_ID}.json`]: flowJson(["sss_sharedoffice365"]),
+  "PluginAssemblies/SSSPlugins-1A2B/SSSPlugins.dll": new Uint8Array(2048),
   "[Content_Types].xml": "<Types/>",
 });
 
@@ -283,6 +287,8 @@ assert(inv.includes("SolA") && inv.includes("1.0.0.0") && inv.includes("Unmanage
 assert(inv.includes("sss_project") && inv.includes("2 columns"), "inventory entity rows");
 assert(inv.includes("Cloud flow") && inv.includes("sss_sharedoffice365"), "flow conn refs parsed");
 assert(inv.includes("Plugin steps") && inv.includes("Missing dependencies"), "plugins + missing deps sections");
+assert(inv.includes("2.0 KB · SSS.Plugins, Version=1.0.0.0"), "plugin assembly DLL size");
+assert(inv.includes("Account Summary") && inv.includes("account → contact") && inv.includes("1 column maps") && inv.includes("SSS SQL Provider"), "templates, column mappings, data providers listed");
 await page.screenshot({ path: resolve(OUT, "01-inventory-light.png") });
 
 // compare A1 -> A2
