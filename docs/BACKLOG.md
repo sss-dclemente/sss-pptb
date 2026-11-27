@@ -36,7 +36,7 @@ Merge with XRay: highlight importjob failures against the zip's inventory (same 
 ## Smaller items
 
 - Deployment settings scaffold: export `deploymentSettings.json` skeleton (connection references + environment variables found in the zip) for `pac solution import --settings-file`.
-- Compare: option to ignore version-only changes in forms/views (needs form XML hashing rather than counts).
+- ~~Compare: option to ignore version-only changes in forms/views~~ — done: per-form / per-view XML fingerprint, *Ignore version-only changes* strips `IntroducedVersion`.
 - [x] Inventory: parse `Workflows/*.json` for flow triggers and connector list.
 - Inventory: parse `PluginAssemblies` folder for DLL sizes.
 - Inventory: itemise collections currently only counted (`Templates`, `EntityMaps`, `customapis`, `EntityDataProviders`).

@@ -339,7 +339,7 @@ function currentDiff(): SolutionDiff | null {
   const a = selected("#cmp-a");
   const b = selected("#cmp-b");
   if (!a || !b) return null;
-  return diffSolutions(a, b);
+  return diffSolutions(a, b, { ignoreVersionOnly: $<HTMLInputElement>("#cmp-ignore-ver").checked });
 }
 
 const CHANGES: DiffEntry["change"][] = ["added", "changed", "removed"];
@@ -357,7 +357,7 @@ function visibleDiff(d: SolutionDiff) {
   const entries = base.filter((e) => changes.includes(e.change) && (!q || [e.name, e.category, e.detail ?? ""].some((t) => t.toLowerCase().includes(q))));
   const count = (c: DiffEntry["change"]) => entries.filter((e) => e.change === c).length;
   return {
-    filter: { hideRootComponents: hideRoot, changes, name },
+    filter: { hideRootComponents: hideRoot, ignoreVersionOnly: $<HTMLInputElement>("#cmp-ignore-ver").checked, changes, name },
     entries,
     total: base.length,
     hiddenRoot: d.entries.length - base.length,
@@ -683,7 +683,7 @@ async function exportJson(name: string, payload: unknown): Promise<void> {
 }
 
 function wire(): void {
-  persistControls("solution-xray", ["cmp-hide-root"]);
+  persistControls("solution-xray", ["cmp-hide-root", "cmp-ignore-ver"]);
   cmpFilters = persistControls("solution-xray", ["cmp-added", "cmp-changed", "cmp-removed", "cmp-q"]);
   invFind = persistControls("solution-xray", ["inv-q"]);
   persistControls("solution-xray", ["inv-hide-sys"]); // separate: "Clear search" must not show system tables again
@@ -716,7 +716,7 @@ function wire(): void {
   $("#inv-hide-sys").addEventListener("change", renderInventory);
   $("#cmp-a").addEventListener("change", renderCompare);
   $("#cmp-b").addEventListener("change", renderCompare);
-  for (const id of ["#cmp-hide-root", "#cmp-added", "#cmp-changed", "#cmp-removed"]) $(id).addEventListener("change", renderCompare);
+  for (const id of ["#cmp-hide-root", "#cmp-ignore-ver", "#cmp-added", "#cmp-changed", "#cmp-removed"]) $(id).addEventListener("change", renderCompare);
   $("#cmp-q").addEventListener("input", renderCompare);
   $("#risk-select").addEventListener("change", renderRisk);
   $("#risk-baseline").addEventListener("change", renderRisk);

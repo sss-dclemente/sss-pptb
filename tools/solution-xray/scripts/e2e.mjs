@@ -219,6 +219,27 @@ const solIFiles = (behavior) => ({
 const solI1 = await zip(solIFiles(0));
 const solI2 = await zip(solIFiles(2));
 
+// version-only changes (P2-4a): Main form + view differ only in IntroducedVersion, Info form has a real layout change
+const solVFiles = (version, infoLayout) => ({
+  "solution.xml": solutionXml({ name: "SolV", version, managed: 1, roots: [{ type: 1, schemaName: "sss_v" }] }),
+  "customizations.xml": customizationsXml({
+    entities: `
+    <Entity>
+      <Name LocalizedName="V" OriginalName="V">sss_v</Name>
+      <EntityInfo><entity Name="sss_v"><attributes /></entity></EntityInfo>
+      <FormXml><forms type="main">
+        <systemform><formid>{F1}</formid><IntroducedVersion>${version}</IntroducedVersion><form><tabs /></form><LocalizedNames><LocalizedName description="Main" languagecode="1033" /></LocalizedNames></systemform>
+        <systemform><formid>{F2}</formid><IntroducedVersion>1.0.0.0</IntroducedVersion><form><tabs>${infoLayout}</tabs></form><LocalizedNames><LocalizedName description="Info" languagecode="1033" /></LocalizedNames></systemform>
+      </forms></FormXml>
+      <SavedQueries><savedqueries>
+        <savedquery><savedqueryid>{Q1}</savedqueryid><IntroducedVersion>${version}</IntroducedVersion><fetchxml /><LocalizedNames><LocalizedName description="Active V" languagecode="1033" /></LocalizedNames></savedquery>
+      </savedqueries></SavedQueries>
+    </Entity>`,
+  }),
+});
+const solV1 = await zip(solVFiles("1.0.0.0", "<tab name='a' />"));
+const solV2 = await zip(solVFiles("1.1.0.0", "<tab name='a' /><tab name='b' />"));
+
 // compare filters (X1): SolJ v2 changes one column type, removes a table and adds a 25-column table
 // -> Column category 27 rows (starts closed), Table 2 rows (starts open), root rows hidden by default
 const BIG_COLS = Array.from({ length: 24 }, (_, i) => [`sss_c${String(i).padStart(2, "0")}`, "nvarchar"]);
@@ -261,7 +282,7 @@ const solN = await zip({
   "customizations.xml": customizationsXml({}),
 });
 
-const files = { "SolL.zip": solL, "SolO.zip": solO, "SolM.zip": solM, "SolN.zip": solN, "SolK.zip": solK, "SolA_1_0_0_0.zip": solA1, "SolA_1_1_0_0_managed.zip": solA2, "SolB_2_0_0_0_managed.zip": solB, "SolC_1_0_0_0_managed.zip": solC, "SolD.zip": solD, "SolE.zip": solE, "SolF.zip": solF, "SolF_copy.zip": solF, "SolG.zip": solG, "SolH_1_0.zip": solH1, "SolH_1_1.zip": solH2, "SolI_1.zip": solI1, "SolI_2.zip": solI2, "SolJ_1.zip": solJ1, "SolJ_2.zip": solJ2 };
+const files = { "SolL.zip": solL, "SolO.zip": solO, "SolM.zip": solM, "SolN.zip": solN, "SolK.zip": solK, "SolA_1_0_0_0.zip": solA1, "SolA_1_1_0_0_managed.zip": solA2, "SolB_2_0_0_0_managed.zip": solB, "SolC_1_0_0_0_managed.zip": solC, "SolD.zip": solD, "SolE.zip": solE, "SolF.zip": solF, "SolF_copy.zip": solF, "SolG.zip": solG, "SolH_1_0.zip": solH1, "SolH_1_1.zip": solH2, "SolI_1.zip": solI1, "SolI_2.zip": solI2, "SolJ_1.zip": solJ1, "SolJ_2.zip": solJ2, "SolV_1.zip": solV1, "SolV_2.zip": solV2 };
 for (const [n, b] of Object.entries(files)) writeFileSync(resolve(OUT, n), b);
 
 const { browser, page, errors, assert, finish } = await launchPage(import.meta.url, { width: 1280, height: 900 });
@@ -548,6 +569,19 @@ assert(!(await page.$eval("#cmp-hide-root", (e) => e.checked)), "Clear filters u
 cmpI = await page.textContent("#cmp-body");
 assert(cmpI.includes("Root component") && cmpI.includes("sss_only") && (await chipText()) === "+0 ~1 -0" && !(await page.$("#cmp-body .count-caption")), "Clear filters shows the root-component row");
 await page.click("#cmp-hide-root"); // back to the default
+
+// ---- compare: ignore version-only changes in forms / views ----
+await page.reload();
+await addOne("SolV_1.zip", 1);
+await addOne("SolV_2.zip", 2);
+await page.click('.tab[data-tab="compare"]');
+const changedNames = () => page.$$eval("#cmp-body tr.diff-changed .mono", (els) => els.map((e) => e.textContent).join(","));
+assert((await page.$eval("#cmp-ignore-ver", (e) => e.checked)) && (await changedNames()) === "sss_v: Info", "ignore version-only on by default: only the real form change: " + (await changedNames()));
+await page.click("#cmp-ignore-ver");
+assert((await changedNames()) === "sss_v: Info,sss_v: Main,sss_v: Active V", "ignore version-only off: IntroducedVersion-only form + view listed: " + (await changedNames()));
+const [dlv] = await Promise.all([page.waitForEvent("download"), page.click("#cmp-export")]);
+assert(JSON.parse(readFileSync(await dlv.path(), "utf8")).filter.ignoreVersionOnly === false, "export JSON records ignoreVersionOnly");
+await page.click("#cmp-ignore-ver"); // back to the default
 
 // ---- compare filters: change types, name, category folds, export, clear, persistence ----
 await page.reload(); // fresh fold memory
