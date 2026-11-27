@@ -300,6 +300,8 @@ function parseCustomizationsXml(doc: Document, info: SolutionInfo): void {
   info.pluginAssemblies = children(root.querySelector(":scope > SolutionPluginAssemblies"), "PluginAssembly").map((p) => ({
     name: (attr(p, "FullName") ?? "").split(",")[0],
     detail: attr(p, "FullName") ?? undefined,
+    fileName: text(p, ":scope > FileName"),
+    sizeBytes: null,
   }));
 
   info.pluginSteps = children(root.querySelector(":scope > SdkMessageProcessingSteps"), "SdkMessageProcessingStep").map(
@@ -320,6 +322,19 @@ function parseCustomizationsXml(doc: Document, info: SolutionInfo): void {
   info.fieldSecurityProfiles = children(root.querySelector(":scope > FieldSecurityProfiles"), "FieldSecurityProfile").map(
     (f) => ({ name: attr(f, "name") ?? "" }),
   );
+
+  info.templates = children(root.querySelector(":scope > Templates"), "Template").map((t) => ({
+    name: text(t, ":scope > Title") ?? text(t, ":scope > Name") ?? "",
+    detail: [text(t, ":scope > AssociatedEntityTypeCode"), text(t, ":scope > FileName")].filter(Boolean).join(" · ") || undefined,
+  }));
+  info.entityMaps = children(root.querySelector(":scope > EntityMaps"), "EntityMap").map((m) => ({
+    name: `${text(m, ":scope > EntitySource") ?? "?"} → ${text(m, ":scope > EntityTarget") ?? "?"}`,
+    detail: `${children(m.querySelector(":scope > AttributeMaps"), "AttributeMap").length} column maps`,
+  }));
+  info.entityDataProviders = children(root.querySelector(":scope > EntityDataProviders"), "EntityDataProvider").map((d) => ({
+    name: attr(d, "Name") ?? text(d, ":scope > Name") ?? "",
+    detail: text(d, ":scope > DataSourceLogicalName") ?? undefined,
+  }));
 
   for (const child of Array.from(root.children)) {
     if (KNOWN_COLLECTIONS.has(child.tagName)) continue;
@@ -386,6 +401,9 @@ export function emptySolution(fileName: string, sizeBytes: number): SolutionInfo
     pluginSteps: [],
     customControls: [],
     fieldSecurityProfiles: [],
+    templates: [],
+    entityMaps: [],
+    entityDataProviders: [],
     otherCollections: {},
     warnings: [],
   };
@@ -439,6 +457,12 @@ export async function parseSolutionZip(data: Uint8Array | ArrayBuffer, fileName:
     const guid = ff.name.match(/-([0-9a-f-]{36})\.json$/i)?.[1]?.toLowerCase();
     const wf = info.workflows.find((w) => w.id && w.id.replace(/[{}]/g, "").toLowerCase() === guid);
     if (wf) Object.assign(wf, parseFlowJson(await ff.async("string")));
+  }
+
+  // PluginAssemblies/<Name>-<GUID>/<Name>.dll; FileName in customizations.xml has a leading slash
+  for (const pa of info.pluginAssemblies) {
+    const f = pa.fileName ? find(pa.fileName.replace(/^\//, "")) : undefined;
+    if (f) pa.sizeBytes = (await f.async("uint8array")).byteLength;
   }
 
   inferCustomTypeNames(info, files.map((f) => f.name));

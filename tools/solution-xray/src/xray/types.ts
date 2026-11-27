@@ -104,6 +104,13 @@ export interface NamedItem {
   detail?: string;
 }
 
+export interface PluginAssemblyInfo extends NamedItem {
+  /** Zip path of the DLL, from customizations.xml FileName */
+  fileName: string | null;
+  /** Uncompressed DLL size; null when the file is not in the zip */
+  sizeBytes: number | null;
+}
+
 export interface SolutionInfo {
   fileName: string;
   sizeBytes: number;
@@ -127,10 +134,13 @@ export interface SolutionInfo {
   canvasApps: NamedItem[];
   connectionReferences: ConnectionReferenceInfo[];
   environmentVariables: EnvironmentVariableInfo[];
-  pluginAssemblies: NamedItem[];
+  pluginAssemblies: PluginAssemblyInfo[];
   pluginSteps: PluginStepInfo[];
   customControls: NamedItem[];
   fieldSecurityProfiles: NamedItem[];
+  templates: NamedItem[];
+  entityMaps: NamedItem[];
+  entityDataProviders: NamedItem[];
   /** Any component collection under customizations.xml we did not model explicitly: element name -> count */
   otherCollections: Record<string, number>;
   warnings: string[];

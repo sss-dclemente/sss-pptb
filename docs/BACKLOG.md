@@ -38,8 +38,9 @@ Merge with XRay: highlight importjob failures against the zip's inventory (same 
 - Deployment settings scaffold: export `deploymentSettings.json` skeleton (connection references + environment variables found in the zip) for `pac solution import --settings-file`.
 - ~~Compare: option to ignore version-only changes in forms/views~~ — done: per-form / per-view XML fingerprint, *Ignore version-only changes* strips `IntroducedVersion`.
 - [x] Inventory: parse `Workflows/*.json` for flow triggers and connector list.
-- Inventory: parse `PluginAssemblies` folder for DLL sizes.
-- Inventory: itemise collections currently only counted (`Templates`, `EntityMaps`, `customapis`, `EntityDataProviders`).
+- [x] Inventory: parse `PluginAssemblies` folder for DLL sizes.
+- [x] Inventory: itemise `Templates`, `EntityMaps`, `EntityDataProviders` (were excluded, not counted).
+- Inventory: itemise `customapis` (currently excluded from the inventory).
 - Install order: when the same unique name is loaded twice, prefer the highest version instead of first loaded.
 - Persist last-used tab and diff options via `toolboxAPI.settings`.
 - Real screenshots for README; request Verified badge after v1.0.0 and 10 MAU.
