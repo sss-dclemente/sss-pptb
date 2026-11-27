@@ -72,7 +72,12 @@ const flowWf = (id, name, refs) => `
       <JsonFileName>/Workflows/${name}-${id}.json</JsonFileName>
       <Type>1</Type><Category>5</Category><PrimaryEntity>none</PrimaryEntity>
     </Workflow>`;
-const flowJson = (refs) => JSON.stringify({ properties: { connectionReferences: Object.fromEntries(refs.map((r, i) => [`shared_${i}`, { connection: { connectionReferenceLogicalName: r } }])) } });
+const flowJson = (refs) => JSON.stringify({
+  properties: {
+    connectionReferences: Object.fromEntries(refs.map((r, i) => [`shared_office365_${i}`, { connection: { connectionReferenceLogicalName: r }, api: { name: "shared_office365" } }])),
+    definition: { triggers: { When_a_row_is_added: { type: "OpenApiConnectionWebhook", inputs: { host: { apiId: "/providers/Microsoft.PowerApps/apis/shared_commondataserviceforapps", operationId: "SubscribeWebhookTrigger" } } } } },
+  },
+});
 
 async function zip(files) {
   const z = new JSZip();
@@ -282,6 +287,7 @@ const inv = await page.textContent("#inv-body");
 assert(inv.includes("SolA") && inv.includes("1.0.0.0") && inv.includes("Unmanaged"), "inventory summary");
 assert(inv.includes("sss_project") && inv.includes("2 columns"), "inventory entity rows");
 assert(inv.includes("Cloud flow") && inv.includes("sss_sharedoffice365"), "flow conn refs parsed");
+assert(inv.includes("trigger: When_a_row_is_added (commondataserviceforapps: SubscribeWebhookTrigger)") && inv.includes("connectors: office365"), "flow trigger + connectors parsed");
 assert(inv.includes("Plugin steps") && inv.includes("Missing dependencies"), "plugins + missing deps sections");
 await page.screenshot({ path: resolve(OUT, "01-inventory-light.png") });
 
