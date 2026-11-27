@@ -12,24 +12,32 @@
 - O mapa anterior listava só 4 ferramentas — há 7.
 
 ## Priority order
-> Atualizado 2026-11-27 (run diária). P0→P3 ganha ao calendário. Size: S ≤ ½ dia · M 1–2 dias · L ~1 semana · XL > 1 semana. **owner** = só o Duarte (ToolBox desktop, ambiente real, npm/marketplace).
+> Atualizado 2026-11-27 (run diária). Ids = [tracker](https://claude.ai/artifact/7stwLM9eQbuHoLLkY6L6ze). P0→P3 ganha ao calendário. Size: S ≤ ½ dia · M 1–2 dias · L ~1 semana · XL > 1 semana. **owner** = só o Duarte (ToolBox desktop, ambiente real, npm/marketplace).
 
 | P | Id | Item | Area | Size | Quem | Estado |
 |---|---|---|---|---|---|---|
-| P0 | E1a | Teste real XRay / EnvVar / D365 ([RELEASE.md](RELEASE.md) §1–3) | Release | M | owner | por fazer |
-| P0 | E1b | Capturas reais em falta ([SCREENSHOTS.md](SCREENSHOTS.md) §1–2) | Docs | S | owner | por fazer |
-| P0 | E1c | D365 Apps: responder à revisão do marketplace (submetida, não listada) | Release | S | owner | por fazer |
-| P1 | E2 | d365-apps: probe §5 do [D365-APPS-PLAN.md](D365-APPS-PLAN.md) em ambiente live | Verificação | S | owner | por fazer |
-| P1 | E4x | XRay live: resolver `MissingDependencies` do zip contra o ambiente (`RetrieveMissingDependencies`) | XRay | M | agente | por fazer |
-| P1 | E7a | XRay: scaffold `deploymentSettings.json` (connection references + env vars do zip) | XRay | S | agente | por fazer |
-| P1 | E1d | Pedido Get Verified (depois de E1a, E1b e 2 de 3 métricas) | Release | S | owner | gate |
-| P2 | E7b | XRay Compare: ignorar alterações só de versão em forms/views (hash do XML) | XRay | M | agente | por fazer |
-| P2 | E7c | XRay Inventory: triggers e conectores de `Workflows/*.json`; tamanho das DLL em `PluginAssemblies` | XRay | S | agente | por fazer |
-| P2 | E7d | XRay Inventory: listar `Templates`, `EntityMaps`, `EntityDataProviders` (hoje só contados) | XRay | S | agente | por fazer |
-| P2 | E7e | XRay Risk: pesos editáveis (`toolboxAPI.settings`) + popover "porquê" por fator | XRay | M | agente | por fazer |
-| P2 | E3 | Métricas de adoção (downloads npm / MAU) | Release | S | owner | gate: pergunta 4 |
-| P3 | E8 | Inter-tool invocation (`pptb.config.json`) | Plataforma | L | agente | por fazer |
-| P3 | E10 | Ponte com dataverse-ops-mcp **[inferido]** | Plataforma | XL | owner | gate: decisão |
+| P0 | P0-1 | D365 Apps 1.0.0: responder à revisão "changes requested" (submetida, não listada) | Marketplace | S | owner | por fazer |
+| P0 | P0-2 | D365 Apps: fechar probe §5 do [D365-APPS-PLAN.md](D365-APPS-PLAN.md) (debug log on; agente corrige `src/apps/api.ts`) | Quality | M | owner corre, agente corrige | por fazer |
+| P0 | P0-3 | Confirmar `npm deprecate` ×4 e retirar submissões pendentes (Access Checker, Dependency Cleaner, Audit Config Matrix) | Marketplace | S | owner | por fazer |
+| P0 | P0-4 | Rever e fazer merge do Dependabot #77 (3 dirs, 4 updates) | Quality | S | agente | em curso (#77 aberto) |
+| P1 | P1-1 | EnvVar Matrix: capturas reais ([SCREENSHOTS.md](SCREENSHOTS.md) §2) + secção Screenshots | Listing | M | owner captura, agente liga | por fazer |
+| P1 | P1-2 | EnvVar Matrix: teste por uma pessoa ([RELEASE.md](RELEASE.md) §2) | Quality | L | owner | por fazer |
+| P1 | P1-3 | XRay: `inventory-dark.png` + `install-order.png` ([SCREENSHOTS.md](SCREENSHOTS.md) §1) | Listing | S | owner captura, agente liga | por fazer |
+| P1 | P1-4 | XRay: teste real incl. live mode (`ExportSolution` shape) e Post-import ([RELEASE.md](RELEASE.md) §1) | Quality | M | owner corre, agente corrige | por fazer |
+| P1 | P1-5 | Métricas de adoção sem telemetria (#57, draft desde 2026-10-13) | Growth | S | agente + owner | em curso (#57) |
+| P2 | P2-1 | Get Verified ×3 (ou pedir dispensa de métricas) | Marketplace | S | owner | gate: P0-1, P1-1…P1-5 |
+| P2 | P2-2 | XRay live: `MissingDependencies` do zip → "falta mesmo aqui" (`RetrieveMissingDependencies` / `dependency`) | Features | M | agente | por fazer |
+| P2 | P2-4a | XRay Compare: ignorar alterações só de versão em forms/views (hash do XML) | Features | M | agente | por fazer |
+| P2 | P2-4b | XRay Inventory: triggers e conectores de `Workflows/*.json` (hoje só connection refs) | Features | S | agente | por fazer |
+| P2 | P2-4c | XRay Inventory: tamanho das DLL de plug-in; listar `Templates`, `EntityMaps`, `EntityDataProviders` (hoje só contados) | Features | S | agente | por fazer |
+| P2 | P2-4d | XRay Risk: pesos editáveis (`toolboxAPI.settings`) + popover "porquê" por fator | Features | M | agente | por fazer |
+| P2 | P2-3 | Post LinkedIn + vídeo curto por release ("SSS ALM suite") | Growth | M | owner | por fazer |
+| P3 | P3-1 | E8 Inter-tool invocation (`pptb.config.json`) | Features | L | agente | gate: fluxo real que o peça |
+| P3 | P3-2 | E10 Mesmos diagnósticos via MCP (dataverse-ops-mcp) **[inferido]** | Features | XL | agente | gate: pedido de utilizador |
+| P3 | P3-3 | 4.ª ferramenta quando o limite de 3 levantar | Catalog | XL | owner decide | gate: limite do publisher |
+| P3 | P3-4 | Gratuito para sempre vs pro; funil DocGen/consultoria | Commercial | S | owner | por fazer |
+
+Cortado: scaffold `deploymentSettings.json` no XRay — EnvVar Matrix já importa/exporta (`tools/envvar-matrix/src/matrix/settings.ts`).
 
 ### Done
 - **Done on 2026-11-18**: E4 XRay live mode (#70, release #73) · E5 Post-import tab (#69, release #73) · E6 d365-apps 1.0.0 (#67) · npm 1.3.1 / 1.6.2 / 1.0.0 (#74, #76) · E1 publicar d365-apps (0.3.3 ultrapassado por 1.0.0, #76) · remoção de 4 ferramentas (#68).
@@ -42,15 +50,15 @@
 3. Usar as ferramentas como funil para DocGen / consultoria **[inferido]**.
 
 ## Now (Q4 2026)
-- **E1 Marketplace**: concluir passos do owner da revisão (E1a–E1d). ~~publicar d365-apps 0.3.3~~ (1.0.0 no npm 2026-11-18).
+- **E1 Marketplace**: concluir passos do owner da revisão (P0-1, P0-3, P1-*, P2-1). ~~publicar d365-apps 0.3.3~~ (1.0.0 no npm 2026-11-18).
 - **E2 Verificação live**: d365-apps (probe §5 do D365-APPS-PLAN não correu antes da publicação). ~~Cycles~~ (Dependency Cleaner removida 2026-11-18).
 - **E3 Telemetria mínima de adoção** (downloads npm / MAU do PPTB) para chegar aos 10 MAU **[inferido]**.
 
 ## Next (Q1–Q2 2027)
-- ~~**E4 XRay v1.1 Live mode**~~ — feito (XRay 1.3.0, #70/#73); falta E4x (MissingDependencies resolvidas).
+- ~~**E4 XRay v1.1 Live mode**~~ — feito (XRay 1.3.0, #70/#73); falta P2-2 (MissingDependencies resolvidas).
 - ~~**E5 XRay v1.1 Post-import tab**~~ — feito (#69/#73).
 - ~~**E6 1.0 de d365-apps**~~ — feito (1.0.0, #67).
-- **E7 Smaller items**: E7a–E7e na Priority order.
+- **E7 Smaller items**: P2-4a…d na Priority order.
 
 ## Later (H2 2027)
 - **E8 Inter-tool invocation** (`pptb.config.json`) entre ferramentas SSS.
