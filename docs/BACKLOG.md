@@ -41,7 +41,6 @@ Merge with XRay: highlight importjob failures against the zip's inventory (same 
 - Inventory: parse `PluginAssemblies` folder for DLL sizes.
 - Inventory: itemise collections currently only counted (`Templates`, `EntityMaps`, `customapis`, `EntityDataProviders`).
 - Install order: when the same unique name is loaded twice, prefer the highest version instead of first loaded.
-- Risk: user-editable weights (settings API `toolboxAPI.settings`) and a "why" popover per factor.
 - Persist last-used tab and diff options via `toolboxAPI.settings`.
 - Real screenshots for README; request Verified badge after v1.0.0 and 10 MAU.
 - Inter-tool invocation (`pptb.config.json`): accept a zip path as prefill so other SSS tools can hand over a solution.

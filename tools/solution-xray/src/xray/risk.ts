@@ -10,7 +10,16 @@ export interface RiskFactor {
   /** Every item behind the factor (the UI shows the first few and expands the rest). */
   evidence: string[];
   advice: string;
+  /** How the base points are counted, for the "Why?" popover. */
+  rule: string;
+  /** Points before weighting (already capped at the unweighted max). */
+  base: number;
+  /** User multiplier (1 = default, 0 = ignore); `points` and `max` are already weighted. */
+  weight: number;
 }
+
+/** Per-factor multipliers keyed by factor id; a missing id means 1. */
+export type RiskWeights = Record<string, number>;
 
 export type RiskBand = "Low" | "Medium" | "High" | "Critical";
 
@@ -39,15 +48,17 @@ export function hasPublisherPrefix(schema: string | null): boolean {
 }
 
 /**
- * Upgrade risk score: 0-100, sum of capped factors. Heuristic, not a verdict.
+ * Upgrade risk score: 0-100, sum of capped factors times the user weights. Heuristic, not a verdict.
  * @param s solution being imported
  * @param baseline optional previous version (or the currently deployed export) of the same solution
  */
-export function scoreRisk(s: SolutionInfo, baseline?: SolutionInfo | null): RiskReport {
+export function scoreRisk(s: SolutionInfo, baseline?: SolutionInfo | null, weights: RiskWeights = {}): RiskReport {
   const f: RiskFactor[] = [];
-  const add = (factor: Omit<RiskFactor, "points"> & { points: number }) => {
-    factor.points = cap(factor.points, factor.max);
-    if (factor.points > 0) f.push(factor);
+  const add = (factor: Omit<RiskFactor, "base" | "weight">) => {
+    const base = cap(factor.points, factor.max);
+    if (base <= 0) return; // weight 0 keeps the factor listed (points 0) so it can be turned back on
+    const w = weights[factor.id] ?? 1;
+    f.push({ ...factor, base, weight: w, points: Math.round(base * w), max: Math.round(factor.max * w) });
   };
   const prefix = s.publisher.prefix;
 
@@ -57,6 +68,7 @@ export function scoreRisk(s: SolutionInfo, baseline?: SolutionInfo | null): Risk
   const builtin = s.missingDependencies.filter((d) => isBuiltinSolution(d.required.solutionName)).length;
   add({
     id: "missing-deps-active",
+    rule: "15 pts per missing dependency, cap 30",
     label: "Missing dependencies on unmanaged components (Active)",
     points: active.length * 15,
     max: 30,
@@ -66,6 +78,7 @@ export function scoreRisk(s: SolutionInfo, baseline?: SolutionInfo | null): Risk
   });
   add({
     id: "missing-deps",
+    rule: "8 pts per missing dependency, cap 30",
     label: "Missing dependencies on other solutions",
     points: external.length * 8,
     max: 30,
@@ -74,6 +87,7 @@ export function scoreRisk(s: SolutionInfo, baseline?: SolutionInfo | null): Risk
   });
   add({
     id: "missing-deps-system",
+    rule: "2 pts per missing dependency, cap 10",
     label: "Missing dependencies on System / first-party solutions",
     points: builtin * 2,
     max: 10,
@@ -87,6 +101,7 @@ export function scoreRisk(s: SolutionInfo, baseline?: SolutionInfo | null): Risk
   if (!s.managed) {
     add({
       id: "unmanaged",
+      rule: "10 pts when the solution is unmanaged",
       label: "Unmanaged solution",
       points: 10,
       max: 10,
@@ -99,6 +114,7 @@ export function scoreRisk(s: SolutionInfo, baseline?: SolutionInfo | null): Risk
   const sysFull = s.rootComponents.filter((rc) => rc.type === 1 && rc.behavior === 0 && !!rc.schemaName && !hasPublisherPrefix(rc.schemaName));
   add({
     id: "system-tables-full",
+    rule: "5 pts per system table with behavior 0, cap 15",
     label: "System tables included with all subcomponents",
     points: sysFull.length * 5,
     max: 15,
@@ -109,6 +125,7 @@ export function scoreRisk(s: SolutionInfo, baseline?: SolutionInfo | null): Risk
   // 4. Plugins
   add({
     id: "plugins",
+    rule: "5 pts for any assembly + 1 pt per step, cap 15",
     label: "Plugin assemblies and steps",
     points: (s.pluginAssemblies.length ? 5 : 0) + s.pluginSteps.length,
     max: 15,
@@ -122,6 +139,7 @@ export function scoreRisk(s: SolutionInfo, baseline?: SolutionInfo | null): Risk
   for (const w of s.workflows) for (const r of w.connectionReferences) if (!shipped.has(r.toLowerCase())) orphanRefs.add(r);
   add({
     id: "flow-conn-refs",
+    rule: "5 pts per connection reference not shipped, cap 15",
     label: "Cloud flows using connection references not in this solution",
     points: orphanRefs.size * 5,
     max: 15,
@@ -131,6 +149,7 @@ export function scoreRisk(s: SolutionInfo, baseline?: SolutionInfo | null): Risk
   const flows = s.workflows.filter((w) => w.category === 5);
   add({
     id: "flows",
+    rule: "1 pt per cloud flow, cap 8",
     label: "Cloud flows in solution",
     points: flows.length,
     max: 8,
@@ -142,6 +161,7 @@ export function scoreRisk(s: SolutionInfo, baseline?: SolutionInfo | null): Risk
   const emptyVars = s.environmentVariables.filter((e) => !e.hasDefault && !e.hasValue);
   add({
     id: "env-vars",
+    rule: "3 pts per variable, cap 12",
     label: "Environment variables with no default and no value",
     points: emptyVars.length * 3,
     max: 12,
@@ -152,6 +172,7 @@ export function scoreRisk(s: SolutionInfo, baseline?: SolutionInfo | null): Risk
   // 7. Canvas apps
   add({
     id: "canvas",
+    rule: "3 pts per canvas app, cap 9",
     label: "Canvas apps",
     points: s.canvasApps.length * 3,
     max: 9,
@@ -162,6 +183,7 @@ export function scoreRisk(s: SolutionInfo, baseline?: SolutionInfo | null): Risk
   // 8. Size
   add({
     id: "size",
+    rule: "5 pts above 30 tables, 10 above 100",
     label: "Solution size",
     points: s.entities.length > 100 ? 10 : s.entities.length > 30 ? 5 : 0,
     max: 10,
@@ -177,6 +199,7 @@ export function scoreRisk(s: SolutionInfo, baseline?: SolutionInfo | null): Risk
     : [];
   add({
     id: "prefix",
+    rule: "2 pts per component, cap 10",
     label: "Custom components with a different publisher prefix",
     points: foreign.length * 2,
     max: 10,
@@ -192,6 +215,7 @@ export function scoreRisk(s: SolutionInfo, baseline?: SolutionInfo | null): Risk
     const removedOther = d.entries.filter((e) => e.change === "removed" && e.category !== "Table" && e.category !== "Column" && e.category !== "Root component");
     add({
       id: "removed-tables",
+      rule: "15 pts per removed table, cap 30",
       label: "Tables removed since baseline",
       points: removedTables.length * 15,
       max: 30,
@@ -200,6 +224,7 @@ export function scoreRisk(s: SolutionInfo, baseline?: SolutionInfo | null): Risk
     });
     add({
       id: "removed-columns",
+      rule: "5 pts per removed column, cap 20",
       label: "Columns removed since baseline",
       points: removedColumns.length * 5,
       max: 20,
@@ -208,6 +233,7 @@ export function scoreRisk(s: SolutionInfo, baseline?: SolutionInfo | null): Risk
     });
     add({
       id: "removed-other",
+      rule: "2 pts per removed component, cap 10",
       label: "Other components removed since baseline",
       points: removedOther.length * 2,
       max: 10,
@@ -220,6 +246,7 @@ export function scoreRisk(s: SolutionInfo, baseline?: SolutionInfo | null): Risk
         add({
           id: "version",
           label: "Version lower than baseline",
+          rule: "10 pts for a downgrade",
           points: 10,
           max: 10,
           evidence,
@@ -229,6 +256,7 @@ export function scoreRisk(s: SolutionInfo, baseline?: SolutionInfo | null): Risk
         add({
           id: "version",
           label: "Version not incremented",
+          rule: "3 pts for the same version",
           points: 3,
           max: 10,
           evidence,
@@ -238,6 +266,7 @@ export function scoreRisk(s: SolutionInfo, baseline?: SolutionInfo | null): Risk
         add({
           id: "version",
           label: "Version not comparable",
+          rule: "5 pts when a version is missing or not numeric",
           points: 5,
           max: 10,
           evidence,
@@ -248,6 +277,7 @@ export function scoreRisk(s: SolutionInfo, baseline?: SolutionInfo | null): Risk
     if (baseline.managed !== s.managed) {
       add({
         id: "managed-flip",
+        rule: "10 pts when the managed flag differs from the baseline",
         label: "Managed / unmanaged mismatch with baseline",
         points: 10,
         max: 10,
