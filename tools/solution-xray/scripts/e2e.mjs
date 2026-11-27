@@ -72,7 +72,12 @@ const flowWf = (id, name, refs) => `
       <JsonFileName>/Workflows/${name}-${id}.json</JsonFileName>
       <Type>1</Type><Category>5</Category><PrimaryEntity>none</PrimaryEntity>
     </Workflow>`;
-const flowJson = (refs) => JSON.stringify({ properties: { connectionReferences: Object.fromEntries(refs.map((r, i) => [`shared_${i}`, { connection: { connectionReferenceLogicalName: r } }])) } });
+const flowJson = (refs) => JSON.stringify({
+  properties: {
+    connectionReferences: Object.fromEntries(refs.map((r, i) => [`shared_office365_${i}`, { connection: { connectionReferenceLogicalName: r }, api: { name: "shared_office365" } }])),
+    definition: { triggers: { When_a_row_is_added: { type: "OpenApiConnectionWebhook", inputs: { host: { apiId: "/providers/Microsoft.PowerApps/apis/shared_commondataserviceforapps", operationId: "SubscribeWebhookTrigger" } } } } },
+  },
+});
 
 async function zip(files) {
   const z = new JSZip();
@@ -303,6 +308,7 @@ const inv = await page.textContent("#inv-body");
 assert(inv.includes("SolA") && inv.includes("1.0.0.0") && inv.includes("Unmanaged"), "inventory summary");
 assert(inv.includes("sss_project") && inv.includes("2 columns"), "inventory entity rows");
 assert(inv.includes("Cloud flow") && inv.includes("sss_sharedoffice365"), "flow conn refs parsed");
+assert(inv.includes("trigger: When_a_row_is_added (commondataserviceforapps: SubscribeWebhookTrigger)") && inv.includes("connectors: office365"), "flow trigger + connectors parsed");
 assert(inv.includes("Plugin steps") && inv.includes("Missing dependencies"), "plugins + missing deps sections");
 await page.screenshot({ path: resolve(OUT, "01-inventory-light.png") });
 
@@ -333,6 +339,18 @@ let risk = await page.textContent("#risk-body");
 assert(/\d+ \/ 100/.test(risk), "risk score rendered");
 assert(risk.includes("Unmanaged solution") && risk.includes("System tables included") && risk.includes("connection references not in this solution") && risk.includes("no default and no value"), "risk factors A1");
 const scoreA1 = Number(risk.match(/(\d+) \/ 100/)[1]);
+// weights: unmanaged ×0 drops its 10 pts, saved, "Why?" explains the rule, reset restores
+const scoreNow = async () => Number((await page.textContent("#risk-body .score .num")).match(/\d+/)[0]);
+await page.click('button[popovertarget="why-unmanaged"]');
+assert(await page.isVisible("#why-unmanaged") && (await page.textContent("#why-unmanaged")).includes("10 pts when the solution is unmanaged"), "why popover shows the rule");
+await page.keyboard.press("Escape");
+await page.fill("#w-unmanaged", "0");
+await page.press("#w-unmanaged", "Enter");
+assert((await scoreNow()) === scoreA1 - 10 && (await page.inputValue("#w-unmanaged")) === "0", "weight 0 removes unmanaged points, factor still listed");
+assert((await page.evaluate(() => localStorage.getItem("sss-view:solution-xray"))).includes('"riskWeights":{"unmanaged":0}'), "weights persisted");
+assert(await page.isVisible("#risk-reset"), "reset shown with custom weights");
+await page.click("#risk-reset");
+assert((await scoreNow()) === scoreA1 && !(await page.isVisible("#risk-reset")), "reset restores default weights");
 await page.selectOption("#risk-select", { index: 1 });
 await page.selectOption("#risk-baseline", { index: 1 }); // index 0 = "none"
 risk = await page.textContent("#risk-body");

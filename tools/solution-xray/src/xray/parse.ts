@@ -193,6 +193,8 @@ function parseWorkflow(el: Element): WorkflowInfo {
     categoryName: WORKFLOW_CATEGORY[category] ?? `Category ${category}`,
     primaryEntity: text(el, ":scope > PrimaryEntity"),
     connectionReferences: [],
+    triggers: [],
+    connectors: [],
   };
 }
 
@@ -326,17 +328,35 @@ function parseCustomizationsXml(doc: Document, info: SolutionInfo): void {
   }
 }
 
-/** Cloud flow JSON: pull connection reference logical names from properties.connectionReferences. */
-function parseFlowJson(json: string): string[] {
+interface FlowJson {
+  properties?: {
+    connectionReferences?: Record<string, { connection?: { connectionReferenceLogicalName?: string }; api?: { name?: string } }>;
+    definition?: { triggers?: Record<string, { type?: string; kind?: string; inputs?: { host?: { apiId?: string; connectionName?: string; operationId?: string } } }> };
+  };
+}
+
+const connectorName = (v: string | undefined) => v?.split("/").pop()?.replace(/^shared_/i, "") || null;
+
+/** Cloud flow JSON: connection reference logical names, trigger summaries and connector names. */
+function parseFlowJson(json: string): Pick<WorkflowInfo, "connectionReferences" | "triggers" | "connectors"> {
+  let obj: FlowJson;
   try {
-    const obj = JSON.parse(json) as { properties?: { connectionReferences?: Record<string, { connection?: { connectionReferenceLogicalName?: string } }> } };
-    const refs = obj.properties?.connectionReferences ?? {};
-    return Object.values(refs)
-      .map((r) => r.connection?.connectionReferenceLogicalName)
-      .filter((v): v is string => !!v);
+    obj = JSON.parse(json) as FlowJson;
   } catch {
-    return [];
+    return { connectionReferences: [], triggers: [], connectors: [] };
   }
+  const refs = Object.entries(obj.properties?.connectionReferences ?? {});
+  const triggers = Object.entries(obj.properties?.definition?.triggers ?? {}).map(([name, t]) => {
+    const host = t.inputs?.host;
+    const api = connectorName(host?.apiId ?? host?.connectionName);
+    const what = api ? `${api}: ${host?.operationId ?? "?"}` : [t.type, t.kind].filter(Boolean).join(" ") || "?";
+    return `${name} (${what})`;
+  });
+  return {
+    connectionReferences: refs.map(([, r]) => r.connection?.connectionReferenceLogicalName).filter((v): v is string => !!v),
+    triggers,
+    connectors: [...new Set(refs.map(([k, r]) => connectorName(r.api?.name ?? k)).filter((v): v is string => !!v))],
+  };
 }
 
 export function emptySolution(fileName: string, sizeBytes: number): SolutionInfo {
@@ -417,9 +437,8 @@ export async function parseSolutionZip(data: Uint8Array | ArrayBuffer, fileName:
   const flowFiles = files.filter((f) => /^workflows\/.+\.json$/i.test(f.name));
   for (const ff of flowFiles) {
     const guid = ff.name.match(/-([0-9a-f-]{36})\.json$/i)?.[1]?.toLowerCase();
-    const refs = parseFlowJson(await ff.async("string"));
     const wf = info.workflows.find((w) => w.id && w.id.replace(/[{}]/g, "").toLowerCase() === guid);
-    if (wf) wf.connectionReferences = refs;
+    if (wf) Object.assign(wf, parseFlowJson(await ff.async("string")));
   }
 
   inferCustomTypeNames(info, files.map((f) => f.name));
