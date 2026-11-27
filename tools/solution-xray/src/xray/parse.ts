@@ -2,6 +2,7 @@ import JSZip from "jszip";
 import { componentTypeName, CONNECTION_REFERENCE, CUSTOM_TYPE_MIN, ENV_VAR_TYPE, WORKFLOW_CATEGORY } from "./componentTypes";
 import type {
   ConnectionReferenceInfo,
+  DefinitionInfo,
   DependencyRef,
   EntityInfo,
   EnvironmentVariableInfo,
@@ -145,6 +146,24 @@ function hasRibbonCustomization(ribbon: Element | null): boolean {
   return Array.from(ribbon.getElementsByTagName("*")).some((e) => !RIBBON_CONTAINERS.has(e.tagName));
 }
 
+/** Elements whose only job is to record a solution version: they change on every export, not with the definition. */
+const VERSION_ONLY = ["IntroducedVersion"];
+
+/** 32-bit FNV-1a as 8 hex chars: enough to tell two definitions apart, not a security hash. */
+function fnv1a(s: string): string {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 0x01000193);
+  return (h >>> 0).toString(16).padStart(8, "0");
+}
+
+function definition(el: Element, idTag: string): DefinitionInfo {
+  const xml = (n: Node) => new XMLSerializer().serializeToString(n).replace(/>\s+</g, "><").trim();
+  const bare = el.cloneNode(true) as Element;
+  for (const tag of VERSION_ONLY) for (const v of Array.from(bare.getElementsByTagName(tag))) v.remove();
+  const id = text(el, `:scope > ${idTag}`)?.replace(/[{}]/g, "").toLowerCase() ?? null;
+  return { id, name: localizedName(el) ?? id ?? "?", hash: fnv1a(xml(el)), hashNoVersion: fnv1a(xml(bare)) };
+}
+
 function parseEntity(el: Element): EntityInfo {
   const nameEl = el.querySelector(":scope > Name");
   const name = nameEl?.textContent?.trim() ?? "";
@@ -160,6 +179,8 @@ function parseEntity(el: Element): EntityInfo {
     views: el.querySelectorAll(":scope > SavedQueries > savedqueries > savedquery").length,
     charts: el.querySelectorAll(":scope > Visualizations > visualization").length,
     hasRibbon: hasRibbonCustomization(el.querySelector(":scope > RibbonDiffXml")),
+    formDefs: Array.from(el.querySelectorAll(":scope > FormXml > forms > systemform")).map((f) => definition(f, "formid")),
+    viewDefs: Array.from(el.querySelectorAll(":scope > SavedQueries > savedqueries > savedquery")).map((v) => definition(v, "savedqueryid")),
   };
 }
 

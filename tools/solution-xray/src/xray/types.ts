@@ -32,6 +32,17 @@ export interface AttributeInfo {
   type: string;
 }
 
+/** A form or view definition, fingerprinted for Compare. */
+export interface DefinitionInfo {
+  /** formid / savedqueryid, lower case without braces; null when missing */
+  id: string | null;
+  name: string;
+  /** FNV-1a of the whitespace-normalized XML */
+  hash: string;
+  /** Same, with the version-only elements (IntroducedVersion) removed */
+  hashNoVersion: string;
+}
+
 export interface EntityInfo {
   name: string;
   displayName: string;
@@ -40,6 +51,8 @@ export interface EntityInfo {
   views: number;
   charts: number;
   hasRibbon: boolean;
+  formDefs: DefinitionInfo[];
+  viewDefs: DefinitionInfo[];
 }
 
 export interface WorkflowInfo {
