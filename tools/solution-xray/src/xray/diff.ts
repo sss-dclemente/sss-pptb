@@ -60,7 +60,13 @@ const BEHAVIOR: Record<number, string> = { 0: "include subcomponents", 1: "no su
 
 const labelled = (fields: Field[]): string => fields.map((f) => `${f.label}: ${f.value}`).join(" · ");
 
-function categories(s: SolutionInfo): Record<string, Keyed> {
+export interface DiffOptions {
+  /** Forms / views whose XML differs only in version elements (IntroducedVersion) are not "changed". Default true. */
+  ignoreVersionOnly?: boolean;
+}
+
+/** `shared`: tables on both sides. Forms / views of an added or removed table are not listed again. */
+function categories(s: SolutionInfo, ignoreVersionOnly: boolean, shared: Set<string>): Record<string, Keyed> {
   const out: Record<string, Keyed> = {};
   /** key defaults to the display name; pass a stable id-based key when names are not unique */
   const put = (cat: string, name: string, fields: [string, Raw][] = [], key = name) => {
@@ -70,6 +76,9 @@ function categories(s: SolutionInfo): Record<string, Keyed> {
   for (const e of s.entities) {
     put("Table", e.name, [["Display name", e.displayName], ["Forms", e.forms], ["Views", e.views], ["Charts", e.charts], ["Ribbon", e.hasRibbon]]);
     for (const a of e.attributes) put("Column", `${e.name}.${a.name}`, [["Type", a.type]]);
+    if (shared.has(e.name))
+      for (const [cat, defs] of [["Form", e.formDefs], ["View", e.viewDefs]] as const)
+        for (const d of defs) put(cat, `${e.name}: ${d.name}`, [["Definition", ignoreVersionOnly ? d.hashNoVersion : d.hash]], `${e.name}/${d.id ?? d.name}`);
   }
   for (const r of s.relationships) put("Relationship", r.name, [["Type", r.type], ["Referencing", r.referencing], ["Referenced", r.referenced]]);
   for (const o of s.optionSets) put("Global choice", o.name);
@@ -94,9 +103,11 @@ function categories(s: SolutionInfo): Record<string, Keyed> {
   return out;
 }
 
-export function diffSolutions(a: SolutionInfo, b: SolutionInfo): SolutionDiff {
-  const ca = categories(a);
-  const cb = categories(b);
+export function diffSolutions(a: SolutionInfo, b: SolutionInfo, { ignoreVersionOnly = true }: DiffOptions = {}): SolutionDiff {
+  const inA = new Set(a.entities.map((e) => e.name));
+  const shared = new Set(b.entities.map((e) => e.name).filter((n) => inA.has(n)));
+  const ca = categories(a, ignoreVersionOnly, shared);
+  const cb = categories(b, ignoreVersionOnly, shared);
   const entries: DiffEntry[] = [];
   const cats = new Set([...Object.keys(ca), ...Object.keys(cb)]);
 

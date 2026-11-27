@@ -72,7 +72,12 @@ const flowWf = (id, name, refs) => `
       <JsonFileName>/Workflows/${name}-${id}.json</JsonFileName>
       <Type>1</Type><Category>5</Category><PrimaryEntity>none</PrimaryEntity>
     </Workflow>`;
-const flowJson = (refs) => JSON.stringify({ properties: { connectionReferences: Object.fromEntries(refs.map((r, i) => [`shared_${i}`, { connection: { connectionReferenceLogicalName: r } }])) } });
+const flowJson = (refs) => JSON.stringify({
+  properties: {
+    connectionReferences: Object.fromEntries(refs.map((r, i) => [`shared_office365_${i}`, { connection: { connectionReferenceLogicalName: r }, api: { name: "shared_office365" } }])),
+    definition: { triggers: { When_a_row_is_added: { type: "OpenApiConnectionWebhook", inputs: { host: { apiId: "/providers/Microsoft.PowerApps/apis/shared_commondataserviceforapps", operationId: "SubscribeWebhookTrigger" } } } } },
+  },
+});
 
 async function zip(files) {
   const z = new JSZip();
@@ -218,6 +223,27 @@ const solIFiles = (behavior) => ({
 const solI1 = await zip(solIFiles(0));
 const solI2 = await zip(solIFiles(2));
 
+// version-only changes (P2-4a): Main form + view differ only in IntroducedVersion, Info form has a real layout change
+const solVFiles = (version, infoLayout) => ({
+  "solution.xml": solutionXml({ name: "SolV", version, managed: 1, roots: [{ type: 1, schemaName: "sss_v" }] }),
+  "customizations.xml": customizationsXml({
+    entities: `
+    <Entity>
+      <Name LocalizedName="V" OriginalName="V">sss_v</Name>
+      <EntityInfo><entity Name="sss_v"><attributes /></entity></EntityInfo>
+      <FormXml><forms type="main">
+        <systemform><formid>{F1}</formid><IntroducedVersion>${version}</IntroducedVersion><form><tabs /></form><LocalizedNames><LocalizedName description="Main" languagecode="1033" /></LocalizedNames></systemform>
+        <systemform><formid>{F2}</formid><IntroducedVersion>1.0.0.0</IntroducedVersion><form><tabs>${infoLayout}</tabs></form><LocalizedNames><LocalizedName description="Info" languagecode="1033" /></LocalizedNames></systemform>
+      </forms></FormXml>
+      <SavedQueries><savedqueries>
+        <savedquery><savedqueryid>{Q1}</savedqueryid><IntroducedVersion>${version}</IntroducedVersion><fetchxml /><LocalizedNames><LocalizedName description="Active V" languagecode="1033" /></LocalizedNames></savedquery>
+      </savedqueries></SavedQueries>
+    </Entity>`,
+  }),
+});
+const solV1 = await zip(solVFiles("1.0.0.0", "<tab name='a' />"));
+const solV2 = await zip(solVFiles("1.1.0.0", "<tab name='a' /><tab name='b' />"));
+
 // compare filters (X1): SolJ v2 changes one column type, removes a table and adds a 25-column table
 // -> Column category 27 rows (starts closed), Table 2 rows (starts open), root rows hidden by default
 const BIG_COLS = Array.from({ length: 24 }, (_, i) => [`sss_c${String(i).padStart(2, "0")}`, "nvarchar"]);
@@ -260,7 +286,7 @@ const solN = await zip({
   "customizations.xml": customizationsXml({}),
 });
 
-const files = { "SolL.zip": solL, "SolO.zip": solO, "SolM.zip": solM, "SolN.zip": solN, "SolK.zip": solK, "SolA_1_0_0_0.zip": solA1, "SolA_1_1_0_0_managed.zip": solA2, "SolB_2_0_0_0_managed.zip": solB, "SolC_1_0_0_0_managed.zip": solC, "SolD.zip": solD, "SolE.zip": solE, "SolF.zip": solF, "SolF_copy.zip": solF, "SolG.zip": solG, "SolH_1_0.zip": solH1, "SolH_1_1.zip": solH2, "SolI_1.zip": solI1, "SolI_2.zip": solI2, "SolJ_1.zip": solJ1, "SolJ_2.zip": solJ2 };
+const files = { "SolL.zip": solL, "SolO.zip": solO, "SolM.zip": solM, "SolN.zip": solN, "SolK.zip": solK, "SolA_1_0_0_0.zip": solA1, "SolA_1_1_0_0_managed.zip": solA2, "SolB_2_0_0_0_managed.zip": solB, "SolC_1_0_0_0_managed.zip": solC, "SolD.zip": solD, "SolE.zip": solE, "SolF.zip": solF, "SolF_copy.zip": solF, "SolG.zip": solG, "SolH_1_0.zip": solH1, "SolH_1_1.zip": solH2, "SolI_1.zip": solI1, "SolI_2.zip": solI2, "SolJ_1.zip": solJ1, "SolJ_2.zip": solJ2, "SolV_1.zip": solV1, "SolV_2.zip": solV2 };
 for (const [n, b] of Object.entries(files)) writeFileSync(resolve(OUT, n), b);
 
 const { browser, page, errors, assert, finish } = await launchPage(import.meta.url, { width: 1280, height: 900 });
@@ -286,6 +312,7 @@ const inv = await page.textContent("#inv-body");
 assert(inv.includes("SolA") && inv.includes("1.0.0.0") && inv.includes("Unmanaged"), "inventory summary");
 assert(inv.includes("sss_project") && inv.includes("2 columns"), "inventory entity rows");
 assert(inv.includes("Cloud flow") && inv.includes("sss_sharedoffice365"), "flow conn refs parsed");
+assert(inv.includes("trigger: When_a_row_is_added (commondataserviceforapps: SubscribeWebhookTrigger)") && inv.includes("connectors: office365"), "flow trigger + connectors parsed");
 assert(inv.includes("Plugin steps") && inv.includes("Missing dependencies"), "plugins + missing deps sections");
 assert(inv.includes("2.0 KB · SSS.Plugins, Version=1.0.0.0"), "plugin assembly DLL size");
 assert(inv.includes("Account Summary") && inv.includes("account → contact") && inv.includes("1 column maps") && inv.includes("SSS SQL Provider"), "templates, column mappings, data providers listed");
@@ -318,6 +345,18 @@ let risk = await page.textContent("#risk-body");
 assert(/\d+ \/ 100/.test(risk), "risk score rendered");
 assert(risk.includes("Unmanaged solution") && risk.includes("System tables included") && risk.includes("connection references not in this solution") && risk.includes("no default and no value"), "risk factors A1");
 const scoreA1 = Number(risk.match(/(\d+) \/ 100/)[1]);
+// weights: unmanaged ×0 drops its 10 pts, saved, "Why?" explains the rule, reset restores
+const scoreNow = async () => Number((await page.textContent("#risk-body .score .num")).match(/\d+/)[0]);
+await page.click('button[popovertarget="why-unmanaged"]');
+assert(await page.isVisible("#why-unmanaged") && (await page.textContent("#why-unmanaged")).includes("10 pts when the solution is unmanaged"), "why popover shows the rule");
+await page.keyboard.press("Escape");
+await page.fill("#w-unmanaged", "0");
+await page.press("#w-unmanaged", "Enter");
+assert((await scoreNow()) === scoreA1 - 10 && (await page.inputValue("#w-unmanaged")) === "0", "weight 0 removes unmanaged points, factor still listed");
+assert((await page.evaluate(() => localStorage.getItem("sss-view:solution-xray"))).includes('"riskWeights":{"unmanaged":0}'), "weights persisted");
+assert(await page.isVisible("#risk-reset"), "reset shown with custom weights");
+await page.click("#risk-reset");
+assert((await scoreNow()) === scoreA1 && !(await page.isVisible("#risk-reset")), "reset restores default weights");
 await page.selectOption("#risk-select", { index: 1 });
 await page.selectOption("#risk-baseline", { index: 1 }); // index 0 = "none"
 risk = await page.textContent("#risk-body");
@@ -536,6 +575,19 @@ assert(!(await page.$eval("#cmp-hide-root", (e) => e.checked)), "Clear filters u
 cmpI = await page.textContent("#cmp-body");
 assert(cmpI.includes("Root component") && cmpI.includes("sss_only") && (await chipText()) === "+0 ~1 -0" && !(await page.$("#cmp-body .count-caption")), "Clear filters shows the root-component row");
 await page.click("#cmp-hide-root"); // back to the default
+
+// ---- compare: ignore version-only changes in forms / views ----
+await page.reload();
+await addOne("SolV_1.zip", 1);
+await addOne("SolV_2.zip", 2);
+await page.click('.tab[data-tab="compare"]');
+const changedNames = () => page.$$eval("#cmp-body tr.diff-changed .mono", (els) => els.map((e) => e.textContent).join(","));
+assert((await page.$eval("#cmp-ignore-ver", (e) => e.checked)) && (await changedNames()) === "sss_v: Info", "ignore version-only on by default: only the real form change: " + (await changedNames()));
+await page.click("#cmp-ignore-ver");
+assert((await changedNames()) === "sss_v: Info,sss_v: Main,sss_v: Active V", "ignore version-only off: IntroducedVersion-only form + view listed: " + (await changedNames()));
+const [dlv] = await Promise.all([page.waitForEvent("download"), page.click("#cmp-export")]);
+assert(JSON.parse(readFileSync(await dlv.path(), "utf8")).filter.ignoreVersionOnly === false, "export JSON records ignoreVersionOnly");
+await page.click("#cmp-ignore-ver"); // back to the default
 
 // ---- compare filters: change types, name, category folds, export, clear, persistence ----
 await page.reload(); // fresh fold memory
@@ -845,6 +897,13 @@ const LIVE_MOCK = ({ b64 }) => {
       if (m.shape === "wrapped") return { data: JSON.stringify(file) };
       return file;
     },
+    // dependency lookups: sss_invoice exists, ext_thing answers an empty list, a metadata 404 is read as missing
+    queryData: async (q) => {
+      m.calls.push({ op: "queryData", q });
+      if (q.includes("'sss_invoice'")) return { value: [{ LogicalName: "sss_invoice" }] };
+      if (q.includes("'ext_thing'")) throw new Error("Request failed with status code 404");
+      return { value: [] };
+    },
   };
 };
 const lpage = await browser.newPage({ viewport: { width: 1280, height: 900 } });
@@ -882,6 +941,25 @@ await lpage.screenshot({ path: resolve(OUT, "20-live-check.png") });
 await lpage.click("#live-check");
 await lpage.waitForTimeout(200);
 assert((await lpage.evaluate(() => window.__mock.calls.filter((c) => c.op === "execute").length)) === 1, "live: second check reuses the loaded export");
+
+// missing dependencies resolved against the environment (Inventory card, read-only lookups)
+const [dch] = await Promise.all([lpage.waitForEvent("filechooser"), lpage.click("#btn-add")]);
+await dch.setFiles([resolve(OUT, "SolC_1_0_0_0_managed.zip")]);
+await lpage.click('.tab[data-tab="inventory"]');
+await lpage.evaluate(() => {
+  const sel = document.querySelector("#inv-select");
+  sel.value = [...sel.options].find((o) => o.textContent.startsWith("SolC")).value;
+  sel.dispatchEvent(new Event("change"));
+});
+await lpage.evaluate(() => (document.querySelector("#inv-deps-check").closest("details").open = true));
+await lpage.click("#inv-deps-check");
+await lpage.waitForFunction(() => document.querySelector("#inv-deps-status")?.textContent.includes("missing here,"));
+const dstat = await lpage.textContent("#inv-deps-status");
+const drows = await lpage.$$eval("#inv-body table", (ts) => [...ts].find((t) => t.textContent.includes("Needed by")).innerText);
+assert(dstat.startsWith("1 missing here, 1 present") && /sss_invoice[^\n]*present/.test(drows) && /ext_thing[^\n]*missing here/.test(drows), "live deps: present / missing here per row: " + dstat);
+const dq = await lpage.evaluate(() => window.__mock.calls.filter((c) => c.op === "queryData").map((c) => c.q));
+assert(dq.length === 2 && dq.every((q) => q.startsWith("EntityDefinitions?$select=LogicalName&$filter=LogicalName eq '")), "live deps: one EntityDefinitions lookup per required table: " + JSON.stringify(dq));
+await lpage.click('button[aria-label="Remove SolC"]');
 
 // wrapped JSON-text result + managed export, through "Load only" and the debug log
 await checkDebugLog(lpage, assert, {
@@ -924,7 +1002,7 @@ await lpage.click("#live-load");
 await lpage.waitForFunction(() => window.__mock.notes.some((n) => n.title === "Export failed"));
 const lbad = await lpage.evaluate(() => window.__mock.notes.find((n) => n.title === "Export failed").body);
 assert(lbad.includes("no ExportSolutionFile") && lbad.includes("{foo: number}") && (await lpage.$$("#solution-list li:not(.empty)")).length === 0, "live: unknown result shape -> error with the shape, nothing loaded: " + lbad);
-assert((await lpage.evaluate(() => window.__mock.calls.filter((c) => c.op === "execute").length)) === 4 && (await lpage.evaluate(() => window.__mock.calls.every((c) => c.op === "getSolutions" || c.req.operationName === "ExportSolution"))), "live: only getSolutions and ExportSolution are called");
+assert((await lpage.evaluate(() => window.__mock.calls.filter((c) => c.op === "execute").length)) === 4 && (await lpage.evaluate(() => window.__mock.calls.every((c) => c.op === "getSolutions" || c.op === "queryData" || c.req.operationName === "ExportSolution"))), "live: only getSolutions, ExportSolution and read-only queries are called");
 
 // disconnect: back to the disabled state
 await lpage.evaluate(() => {

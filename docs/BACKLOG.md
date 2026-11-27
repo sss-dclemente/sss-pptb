@@ -14,7 +14,7 @@ Flow:
 5. Pre-import report = *Compare* (env → zip) + *Upgrade risk* with env as baseline. One button: "Check zip against environment".
 
 Extras once live:
-- Resolve the zip's `MissingDependencies` against the environment: query `solutioncomponent` / `dependency` tables (or `RetrieveMissingDependencies` via `execute`) to turn "declared missing" into "actually missing here".
+- ~~Resolve the zip's `MissingDependencies` against the environment~~ done (2026-11-27, unreleased): Inventory card *Check in <env>*, one read-only lookup per required component (`src/xray/deps-live.ts`). `RetrieveMissingDependencies` not used: it needs the solution already in the target.
 - Use `dataverseAPI.getImportJobStatus` after a `deploySolution` triggered elsewhere (see post-import tab).
 
 Risks: ExportSolution on large solutions takes minutes and returns tens of MB over IPC; add a spinner and size warning. Managed export of an unmanaged solution needs `Managed: true`.
@@ -36,11 +36,12 @@ Merge with XRay: highlight importjob failures against the zip's inventory (same 
 ## Smaller items
 
 - Deployment settings scaffold: export `deploymentSettings.json` skeleton (connection references + environment variables found in the zip) for `pac solution import --settings-file`.
-- Compare: option to ignore version-only changes in forms/views (needs form XML hashing rather than counts).
-- Inventory: parse `Workflows/*.json` for flow triggers and connector list.
+- ~~Compare: option to ignore version-only changes in forms/views~~ — done: per-form / per-view XML fingerprint, *Ignore version-only changes* strips `IntroducedVersion`.
+- [x] Inventory: parse `Workflows/*.json` for flow triggers and connector list.
+- [x] Inventory: parse `PluginAssemblies` folder for DLL sizes.
+- [x] Inventory: itemise `Templates`, `EntityMaps`, `EntityDataProviders` (were excluded, not counted).
 - Inventory: itemise `customapis` (currently excluded from the inventory).
 - Install order: when the same unique name is loaded twice, prefer the highest version instead of first loaded.
-- Risk: user-editable weights (settings API `toolboxAPI.settings`) and a "why" popover per factor.
 - Persist last-used tab and diff options via `toolboxAPI.settings`.
 - Real screenshots for README; request Verified badge after v1.0.0 and 10 MAU.
 - Inter-tool invocation (`pptb.config.json`): accept a zip path as prefill so other SSS tools can hand over a solution.

@@ -58,6 +58,7 @@
           <label class="check"><input type="checkbox" id="cmp-removed" checked /> Removed</label>
           <input id="cmp-q" type="search" placeholder="Filter by name…" aria-label="Filter by name" />
           <label class="check"><input type="checkbox" id="cmp-hide-root" checked /> Hide root-component rows</label>
+          <label class="check" title="Forms and views whose XML differs only in IntroducedVersion are not listed as changed"><input type="checkbox" id="cmp-ignore-ver" checked /> Ignore version-only changes</label>
           <button id="cmp-export" class="btn btn-ghost btn-sm" type="button">Export JSON</button>
         </div>
         <div id="cmp-body" class="panel-body"></div>
@@ -67,6 +68,7 @@
         <div class="toolbar">
           <label>Solution <select id="risk-select"></select></label>
           <label>Baseline (optional) <select id="risk-baseline"><option value="">none</option></select></label>
+          <button id="risk-reset" class="btn btn-ghost btn-sm" type="button" hidden>Reset weights</button>
           <button id="risk-export" class="btn btn-ghost btn-sm" type="button">Export JSON</button>
         </div>
         <div id="risk-body" class="panel-body"></div>

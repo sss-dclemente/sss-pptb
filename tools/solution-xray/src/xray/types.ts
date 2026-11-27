@@ -32,6 +32,17 @@ export interface AttributeInfo {
   type: string;
 }
 
+/** A form or view definition, fingerprinted for Compare. */
+export interface DefinitionInfo {
+  /** formid / savedqueryid, lower case without braces; null when missing */
+  id: string | null;
+  name: string;
+  /** FNV-1a of the whitespace-normalized XML */
+  hash: string;
+  /** Same, with the version-only elements (IntroducedVersion) removed */
+  hashNoVersion: string;
+}
+
 export interface EntityInfo {
   name: string;
   displayName: string;
@@ -40,6 +51,8 @@ export interface EntityInfo {
   views: number;
   charts: number;
   hasRibbon: boolean;
+  formDefs: DefinitionInfo[];
+  viewDefs: DefinitionInfo[];
 }
 
 export interface WorkflowInfo {
@@ -51,6 +64,10 @@ export interface WorkflowInfo {
   primaryEntity: string | null;
   /** Only for modern flows: connection reference logical names found in the flow JSON */
   connectionReferences: string[];
+  /** Only for modern flows: trigger summaries from properties.definition.triggers, e.g. "When_a_row_is_added (commondataserviceforapps: SubscribeWebhookTrigger)" */
+  triggers: string[];
+  /** Only for modern flows: connector names (shared_ prefix stripped) from the flow JSON */
+  connectors: string[];
 }
 
 export interface RelationshipInfo {

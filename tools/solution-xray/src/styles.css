@@ -32,6 +32,10 @@
 .factor .pts { font-weight: var(--fw-black); color: var(--fg-primary); }
 .factor .evidence { grid-column: 1 / -1; }
 .factor .advice { grid-column: 1 / -1; }
+.factor-tools { grid-column: 1 / -1; display: flex; align-items: center; gap: var(--s-2); }
+.factor .weight { width: 5em; }
+.why { max-width: 28rem; padding: var(--s-3) var(--s-4); border: 1px solid var(--border-color); border-radius: var(--radius-sm); background: var(--bg-card); color: var(--fg-primary); }
+.why p { margin: 0 0 var(--s-2); }
 .evidence .evidence-more { padding-block: 0; } /* as tall as the chips it follows */
 
 /* Order */

@@ -2,6 +2,7 @@ import JSZip from "jszip";
 import { componentTypeName, CONNECTION_REFERENCE, CUSTOM_TYPE_MIN, ENV_VAR_TYPE, WORKFLOW_CATEGORY } from "./componentTypes";
 import type {
   ConnectionReferenceInfo,
+  DefinitionInfo,
   DependencyRef,
   EntityInfo,
   EnvironmentVariableInfo,
@@ -145,6 +146,24 @@ function hasRibbonCustomization(ribbon: Element | null): boolean {
   return Array.from(ribbon.getElementsByTagName("*")).some((e) => !RIBBON_CONTAINERS.has(e.tagName));
 }
 
+/** Elements whose only job is to record a solution version: they change on every export, not with the definition. */
+const VERSION_ONLY = ["IntroducedVersion"];
+
+/** 32-bit FNV-1a as 8 hex chars: enough to tell two definitions apart, not a security hash. */
+function fnv1a(s: string): string {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 0x01000193);
+  return (h >>> 0).toString(16).padStart(8, "0");
+}
+
+function definition(el: Element, idTag: string): DefinitionInfo {
+  const xml = (n: Node) => new XMLSerializer().serializeToString(n).replace(/>\s+</g, "><").trim();
+  const bare = el.cloneNode(true) as Element;
+  for (const tag of VERSION_ONLY) for (const v of Array.from(bare.getElementsByTagName(tag))) v.remove();
+  const id = text(el, `:scope > ${idTag}`)?.replace(/[{}]/g, "").toLowerCase() ?? null;
+  return { id, name: localizedName(el) ?? id ?? "?", hash: fnv1a(xml(el)), hashNoVersion: fnv1a(xml(bare)) };
+}
+
 function parseEntity(el: Element): EntityInfo {
   const nameEl = el.querySelector(":scope > Name");
   const name = nameEl?.textContent?.trim() ?? "";
@@ -160,6 +179,8 @@ function parseEntity(el: Element): EntityInfo {
     views: el.querySelectorAll(":scope > SavedQueries > savedqueries > savedquery").length,
     charts: el.querySelectorAll(":scope > Visualizations > visualization").length,
     hasRibbon: hasRibbonCustomization(el.querySelector(":scope > RibbonDiffXml")),
+    formDefs: Array.from(el.querySelectorAll(":scope > FormXml > forms > systemform")).map((f) => definition(f, "formid")),
+    viewDefs: Array.from(el.querySelectorAll(":scope > SavedQueries > savedqueries > savedquery")).map((v) => definition(v, "savedqueryid")),
   };
 }
 
@@ -172,6 +193,8 @@ function parseWorkflow(el: Element): WorkflowInfo {
     categoryName: WORKFLOW_CATEGORY[category] ?? `Category ${category}`,
     primaryEntity: text(el, ":scope > PrimaryEntity"),
     connectionReferences: [],
+    triggers: [],
+    connectors: [],
   };
 }
 
@@ -320,17 +343,35 @@ function parseCustomizationsXml(doc: Document, info: SolutionInfo): void {
   }
 }
 
-/** Cloud flow JSON: pull connection reference logical names from properties.connectionReferences. */
-function parseFlowJson(json: string): string[] {
+interface FlowJson {
+  properties?: {
+    connectionReferences?: Record<string, { connection?: { connectionReferenceLogicalName?: string }; api?: { name?: string } }>;
+    definition?: { triggers?: Record<string, { type?: string; kind?: string; inputs?: { host?: { apiId?: string; connectionName?: string; operationId?: string } } }> };
+  };
+}
+
+const connectorName = (v: string | undefined) => v?.split("/").pop()?.replace(/^shared_/i, "") || null;
+
+/** Cloud flow JSON: connection reference logical names, trigger summaries and connector names. */
+function parseFlowJson(json: string): Pick<WorkflowInfo, "connectionReferences" | "triggers" | "connectors"> {
+  let obj: FlowJson;
   try {
-    const obj = JSON.parse(json) as { properties?: { connectionReferences?: Record<string, { connection?: { connectionReferenceLogicalName?: string } }> } };
-    const refs = obj.properties?.connectionReferences ?? {};
-    return Object.values(refs)
-      .map((r) => r.connection?.connectionReferenceLogicalName)
-      .filter((v): v is string => !!v);
+    obj = JSON.parse(json) as FlowJson;
   } catch {
-    return [];
+    return { connectionReferences: [], triggers: [], connectors: [] };
   }
+  const refs = Object.entries(obj.properties?.connectionReferences ?? {});
+  const triggers = Object.entries(obj.properties?.definition?.triggers ?? {}).map(([name, t]) => {
+    const host = t.inputs?.host;
+    const api = connectorName(host?.apiId ?? host?.connectionName);
+    const what = api ? `${api}: ${host?.operationId ?? "?"}` : [t.type, t.kind].filter(Boolean).join(" ") || "?";
+    return `${name} (${what})`;
+  });
+  return {
+    connectionReferences: refs.map(([, r]) => r.connection?.connectionReferenceLogicalName).filter((v): v is string => !!v),
+    triggers,
+    connectors: [...new Set(refs.map(([k, r]) => connectorName(r.api?.name ?? k)).filter((v): v is string => !!v))],
+  };
 }
 
 export function emptySolution(fileName: string, sizeBytes: number): SolutionInfo {
@@ -414,9 +455,8 @@ export async function parseSolutionZip(data: Uint8Array | ArrayBuffer, fileName:
   const flowFiles = files.filter((f) => /^workflows\/.+\.json$/i.test(f.name));
   for (const ff of flowFiles) {
     const guid = ff.name.match(/-([0-9a-f-]{36})\.json$/i)?.[1]?.toLowerCase();
-    const refs = parseFlowJson(await ff.async("string"));
     const wf = info.workflows.find((w) => w.id && w.id.replace(/[{}]/g, "").toLowerCase() === guid);
-    if (wf) wf.connectionReferences = refs;
+    if (wf) Object.assign(wf, parseFlowJson(await ff.async("string")));
   }
 
   // PluginAssemblies/<Name>-<GUID>/<Name>.dll; FileName in customizations.xml has a leading slash
