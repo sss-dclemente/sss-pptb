@@ -23,16 +23,11 @@
 | P1 | P1-1 | EnvVar Matrix: capturas reais ([SCREENSHOTS.md](SCREENSHOTS.md) §2) + secção Screenshots | Listing | M | owner captura, agente liga | por fazer |
 | P1 | P1-2 | EnvVar Matrix: teste por uma pessoa ([RELEASE.md](RELEASE.md) §2) | Quality | L | owner | por fazer |
 | P1 | P1-3 | XRay: `inventory-dark.png` + `install-order.png` ([SCREENSHOTS.md](SCREENSHOTS.md) §1) | Listing | S | owner captura, agente liga | por fazer |
-| P1 | P1-4 | XRay: teste real incl. live mode (`ExportSolution` shape) e Post-import ([RELEASE.md](RELEASE.md) §1) | Quality | M | owner corre, agente corrige | por fazer |
+| P1 | P1-4 | XRay: teste real incl. live mode (`ExportSolution` shape), Post-import e MissingDependencies live (#84) ([RELEASE.md](RELEASE.md) §1) | Quality | M | owner corre, agente corrige | por fazer |
 | P1 | P1-5 | Métricas de adoção sem telemetria (#57, draft desde 2026-10-13) | Growth | S | agente + owner | em curso (#57) |
 | P1 | N1 | CI em PRs: build + check-dist + validate + e2e × 3 ferramentas (hoje só triage e digest) | CI | S | agente | por fazer |
 | P1 | N2 | Gate `npm audit` high/critical no CI (último registo 2026-10-13; requisito Verified) | Security | S | agente | por fazer |
 | P2 | P2-1 | Get Verified ×3 (ou pedir dispensa de métricas) | Marketplace | S | owner | gate: P0-1, P1-1…P1-5 |
-| P2 | P2-2 | XRay live: `MissingDependencies` do zip → "falta mesmo aqui" (`RetrieveMissingDependencies` / `dependency`) | Features | M | agente | em curso (thread 2026-11-27) |
-| P2 | P2-4a | XRay Compare: ignorar alterações só de versão em forms/views (hash do XML) | Features | M | agente | em curso (thread 2026-11-27) |
-| P2 | P2-4b | XRay Inventory: triggers e conectores de `Workflows/*.json` (hoje só connection refs) | Features | S | agente | em curso (thread 2026-11-27) |
-| P2 | P2-4c | XRay Inventory: tamanho das DLL de plug-in; listar `Templates`, `EntityMaps`, `EntityDataProviders` (hoje só contados) | Features | S | agente | em curso (thread 2026-11-27) |
-| P2 | P2-4d | XRay Risk: pesos editáveis (`toolboxAPI.settings`) + popover "porquê" por fator | Features | M | agente | em curso (thread 2026-11-27) |
 | P2 | N3 | Unit tests dos parsers XRay (`parse.ts`, `order.ts`, `importjob.ts`); só existe e2e | Tests | S | agente | por fazer |
 | P2 | N4 | Fundir `docs/BACKLOG.md` no roadmap e apagar (desatualizado: "Not built", itens feitos) | Docs | S | agente | por fazer |
 | P2 | P2-3 | Post LinkedIn + vídeo curto por release ("SSS ALM suite") | Growth | M | owner | por fazer |
@@ -45,6 +40,7 @@
 Cortado: scaffold `deploymentSettings.json` no XRay — EnvVar Matrix já importa/exporta (`tools/envvar-matrix/src/matrix/settings.ts`).
 
 ### Done
+- **Done on 2026-11-27**: P2-2 MissingDependencies resolvidas contra o ambiente (#84; teste live pendente em P1-4) · P2-4a Compare por fingerprint XML, ignora alterações só de versão (#83) · P2-4b triggers e conectores de flows no Inventory (#80) · P2-4c tamanho das DLL + Templates/EntityMaps/EntityDataProviders (#81) · P2-4d pesos de risco editáveis + popover Why? (#82) · roadmap com Priority order (#79).
 - **Done on 2026-11-18**: E4 XRay live mode (#70, release #73) · E5 Post-import tab (#69, release #73) · E6 d365-apps 1.0.0 (#67) · npm 1.3.1 / 1.6.2 / 1.0.0 (#74, #76) · E1 publicar d365-apps (0.3.3 ultrapassado por 1.0.0, #76) · remoção de 4 ferramentas (#68).
 - **Done (no `main`, sem PR próprio)**: Install order com versão mais alta em nomes duplicados (`tools/solution-xray/src/xray/order.ts`) · filtros/tab persistidos por viewer (`tools/_shared/view-state.ts`, localStorage).
 - **Done on 2026-10-29**: `features.connections` + `minAPI` 1.2.7 em todas as ferramentas (#61) — prazo 2027-01-31 cumprido.
@@ -60,10 +56,10 @@ Cortado: scaffold `deploymentSettings.json` no XRay — EnvVar Matrix já import
 - **E3 Telemetria mínima de adoção** (downloads npm / MAU do PPTB) para chegar aos 10 MAU **[inferido]**.
 
 ## Next (Q1–Q2 2027)
-- ~~**E4 XRay v1.1 Live mode**~~ — feito (XRay 1.3.0, #70/#73); falta P2-2 (MissingDependencies resolvidas).
+- ~~**E4 XRay v1.1 Live mode**~~ — feito (XRay 1.3.0, #70/#73); P2-2 MissingDependencies feito (#84), teste live em P1-4.
 - ~~**E5 XRay v1.1 Post-import tab**~~ — feito (#69/#73).
 - ~~**E6 1.0 de d365-apps**~~ — feito (1.0.0, #67).
-- **E7 Smaller items**: P2-4a…d na Priority order.
+- ~~**E7 Smaller items**~~ — P2-4a…d feitos 2026-11-27 (#80–#83).
 
 ## Later (H2 2027)
 - **E8 Inter-tool invocation** (`pptb.config.json`) entre ferramentas SSS.
