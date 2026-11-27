@@ -25,17 +25,22 @@
 | P1 | P1-3 | XRay: `inventory-dark.png` + `install-order.png` ([SCREENSHOTS.md](SCREENSHOTS.md) §1) | Listing | S | owner captura, agente liga | por fazer |
 | P1 | P1-4 | XRay: teste real incl. live mode (`ExportSolution` shape) e Post-import ([RELEASE.md](RELEASE.md) §1) | Quality | M | owner corre, agente corrige | por fazer |
 | P1 | P1-5 | Métricas de adoção sem telemetria (#57, draft desde 2026-10-13) | Growth | S | agente + owner | em curso (#57) |
+| P1 | N1 | CI em PRs: build + check-dist + validate + e2e × 3 ferramentas (hoje só triage e digest) | CI | S | agente | por fazer |
+| P1 | N2 | Gate `npm audit` high/critical no CI (último registo 2026-10-13; requisito Verified) | Security | S | agente | por fazer |
 | P2 | P2-1 | Get Verified ×3 (ou pedir dispensa de métricas) | Marketplace | S | owner | gate: P0-1, P1-1…P1-5 |
-| P2 | P2-2 | XRay live: `MissingDependencies` do zip → "falta mesmo aqui" (`RetrieveMissingDependencies` / `dependency`) | Features | M | agente | por fazer |
-| P2 | P2-4a | XRay Compare: ignorar alterações só de versão em forms/views (hash do XML) | Features | M | agente | por fazer |
-| P2 | P2-4b | XRay Inventory: triggers e conectores de `Workflows/*.json` (hoje só connection refs) | Features | S | agente | por fazer |
-| P2 | P2-4c | XRay Inventory: tamanho das DLL de plug-in; listar `Templates`, `EntityMaps`, `EntityDataProviders` (hoje só contados) | Features | S | agente | por fazer |
-| P2 | P2-4d | XRay Risk: pesos editáveis (`toolboxAPI.settings`) + popover "porquê" por fator | Features | M | agente | por fazer |
+| P2 | P2-2 | XRay live: `MissingDependencies` do zip → "falta mesmo aqui" (`RetrieveMissingDependencies` / `dependency`) | Features | M | agente | em curso (thread 2026-11-27) |
+| P2 | P2-4a | XRay Compare: ignorar alterações só de versão em forms/views (hash do XML) | Features | M | agente | em curso (thread 2026-11-27) |
+| P2 | P2-4b | XRay Inventory: triggers e conectores de `Workflows/*.json` (hoje só connection refs) | Features | S | agente | em curso (thread 2026-11-27) |
+| P2 | P2-4c | XRay Inventory: tamanho das DLL de plug-in; listar `Templates`, `EntityMaps`, `EntityDataProviders` (hoje só contados) | Features | S | agente | em curso (thread 2026-11-27) |
+| P2 | P2-4d | XRay Risk: pesos editáveis (`toolboxAPI.settings`) + popover "porquê" por fator | Features | M | agente | em curso (thread 2026-11-27) |
+| P2 | N3 | Unit tests dos parsers XRay (`parse.ts`, `order.ts`, `importjob.ts`); só existe e2e | Tests | S | agente | por fazer |
+| P2 | N4 | Fundir `docs/BACKLOG.md` no roadmap e apagar (desatualizado: "Not built", itens feitos) | Docs | S | agente | por fazer |
 | P2 | P2-3 | Post LinkedIn + vídeo curto por release ("SSS ALM suite") | Growth | M | owner | por fazer |
 | P3 | P3-1 | E8 Inter-tool invocation (`pptb.config.json`) | Features | L | agente | gate: fluxo real que o peça |
 | P3 | P3-2 | E10 Mesmos diagnósticos via MCP (dataverse-ops-mcp) **[inferido]** | Features | XL | agente | gate: pedido de utilizador |
 | P3 | P3-3 | 4.ª ferramenta quando o limite de 3 levantar | Catalog | XL | owner decide | gate: limite do publisher |
 | P3 | P3-4 | Gratuito para sempre vs pro; funil DocGen/consultoria | Commercial | S | owner | por fazer |
+| P3 | N5 | Apagar docs de plano obsoletos (PORT-PLAN, PP-API-SPIKE, USABILITY-AUDIT) | Docs | S | agente | por fazer |
 
 Cortado: scaffold `deploymentSettings.json` no XRay — EnvVar Matrix já importa/exporta (`tools/envvar-matrix/src/matrix/settings.ts`).
 
