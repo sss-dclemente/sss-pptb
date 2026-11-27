@@ -53,7 +53,7 @@ export function buildInventory(s: SolutionInfo): Inventory {
       count: s.workflows.length,
       items: s.workflows.map((w) => ({
         name: w.name,
-        detail: `${w.categoryName}${w.primaryEntity ? ` · ${w.primaryEntity}` : ""}${w.connectionReferences.length ? ` · refs: ${w.connectionReferences.join(", ")}` : ""}`,
+        detail: `${w.categoryName}${w.primaryEntity ? ` · ${w.primaryEntity}` : ""}${w.connectionReferences.length ? ` · refs: ${w.connectionReferences.join(", ")}` : ""}${w.triggers.length ? ` · trigger: ${w.triggers.join(", ")}` : ""}${w.connectors.length ? ` · connectors: ${w.connectors.join(", ")}` : ""}`,
       })),
     },
     { key: "appModules", label: "Model-driven apps", count: s.appModules.length, items: s.appModules },
