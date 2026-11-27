@@ -3,7 +3,7 @@ import { $, badge, card, emptyState, filteredEmpty, foldAllButtons, foldCard, h,
 import { persistControls, type PersistedControls } from "../../_shared/view-state";
 import { mountLive, type LiveUi } from "./live-ui";
 import { mountPostImport, renderPostImport } from "./postimport";
-import { filesFromDrop, initTheme, inToolbox, notify, pickZips, saveText } from "./host";
+import { filesFromDrop, initTheme, inToolbox, loadSetting, notify, pickZips, saveSetting, saveText } from "./host";
 import { diffSolutions, type DiffEntry, type SolutionDiff } from "./xray/diff";
 import { buildInventory, managedLabel, type InventoryGroup } from "./xray/inventory";
 import { computeInstallOrder, latestByName } from "./xray/order";
@@ -11,7 +11,7 @@ import { parseSolutionZip } from "./xray/parse";
 import { envTag } from "./xray/live";
 import { depKey, resolveDeps, type DepResult } from "./xray/deps-live";
 import { dataverse } from "../../_shared/host";
-import { hasPublisherPrefix, scoreRisk } from "./xray/risk";
+import { hasPublisherPrefix, scoreRisk, type RiskFactor, type RiskWeights } from "./xray/risk";
 import type { AttributeInfo, SolutionInfo } from "./xray/types";
 
 // ---------- state ----------
@@ -27,6 +27,9 @@ let invFind: PersistedControls;
 /** Risk factors whose evidence list the user expanded past the first EVIDENCE_SHOWN items. */
 const evidenceOpen = new Set<string>();
 const EVIDENCE_SHOWN = 8;
+/** User risk weights (factor id -> multiplier), persisted under WEIGHTS_KEY. */
+let weights: RiskWeights = {};
+const WEIGHTS_KEY = "riskWeights";
 /** Install-order edges ("from→to") whose reasons the user expanded past the first REASONS_SHOWN. */
 const reasonsOpen = new Set<string>();
 const REASONS_SHOWN = 5;
@@ -462,7 +465,39 @@ function evidenceChips(id: string, items: string[]): HTMLElement {
   return box;
 }
 
+/** "Why?" button + native popover: counting rule, weighting and how the total is banded. */
+function whyPopover(f: RiskFactor): HTMLElement[] {
+  const pid = `why-${f.id}`;
+  const btn = h("button", { class: "btn btn-ghost btn-sm", type: "button", popovertarget: pid, "aria-label": `Why ${f.label}?` }, "Why?");
+  const pop = h(
+    "div",
+    { id: pid, popover: "", class: "why" },
+    h("p", {}, h("strong", {}, "Rule: "), f.rule, "."),
+    h("p", {}, `Base ${f.base} pts${f.weight === 1 ? "" : `, weight ×${f.weight} → ${f.points} pts (cap ${f.max})`}.`),
+    h("p", { class: "caption" }, "Score = sum of factor points, capped at 100. Bands: Low < 25, Medium < 50, High < 75, Critical ≥ 75."),
+  );
+  return [btn, pop];
+}
+
+function weightInput(f: RiskFactor): HTMLElement {
+  const input = h("input", { id: `w-${f.id}`, type: "number", min: "0", max: "5", step: "0.5", value: String(f.weight), class: "weight" });
+  input.addEventListener("change", () => {
+    const v = Number(input.value);
+    if (input.value === "" || !Number.isFinite(v) || v < 0 || v > 5) {
+      input.value = String(f.weight);
+      return;
+    }
+    if (v === 1) delete weights[f.id];
+    else weights[f.id] = v;
+    void saveSetting(WEIGHTS_KEY, weights);
+    renderRisk();
+    document.getElementById(`w-${f.id}`)?.focus();
+  });
+  return h("label", { class: "caption" }, "Weight ", input);
+}
+
 function renderRisk(): void {
+  $("#risk-reset").hidden = !Object.keys(weights).length;
   const body = $("#risk-body");
   body.replaceChildren();
   const s = selected("#risk-select");
@@ -471,7 +506,7 @@ function renderRisk(): void {
     return;
   }
   const baseline = selected("#risk-baseline") ?? null;
-  const r = scoreRisk(s, baseline === s ? null : baseline);
+  const r = scoreRisk(s, baseline === s ? null : baseline, weights);
 
   const kind = r.band === "Low" ? "ok" : r.band === "Medium" ? "warn" : "bad";
   body.append(
@@ -488,7 +523,7 @@ function renderRisk(): void {
       h(
         "div",
         { class: "card-body caption" },
-        `Heuristic score for importing ${s.uniqueName} ${s.version}${r.baseline ? ` over ${r.baseline}` : ""}. Sum of capped factors; a checklist, not a verdict.`,
+        `Heuristic score for importing ${s.uniqueName} ${s.version}${r.baseline ? ` over ${r.baseline}` : ""}. Sum of capped factors${Object.keys(weights).length ? " with your weights" : ""}; a checklist, not a verdict.`,
       ),
     ),
   );
@@ -508,6 +543,7 @@ function renderRisk(): void {
           { class: "factor" },
           h("h3", {}, f.label),
           h("span", { class: "pts" }, `+${f.points}`, h("span", { class: "caption" }, ` / ${f.max}`)),
+          h("div", { class: "factor-tools" }, weightInput(f), ...whyPopover(f)),
           f.evidence.length ? evidenceChips(f.id, f.evidence) : null,
           h("p", { class: "advice caption" }, f.advice),
         ),
@@ -699,7 +735,12 @@ function wire(): void {
   $("#risk-export").addEventListener("click", () => {
     const s = selected("#risk-select");
     const baseline = selected("#risk-baseline") ?? null;
-    if (s) void exportJson(`${s.uniqueName}-${s.version}.risk.json`, scoreRisk(s, baseline === s ? null : baseline));
+    if (s) void exportJson(`${s.uniqueName}-${s.version}.risk.json`, scoreRisk(s, baseline === s ? null : baseline, weights));
+  });
+  $("#risk-reset").addEventListener("click", () => {
+    weights = {};
+    void saveSetting(WEIGHTS_KEY, weights);
+    renderRisk();
   });
   $("#order-export").addEventListener("click", () => void exportJson("install-order.json", computeInstallOrder(solutions)));
 
@@ -726,3 +767,7 @@ void initTheme((t) => document.documentElement.setAttribute("data-theme", t));
 wire();
 live = mountLive($("#live"), { solutions: () => solutions, add: (s) => { solutions.push(s); renderAll(); }, check: checkAgainstEnv, openTab, onConnection: () => renderInventory() });
 renderAll();
+void loadSetting<RiskWeights>(WEIGHTS_KEY, {}).then((w) => {
+  weights = w && typeof w === "object" ? w : {};
+  if (activeTab === "risk") renderRisk();
+});
