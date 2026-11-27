@@ -9,6 +9,8 @@ import { buildInventory, managedLabel, type InventoryGroup } from "./xray/invent
 import { computeInstallOrder, latestByName } from "./xray/order";
 import { parseSolutionZip } from "./xray/parse";
 import { envTag } from "./xray/live";
+import { depKey, resolveDeps, type DepResult } from "./xray/deps-live";
+import { dataverse } from "../../_shared/host";
 import { hasPublisherPrefix, scoreRisk } from "./xray/risk";
 import type { AttributeInfo, SolutionInfo } from "./xray/types";
 
@@ -28,6 +30,8 @@ const EVIDENCE_SHOWN = 8;
 /** Install-order edges ("from→to") whose reasons the user expanded past the first REASONS_SHOWN. */
 const reasonsOpen = new Set<string>();
 const REASONS_SHOWN = 5;
+/** Live "missing here?" check of a solution's MissingDependencies, per connection. */
+const depChecks = new WeakMap<SolutionInfo, { connId: string; results?: Map<string, DepResult>; progress?: string }>();
 
 function idOf(s: SolutionInfo): string {
   let id = ids.get(s);
@@ -143,6 +147,47 @@ function showSystemTables(): void {
   hide.dispatchEvent(new Event("change"));
 }
 
+/** Results of the live dependency check for the current connection, if one ran. */
+function liveDeps(s: SolutionInfo): Map<string, DepResult> | undefined {
+  const c = depChecks.get(s);
+  return c && c.connId === live?.connection()?.conn.id ? c.results : undefined;
+}
+
+function depBadge(r: DepResult | undefined): HTMLElement {
+  const st = r?.status ?? "unchecked";
+  const b = badge(st === "present" ? "present" : st === "missing" ? "missing here" : st === "error" ? "failed" : "not checked", st === "present" ? "ok" : st === "missing" ? "bad" : st === "error" ? "warn" : "neutral");
+  if (r?.detail) b.title = r.detail;
+  return b;
+}
+
+/** "Check in <env>" row above the missing-dependencies table; nothing without a connection. */
+function depsLive(s: SolutionInfo): Child {
+  const conn = live?.connection();
+  const api = dataverse();
+  if (!conn || !api) return null;
+  const c = depChecks.get(s);
+  const mine = c?.connId === conn.conn.id ? c : undefined;
+  const res = mine?.results;
+  const count = (st: string) => (res ? [...res.values()].filter((r) => r.status === st).length : 0);
+  const btn = h("button", { id: "inv-deps-check", class: "btn btn-ghost btn-sm", type: "button", disabled: !!mine?.progress }, `${res ? "Re-check" : "Check"} in ${conn.conn.name}`);
+  btn.addEventListener("click", async () => {
+    const run = { connId: conn.conn.id, progress: "Checking…" } as { connId: string; results?: Map<string, DepResult>; progress?: string };
+    depChecks.set(s, run);
+    renderInventory();
+    const results = await resolveDeps(s.missingDependencies, (p) => api.queryData(p), (d, t) => {
+      run.progress = `Checking ${d}/${t}…`;
+      const el = document.querySelector("#inv-deps-status");
+      if (el && depChecks.get(s) === run) el.textContent = run.progress;
+    });
+    if (depChecks.get(s) !== run) return;
+    run.results = results;
+    run.progress = undefined;
+    renderInventory();
+  });
+  const status = mine?.progress ?? (res ? `${count("missing")} missing here, ${count("present")} present${count("unchecked") ? `, ${count("unchecked")} not checkable` : ""}${count("error") ? `, ${count("error")} failed` : ""} (read-only lookups)` : "Look each required component up in the connected environment (read-only).");
+  return h("div", { class: "actions" }, btn, h("span", { class: "caption", id: "inv-deps-status", role: "status" }, status));
+}
+
 function renderInventory(): void {
   const body = $("#inv-body");
   body.replaceChildren();
@@ -251,13 +296,19 @@ function renderInventory(): void {
         "Missing dependencies (as declared by the export)",
         deps.length,
         s.missingDependencies.length,
-        table(
-          ["Required", "From solution", "Needed by"],
-          deps.map((d) => [
-            ref(d.required),
-            d.required.solution ?? "?",
-            `${ref(d.dependent)}${d.dependent.parentSchemaName ? ` (${d.dependent.parentSchemaName})` : ""}`,
-          ]),
+        h(
+          "div",
+          {},
+          depsLive(s),
+          table(
+            ["Required", "From solution", "Needed by", ...(liveDeps(s) ? ["Here"] : [])],
+            deps.map((d) => [
+              ref(d.required),
+              d.required.solution ?? "?",
+              `${ref(d.dependent)}${d.dependent.parentSchemaName ? ` (${d.dependent.parentSchemaName})` : ""}`,
+              ...(liveDeps(s) ? [depBadge(liveDeps(s)!.get(depKey(d.required)))] : []),
+            ]),
+          ),
         ),
         !!q,
         findKey("inv:missing-deps", q),
@@ -673,5 +724,5 @@ function wire(): void {
 mountDebug(document.querySelector("footer"), "solution-xray");
 void initTheme((t) => document.documentElement.setAttribute("data-theme", t));
 wire();
-live = mountLive($("#live"), { solutions: () => solutions, add: (s) => { solutions.push(s); renderAll(); }, check: checkAgainstEnv, openTab });
+live = mountLive($("#live"), { solutions: () => solutions, add: (s) => { solutions.push(s); renderAll(); }, check: checkAgainstEnv, openTab, onConnection: () => renderInventory() });
 renderAll();
